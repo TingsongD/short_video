@@ -16,7 +16,7 @@
 - [x] M2 Idea Grill (2026-09-14): modules/grill/{prompts,generate,score,gate} + CLI `python -m modules.grill`; modules/common/llm.py (OpenAI-compatible, injectable); 16 tests green; G2 unit criteria met (live audit pending)
 - [x] M3 Format Library (2026-09-14): modules/formats/{library,extract,match,promote} + CLI; 20 tests green; G3 unit criteria met (live seeding pending)
 - [x] M4 Hook Bank (2026-09-14): modules/hooks/select.py + seeded data/hooks/bank.json + docs/hook-curation.md; 6 tests green; G4 unit criteria met (curation cadence is manual)
-- [ ] M5 Script Engine
+- [x] M5 Script Engine (2026-09-14): modules/script/{write,shots,voicetext,engine} + CLI; 15 tests green; G5 unit criteria met (script approval pending LLM)
 - [ ] M6 Asset Pipeline
 - [ ] M7 Voice
 - [ ] M8 Assembly/QC
