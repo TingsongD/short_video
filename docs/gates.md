@@ -13,7 +13,7 @@ Live gates (G1, G5–G10) additionally require human key/spend approval (Wave 3)
 | G5 | M5 Script Engine | ⬜ pending | unit criteria met 2026-09-14: 60-110w bound enforced, hook verbatim first sentence, 4-7 shots w/ durations tracking voice est, idx0 forced video, per-shot Pexels fallback, schema-valid shot_list. Human approval of 5 scripts pending LLM | — | — |
 | G6 | M6 Asset Pipeline | ⬜ pending | unit criteria met 2026-09-14: intake validates (≥720px, ≥3s, rejects bad/zero-byte), filename→shot_idx mapping + provenance tags, manifest schema-valid w/ missing_shots, Pexels fallback mocked, selector map parses. Lane B real drop + Lane A smoke pending | — | — |
 | G7 | M7 Voice | ⬜ pending | unit criteria met 2026-09-14: request payload (voice_id/model/text) verified, text re-cleaned before send, 15-60s ffprobe gate (20s ok / 8s rejected). Real generation + blind listen pending keys | — | — |
-| G8 | M8 Assembly | ⬜ pending | full assembly QC green; operator watch: subs synced, hook first | — | — |
+| G8 | M8 Assembly | ⬜ pending | unit criteria met 2026-09-14: mpt_task maps manifest->MPT fields (local source, assets/ rel paths, word_by_word subs, 9:16), batch ≤100 validated, QC checks res/audio/duration/size + frame extract. Real MPT run + operator watch pending | — | — |
 | G9 | M9 Publishing | ⬜ pending | real video on test channel, publish_record complete, playable | — | — |
 | G10 | M10 Readback | ⬜ pending | readbacks at all windows, ≥ 1 format status decision | — | — |
 | G11 | M11 Orchestration | ⬜ pending | weekly cron fires, cost ledger caps, approval gate blocks unapproved spend | — | — |
