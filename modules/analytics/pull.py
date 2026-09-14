@@ -8,6 +8,8 @@ from pathlib import Path
 
 DATA_API = "https://www.googleapis.com/youtube/v3/videos"
 ANALYTICS_API = "https://youtubeanalytics.googleapis.com/v2/reports"
+CHANNELS_API = "https://www.googleapis.com/youtube/v3/channels"
+PLAYLIST_API = "https://www.googleapis.com/youtube/v3/playlistItems"
 
 
 class AnalyticsClient:
@@ -68,3 +70,33 @@ class AnalyticsClient:
             {"t_ratio": r[0], "audience_ratio": r[1]}
             for r in (data.get("rows") or [])
         ]
+
+    def channel_median_views(self, handle="", max_items=25):
+        """Median viewCount of our channel's recent uploads (Data API, key
+        auth). Verdict/promotion baseline (B3). Returns 0.0 when unavailable."""
+        from modules.radar.metrics import channel_median
+        q = urllib.parse.urlencode({"part": "contentDetails",
+                                    "forHandle": handle.lstrip("@"),
+                                    "key": self.yt_api_key})
+        data = self.transport(f"{CHANNELS_API}?{q}")
+        items = data.get("items") or []
+        if not items:
+            return 0.0
+        uploads = (items[0].get("contentDetails", {})
+                   .get("relatedPlaylists", {}).get("uploads"))
+        if not uploads:
+            return 0.0
+        q = urllib.parse.urlencode({"part": "contentDetails", "playlistId": uploads,
+                                    "maxResults": min(max_items, 50), "key": self.yt_api_key})
+        data = self.transport(f"{PLAYLIST_API}?{q}")
+        ids = [it["contentDetails"]["videoId"]
+               for it in data.get("items", [])
+               if it.get("contentDetails", {}).get("videoId")][:max_items]
+        if not ids:
+            return 0.0
+        q = urllib.parse.urlencode({"part": "statistics", "id": ",".join(ids),
+                                    "key": self.yt_api_key})
+        data = self.transport(f"{DATA_API}?{q}")
+        views = [int(v.get("statistics", {}).get("viewCount", 0))
+                 for v in data.get("items", [])]
+        return channel_median(views)

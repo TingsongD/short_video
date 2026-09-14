@@ -248,7 +248,16 @@ def readback_stages(ctx):
             state["pulled"].append((rec, doc, name, w))
 
     def record():
+        # B3 fix: compute our channel's recent-uploads median once per run so
+        # verdicts and format promotions compare against reality, not a zero
+        # default. A baseline failure is loud (record stage fails), never silent.
+        baseline = 0.0
+        client = ctx.get("analytics_client")
+        if client is not None and hasattr(client, "channel_median_views"):
+            baseline = client.channel_median_views(ctx.get("channel_handle", ""))
         for rec, doc, name, w in state["pulled"]:
+            if not doc.get("baseline_median_views"):
+                doc["baseline_median_views"] = baseline
             rb_mod.record_window(
                 doc, name, w, rec.get("video_len_s", 30), cfg["readback"])
             rb_mod.write_readback(doc, ctx.get("analytics_dir"))

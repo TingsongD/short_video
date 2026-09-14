@@ -30,6 +30,8 @@ def _ctx(args):
         ctx.update(_live_production_clients(cfg))
     elif args.cmd == "readback":
         ctx["analytics_client"] = _live_analytics_client(cfg)
+        from modules.common.config import secrets
+        ctx["channel_handle"] = secrets().get("YT_CHANNEL_HANDLE", "")
     elif args.cmd == "weekly":
         ctx.update(_live_weekly_clients(cfg))
     return ctx
@@ -99,9 +101,26 @@ def _live_weekly_clients(cfg):
         sec.get("YOUTUBE_API_KEY", ""),
         QuotaManager(cfg["radar"]["daily_quota_budget"]))
     llm = LLMClient.from_secrets(sec)
+
+    def radar_scan():
+        """B4 fix: compose scan -> build_report -> write_report so the grill
+        receives the niche_report CONTRACT shape (raw scan output has no
+        'niches' key and silently produced empty shortlists), and the G1
+        evidence artifact lands in data/radar/."""
+        from datetime import date
+
+        from modules.radar.report import build_report, write_report
+
+        result = scan(client, ncfg["niche"], cfg["radar"])
+        report = build_report(
+            result["clusters"], result["scanned_at"],
+            [n["name"] for n in ncfg["niche"]], client.quota.used,
+            degraded=result.get("degraded", False))
+        write_report(report, DATA_DIR / "radar", date.today().isoformat())
+        return report
+
     return {
-        "radar_scan": lambda: scan(
-            client, ncfg["niche"], cfg["radar"]),
+        "radar_scan": radar_scan,
         "grill_run": lambda report: grill_run(
             report, llm, cfg["grill"]),
     }

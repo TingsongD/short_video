@@ -2,41 +2,14 @@
 
 Pass 1 audited + patched (B1, B2 fixed; S1, S2 partially; D1 decided; V3 decided).
 Pass 2 (this document): full line-by-line audit of all 67 module files.
-Suite state: **189 tests green**, secrets clean, data files schema-valid.
+Patch round 2: B3, B4 fixed (see "Fixed in patch round 2" below).
+Suite state: **194 tests green**, secrets clean, data files schema-valid.
 
 ---
 
-## 🔴 Bugs — open, must fix before Wave 3
+## 🔴 Bugs — none open
 
-### B3. `baseline_median_views` is never populated — verdicts AND format promotions are broken
-- **Where:** `modules/analytics/readback.py:14-19` (initializes 0); nothing in
-  `stages.py readback_stages` ever sets it.
-- **Impact 1 (verdicts):** `verdict.py:13` computes `views >= 2.0 × baseline`
-  → with baseline 0 the views leg always passes → win/loss decided by AVD alone
-  → systematically over-reports "win".
-- **Impact 2 (promotions — worse):** `formats/promote.py:11-14` computes the
-  multiplier as `views / baseline` → 0.0 forever → `avg_multiplier` can never
-  reach `promote_min_multiplier` (1.5) → **no format can ever be promoted to
-  "proven"**. The entire M3 learning loop is dead until this is fixed.
-- **Fix:** at readback pull time, fetch our channel's recent-uploads view counts
-  via Data API (channels→uploads playlist→videos.list ≈ 3 quota units) and
-  compute the median with `radar.metrics.channel_median`, storing it into the
-  readback doc before `record_window`. Add a test with a non-zero baseline
-  proving win/loss/promote all move correctly.
-
-### B4. Live weekly wiring passes the wrong shape to the grill — silent empty shortlist every week
-- **Where:** `modules/orchestrate/__main__.py:103` — `radar_scan` returns raw
-  `scan()` output (`{"clusters": …}`), but `grill.gate.run()` iterates
-  `niche_report["niches"]` (the contract shape built by `radar/report.build_report`).
-- **Impact:** on a real `run.sh weekly`, the grill sees zero clusters → zero
-  candidates → shortlist says "0/0 ideas killed" **with no error**. The weekly
-  cron would run forever producing nothing, and `data/radar/<date>.json` (the
-  G1 evidence artifact) is never written.
-- **Why tests missed it:** weekly tests mock `radar_scan`/`grill_run` separately;
-  nothing tests the `_live_weekly_clients` composition.
-- **Fix:** in `_live_weekly_clients`, compose `scan → build_report → write_report`
-  inside `radar_scan` (same composition as the dry E2E). Add a wiring test that
-  runs the composition through `weekly_stages` with a fake YT transport.
+B3 and B4 were the only open bugs; both fixed in patch round 2. See below.
 
 ---
 
@@ -55,7 +28,7 @@ Suite state: **189 tests green**, secrets clean, data files schema-valid.
 | S1 | Hook bank depth | 🟡 partially addressed | G4 | 5/niche (12 curated + 18 `original-pattern` fillers dated below curated); authentic viralhooks.org curation stays a manual weekly pass |
 | S2 | Format library seeding | 🟡 partially addressed | G3 | 10 pattern-based candidates seeded; radar-extracted refresh after G1 |
 | S3 | `voice_id` empty in `config/system.toml` | ⬜ open — needs ElevenLabs key | G7 | 3-voice audition per `docs/voice-selection.md` |
-| S4 | API keys (batched) | ⬜ open | G1, G5–G10 | YOUTUBE_API_KEY, PEXELS_API_KEY, ELEVENLABS_API_KEY, LLM key, YT Analytics OAuth |
+| S4 | API keys (batched) | ⬜ open | G1, G5–G10 | YOUTUBE_API_KEY, YT_CHANNEL_HANDLE (B3 baseline), PEXELS_API_KEY, ELEVENLABS_API_KEY, LLM key, YT Analytics OAuth |
 | S5 | Live cron fire verification | ⬜ open | G11 | After `install-cron` |
 
 ---
@@ -89,6 +62,25 @@ Suite state: **189 tests green**, secrets clean, data files schema-valid.
 - V4. MODULE_REPORT convention — ✅ DECIDED: gates.md is canonical.
 
 ---
+
+## Fixed in patch round 2 (2026-09-14)
+
+- B3. `baseline_median_views` never populated — ✅ FIXED.
+  `AnalyticsClient.channel_median_views()` (Data API key auth: channels
+  `forHandle` → uploads playlist → videos.statistics, median via
+  `radar.metrics.channel_median`); `readback_stages.record` computes the
+  baseline once per run from `channel_handle` (new `YT_CHANNEL_HANDLE` in
+  `config/secrets.toml`) and stamps it on the readback doc before
+  `record_window`. Fail-loud on client errors; legacy fakes without the
+  method keep old behavior via a `hasattr` guard.
+- B4. Weekly wiring shape mismatch — ✅ FIXED.
+  `_live_weekly_clients.radar_scan` now composes
+  `scan → build_report → write_report(data/radar/<date>) → return report`,
+  so the grill receives the contract shape and the G1 evidence artifact is
+  written every run.
+- Regression coverage: `tests/test_readback_baseline.py` (5 tests) — median
+  computation, loss/win verdicts against a real baseline, 3-win promotion
+  to "proven", and the full scan→report→grill composition.
 
 ## Fixed in pass 1 (for the record)
 
