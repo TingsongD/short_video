@@ -13,7 +13,7 @@
 ## Sequential build (single builder; swarm plan in AGENTS.md superseded)
 
 - [x] M1 Niche Radar (2026-09-14): modules/radar/{client,quota,metrics,scanner,cluster,report} + CLI `python -m modules.radar`; 23 tests green; G1 unit criteria met (live scan pending)
-- [ ] M2 Idea Grill
+- [x] M2 Idea Grill (2026-09-14): modules/grill/{prompts,generate,score,gate} + CLI `python -m modules.grill`; modules/common/llm.py (OpenAI-compatible, injectable); 16 tests green; G2 unit criteria met (live audit pending)
 - [ ] M3 Format Library
 - [ ] M4 Hook Bank
 - [ ] M5 Script Engine
