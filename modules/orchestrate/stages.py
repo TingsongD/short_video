@@ -157,6 +157,7 @@ def produce_stages(idea_id, ctx):
         state["finals"] = finals
 
     def qc():
+        durations = []
         for f in state["finals"]:
             ok, failures = qc_mod.qc_video(
                 f, expected_res=tuple(
@@ -164,6 +165,12 @@ def produce_stages(idea_id, ctx):
                 voice_duration=None)
             if not ok:
                 raise RuntimeError(f"QC failed for {f.name}: {failures}")
+            data = qc_mod.probe_full(f)
+            durations.append(
+                float(data.get("format", {}).get("duration") or 0))
+        # B2 fix: publish record carries the measured length so M10 verdicts
+        # compare AVD against the real duration, not a 30s default.
+        state["video_len_s"] = round(durations[0], 2) if durations else None
 
     def publish():
         records = rec_mod.load_records(ctx.get("published_dir"))
@@ -191,6 +198,7 @@ def produce_stages(idea_id, ctx):
             "idea_id": idea_id,
             "niche": idea["niche"],
             "variant_index": 1,
+            "video_len_s": state.get("video_len_s"),
         }
         rec_mod.write_record(rec, directory=ctx.get("published_dir"))
         state["publish_record"] = rec
@@ -275,11 +283,13 @@ def weekly_stages(ctx):
         state["shortlist"] = out / f"{day}.md"
         lines = [f"# Weekly shortlist {day}", ""]
         passing = [i for i in state["doc"]["ideas"] if i["status"] == "pass"]
-        for i in sorted(passing, key=lambda x: -x["scores"]["total"]):
+        for i in sorted(passing,
+                        key=lambda x: -(x["hook_score"] + x["virality_score"])):
             m = matches[i["idea_id"]]
             lines.append(
                 f"- **{i['topic']}** (`{i['idea_id']}`, {i['niche']}) "
-                f"score {i['scores']['total']:.1f} -> format `{m['format_id']}`")
+                f"score {i['hook_score'] + i['virality_score']:.1f} "
+                f"-> format `{m['format_id']}`")
         killed = [i for i in state["doc"]["ideas"] if i["status"] != "pass"]
         lines += ["", f"{len(killed)}/{len(state['doc']['ideas'])} ideas killed "
                       f"by the grill."]

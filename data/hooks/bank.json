@@ -95,6 +95,168 @@
       "hook_type": "onscreen",
       "source_url": "https://viralhooks.org/",
       "added_at": "2026-09-14"
+    },
+    {
+      "id": "hook-psy-003",
+      "text": "Your brain deletes this memory every night — on purpose.",
+      "niche": "psychology_facts",
+      "hook_type": "spoken",
+      "source_url": "https://github.com/ericosiu/ai-marketing-skills/tree/main/yt-competitive-analysis",
+      "added_at": "2026-09-13",
+      "origin": "original-pattern"
+    },
+    {
+      "id": "hook-psy-004",
+      "text": "Answer this in your head: what color is your front door?",
+      "niche": "psychology_facts",
+      "hook_type": "caption",
+      "source_url": "https://github.com/ericosiu/ai-marketing-skills/tree/main/yt-competitive-analysis",
+      "added_at": "2026-09-13",
+      "origin": "original-pattern"
+    },
+    {
+      "id": "hook-psy-005",
+      "text": "Bad, good, great: how you handle criticism.",
+      "niche": "psychology_facts",
+      "hook_type": "onscreen",
+      "source_url": "https://github.com/ericosiu/ai-marketing-skills/tree/main/yt-competitive-analysis",
+      "added_at": "2026-09-13",
+      "origin": "original-pattern"
+    },
+    {
+      "id": "hook-mon-003",
+      "text": "Stop saving money the way your parents taught you.",
+      "niche": "money_tips",
+      "hook_type": "spoken",
+      "source_url": "https://github.com/ericosiu/ai-marketing-skills/tree/main/yt-competitive-analysis",
+      "added_at": "2026-09-13",
+      "origin": "original-pattern"
+    },
+    {
+      "id": "hook-mon-004",
+      "text": "This $4 habit costs you $1,460 a year.",
+      "niche": "money_tips",
+      "hook_type": "onscreen",
+      "source_url": "https://github.com/ericosiu/ai-marketing-skills/tree/main/yt-competitive-analysis",
+      "added_at": "2026-09-13",
+      "origin": "original-pattern"
+    },
+    {
+      "id": "hook-mon-005",
+      "text": "Rich people check one number every morning. It isn't their balance.",
+      "niche": "money_tips",
+      "hook_type": "spoken",
+      "source_url": "https://github.com/ericosiu/ai-marketing-skills/tree/main/yt-competitive-analysis",
+      "added_at": "2026-09-13",
+      "origin": "original-pattern"
+    },
+    {
+      "id": "hook-hea-003",
+      "text": "Everything you were told about breakfast is backwards.",
+      "niche": "health_myths",
+      "hook_type": "spoken",
+      "source_url": "https://github.com/ericosiu/ai-marketing-skills/tree/main/yt-competitive-analysis",
+      "added_at": "2026-09-13",
+      "origin": "original-pattern"
+    },
+    {
+      "id": "hook-hea-004",
+      "text": "Bad, good, great: the way you sit right now.",
+      "niche": "health_myths",
+      "hook_type": "onscreen",
+      "source_url": "https://github.com/ericosiu/ai-marketing-skills/tree/main/yt-competitive-analysis",
+      "added_at": "2026-09-13",
+      "origin": "original-pattern"
+    },
+    {
+      "id": "hook-hea-005",
+      "text": "Your gym routine has one exercise that's wasting your time.",
+      "niche": "health_myths",
+      "hook_type": "caption",
+      "source_url": "https://github.com/ericosiu/ai-marketing-skills/tree/main/yt-competitive-analysis",
+      "added_at": "2026-09-13",
+      "origin": "original-pattern"
+    },
+    {
+      "id": "hook-his-003",
+      "text": "In 1908, something exploded over Siberia. Nobody agrees what.",
+      "niche": "history_mysteries",
+      "hook_type": "spoken",
+      "source_url": "https://github.com/ericosiu/ai-marketing-skills/tree/main/yt-competitive-analysis",
+      "added_at": "2026-09-13",
+      "origin": "original-pattern"
+    },
+    {
+      "id": "hook-his-004",
+      "text": "This ship was found floating with no crew — and dinner still warm.",
+      "niche": "history_mysteries",
+      "hook_type": "spoken",
+      "source_url": "https://github.com/ericosiu/ai-marketing-skills/tree/main/yt-competitive-analysis",
+      "added_at": "2026-09-13",
+      "origin": "original-pattern"
+    },
+    {
+      "id": "hook-his-005",
+      "text": "One library held all human knowledge. Then it vanished.",
+      "niche": "history_mysteries",
+      "hook_type": "onscreen",
+      "source_url": "https://github.com/ericosiu/ai-marketing-skills/tree/main/yt-competitive-analysis",
+      "added_at": "2026-09-13",
+      "origin": "original-pattern"
+    },
+    {
+      "id": "hook-spa-003",
+      "text": "You are moving at 67,000 mph right now. Here's why you don't feel it.",
+      "niche": "space_science",
+      "hook_type": "spoken",
+      "source_url": "https://github.com/ericosiu/ai-marketing-skills/tree/main/yt-competitive-analysis",
+      "added_at": "2026-09-13",
+      "origin": "original-pattern"
+    },
+    {
+      "id": "hook-spa-004",
+      "text": "There's a planet where it rains glass — sideways.",
+      "niche": "space_science",
+      "hook_type": "onscreen",
+      "source_url": "https://github.com/ericosiu/ai-marketing-skills/tree/main/yt-competitive-analysis",
+      "added_at": "2026-09-13",
+      "origin": "original-pattern"
+    },
+    {
+      "id": "hook-spa-005",
+      "text": "The biggest thing in the universe has no business existing.",
+      "niche": "space_science",
+      "hook_type": "caption",
+      "source_url": "https://github.com/ericosiu/ai-marketing-skills/tree/main/yt-competitive-analysis",
+      "added_at": "2026-09-13",
+      "origin": "original-pattern"
+    },
+    {
+      "id": "hook-ai-003",
+      "text": "2024 vs 2026: what AI does to a blank page now.",
+      "niche": "ai_tools",
+      "hook_type": "caption",
+      "source_url": "https://github.com/ericosiu/ai-marketing-skills/tree/main/yt-competitive-analysis",
+      "added_at": "2026-09-13",
+      "origin": "original-pattern"
+    },
+    {
+      "id": "hook-ai-004",
+      "text": "I stopped doing this task manually. Watch why.",
+      "niche": "ai_tools",
+      "hook_type": "spoken",
+      "source_url": "https://github.com/ericosiu/ai-marketing-skills/tree/main/yt-competitive-analysis",
+      "added_at": "2026-09-13",
+      "origin": "original-pattern"
+    },
+    {
+      "id": "hook-ai-005",
+      "text": "Everyone's using this AI feature wrong — here's the right way.",
+      "niche": "ai_tools",
+      "hook_type": "onscreen",
+      "source_url": "https://github.com/ericosiu/ai-marketing-skills/tree/main/yt-competitive-analysis",
+      "added_at": "2026-09-13",
+      "origin": "original-pattern"
     }
   ]
 }

@@ -1,0 +1,176 @@
+{
+  "version": 1,
+  "_comment": "Seeded offline 2026-09-14 from documented packaging patterns (vendored yt-competitive-analysis skill + radar format taxonomy). watch_reference points at the pattern source, not a specific video. Replace/augment with radar-extracted formats after the first live scan (G1).",
+  "formats": [
+    {
+      "format_id": "fmt-dark-list-3",
+      "name": "Dark-facts 3-item listicle",
+      "hook_type": "onscreen",
+      "beats": [
+        "Stakes: name the situation where the viewer is vulnerable",
+        "Mechanism: reveal the 3 items with one-line explanations",
+        "Payoff: give the counter-move or memorable takeaway"
+      ],
+      "visual_payoff": "Each item appears as bold on-screen text over a matching dramatic clip",
+      "cta_pattern": "Follow for part 2",
+      "watch_reference": "https://github.com/ericosiu/ai-marketing-skills/tree/main/yt-competitive-analysis",
+      "status": "candidate",
+      "our_stats": { "videos": 0, "wins": 0, "avg_multiplier": 0 },
+      "niche": "psychology_facts",
+      "notes": "Seeded offline from documented listicle pattern; validate against radar outliers after G1"
+    },
+    {
+      "format_id": "fmt-stop-doing",
+      "name": "Contrarian stop-doing-X",
+      "hook_type": "spoken",
+      "beats": [
+        "Stakes: call out the common behavior that silently backfires",
+        "Mechanism: explain why it fails and what works instead",
+        "Payoff: the replacement behavior in one actionable sentence"
+      ],
+      "visual_payoff": "Red-X overlay on the wrong behavior, then green-check on the right one",
+      "cta_pattern": "Try it this week and comment your result",
+      "watch_reference": "https://github.com/ericosiu/ai-marketing-skills/tree/main/yt-competitive-analysis",
+      "status": "candidate",
+      "our_stats": { "videos": 0, "wins": 0, "avg_multiplier": 0 },
+      "niche": "money_tips",
+      "notes": "From documented shorts skeleton 'Stop doing X, do Y instead'"
+    },
+    {
+      "format_id": "fmt-year-compare",
+      "name": "Year-over-year comparison",
+      "hook_type": "caption",
+      "beats": [
+        "Stakes: frame how fast the space moved between two years",
+        "Mechanism: 3 side-by-side contrasts, old vs new",
+        "Payoff: what the viewer should do differently this year"
+      ],
+      "visual_payoff": "Split-screen before/after with year labels",
+      "cta_pattern": "Follow to not fall behind",
+      "watch_reference": "https://github.com/ericosiu/ai-marketing-skills/tree/main/yt-competitive-analysis",
+      "status": "candidate",
+      "our_stats": { "videos": 0, "wins": 0, "avg_multiplier": 0 },
+      "niche": "ai_tools",
+      "notes": "From documented shorts skeleton '2024 vs 2025 X'"
+    },
+    {
+      "format_id": "fmt-tier-rank",
+      "name": "Bad-Good-Great tier ranking",
+      "hook_type": "onscreen",
+      "beats": [
+        "Stakes: most people pick the bad option without knowing",
+        "Mechanism: rank the 3 tiers with one-line reasons",
+        "Payoff: the great option and who it's right for"
+      ],
+      "visual_payoff": "Tier labels stamped on screen as each option appears",
+      "cta_pattern": "Comment which tier you picked",
+      "watch_reference": "https://github.com/ericosiu/ai-marketing-skills/tree/main/yt-competitive-analysis",
+      "status": "candidate",
+      "our_stats": { "videos": 0, "wins": 0, "avg_multiplier": 0 },
+      "niche": "health_myths",
+      "notes": "From documented shorts skeleton 'Bad Good Great X'"
+    },
+    {
+      "format_id": "fmt-myth-bust",
+      "name": "Myth correction",
+      "hook_type": "spoken",
+      "beats": [
+        "Stakes: state the widely-believed myth as if true",
+        "Mechanism: reveal the evidence that breaks it",
+        "Payoff: the correct mental model in one line"
+      ],
+      "visual_payoff": "Myth text cracks/shatters at the reveal moment",
+      "cta_pattern": "Send this to someone who still believes it",
+      "watch_reference": "https://github.com/ericosiu/ai-marketing-skills/tree/main/yt-competitive-analysis",
+      "status": "candidate",
+      "our_stats": { "videos": 0, "wins": 0, "avg_multiplier": 0 },
+      "niche": "health_myths",
+      "notes": "From documented 'myth correction' lane in shortform-idea-grill"
+    },
+    {
+      "format_id": "fmt-mystery-cliff",
+      "name": "Unsolved-mystery cliffhanger",
+      "hook_type": "spoken",
+      "beats": [
+        "Stakes: present the historical event with one impossible detail",
+        "Mechanism: walk through the 2-3 leading theories",
+        "Payoff: the twist evidence, then the open question"
+      ],
+      "visual_payoff": "Archival-style imagery with a question mark freeze at the end",
+      "cta_pattern": "Comment your theory",
+      "watch_reference": "https://github.com/ericosiu/ai-marketing-skills/tree/main/yt-competitive-analysis",
+      "status": "candidate",
+      "our_stats": { "videos": 0, "wins": 0, "avg_multiplier": 0 },
+      "niche": "history_mysteries",
+      "notes": "Pattern: curiosity-gap story with unresolved ending to drive comments"
+    },
+    {
+      "format_id": "fmt-scale-zoom",
+      "name": "Mind-bending scale comparison",
+      "hook_type": "onscreen",
+      "beats": [
+        "Stakes: anchor with something familiar",
+        "Mechanism: zoom through 3 orders of magnitude of comparison",
+        "Payoff: the final comparison that reframes the viewer's intuition"
+      ],
+      "visual_payoff": "Continuous zoom-out/zoom-in visual with scale counters",
+      "cta_pattern": "Follow for more scale breaks",
+      "watch_reference": "https://github.com/ericosiu/ai-marketing-skills/tree/main/yt-competitive-analysis",
+      "status": "candidate",
+      "our_stats": { "videos": 0, "wins": 0, "avg_multiplier": 0 },
+      "niche": "space_science",
+      "notes": "Kurzgesagt-style scale revelation adapted to 30s vertical"
+    },
+    {
+      "format_id": "fmt-money-habit",
+      "name": "Single-habit money reveal",
+      "hook_type": "onscreen",
+      "beats": [
+        "Stakes: name the habit that quietly drains money",
+        "Mechanism: show the math of what it costs per year",
+        "Payoff: the one swap that keeps the pleasure and cuts the cost"
+      ],
+      "visual_payoff": "Running dollar counter overlay through the middle beat",
+      "cta_pattern": "Follow for the next habit audit",
+      "watch_reference": "https://github.com/ericosiu/ai-marketing-skills/tree/main/yt-competitive-analysis",
+      "status": "candidate",
+      "our_stats": { "videos": 0, "wins": 0, "avg_multiplier": 0 },
+      "niche": "money_tips",
+      "notes": "Pattern: 'money saved' lane from shortform-idea-grill"
+    },
+    {
+      "format_id": "fmt-psych-test",
+      "name": "Test-yourself interactive question",
+      "hook_type": "caption",
+      "beats": [
+        "Stakes: pose a question the viewer answers in their head",
+        "Mechanism: reveal what their answer says about them",
+        "Payoff: the nuance most people miss about their own answer"
+      ],
+      "visual_payoff": "Question card holds for 3s before the answer reveal",
+      "cta_pattern": "Comment your answer before watching the end",
+      "watch_reference": "https://github.com/ericosiu/ai-marketing-skills/tree/main/yt-competitive-analysis",
+      "status": "candidate",
+      "our_stats": { "videos": 0, "wins": 0, "avg_multiplier": 0 },
+      "niche": "psychology_facts",
+      "notes": "Pattern: participation hook — comment bait via self-assessment"
+    },
+    {
+      "format_id": "fmt-tool-demo",
+      "name": "Proof-led tool demo",
+      "hook_type": "spoken",
+      "beats": [
+        "Stakes: show the tedious task everyone does manually",
+        "Mechanism: screen-record the tool doing it in seconds",
+        "Payoff: the exact prompt/settings to replicate it"
+      ],
+      "visual_payoff": "Real screen capture with the result appearing live",
+      "cta_pattern": "Follow for the next workflow",
+      "watch_reference": "https://github.com/ericosiu/ai-marketing-skills/tree/main/yt-competitive-analysis",
+      "status": "candidate",
+      "our_stats": { "videos": 0, "wins": 0, "avg_multiplier": 0 },
+      "niche": "ai_tools",
+      "notes": "From documented 'proof-led workflow demonstration' lane"
+    }
+  ]
+}

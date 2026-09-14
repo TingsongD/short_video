@@ -47,7 +47,7 @@ IDEA = {
     "target_viewer": "18-34", "payoff": "Counter each phrase.",
     "three_bullets": ["a", "b", "c"], "cta": "Follow",
     "status": "pass",
-    "scores": {"virality": 8, "hook": 8, "payoff": 8, "total": 8},
+    "virality_score": 8.0, "hook_score": 8.0,
 }
 FORMAT = {
     "format_id": "fmt-drill", "name": "listicle", "status": "candidate",
@@ -181,6 +181,9 @@ def test_produce_full_order_and_artifacts(tmp_path):
     assert (base / "final-1.mp4").exists()
     pub = tmp_path / "published" / "v-drill-1.json"
     validate(json.loads(pub.read_text()), "publish_record.schema.json")
+    # B2: publish record carries the ffprobe-measured length (render is 20s)
+    pub_json = json.loads(pub.read_text())
+    assert abs(pub_json["video_len_s"] - 20) < 1.5, pub_json["video_len_s"]
     # ledger: llm x2 (script + metadata) + elevenlabs x1
     services = [e["service"] for e in ctx["ledger"].entries]
     assert services.count("llm") == 2 and services.count("elevenlabs") == 1
