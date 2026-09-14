@@ -276,7 +276,7 @@ All inter-module data is JSON on disk under `data/`. No module calls another mod
 **Purpose:** run the loop unattended.
 
 **Build tasks:**
-1. Kimi Work Automation (cron, weekly, off-peak minute, project workspace): run M1 scan → M2 grill → M3 extract/match → post ranked shortlist into the conversation
+1. Weekly scheduling via **macOS user crontab** (`modules/orchestrate/schedule.py`, Monday off-peak minute): run M1 scan → M2 grill → M3 extract/match → write the ranked shortlist to `data/weekly/`. *(Deviation from the original Kimi Work Blueprint Automation approach, approved by the owner 2026-09-14: crontab only fires while the Mac is awake, and results land on disk rather than in the conversation.)*
 2. `run.sh produce <idea_id>` — one command runs M4→M9 for an approved idea (human approval gate before Jimeng/ElevenLabs spend)
 3. `run.sh readback` — process due analytics windows
 4. Cost ledger `data/costs.json` — log every paid call (LLM tokens, ElevenLabs chars, Jimeng credits spent manually); weekly cap in config; hard stop + alert at cap

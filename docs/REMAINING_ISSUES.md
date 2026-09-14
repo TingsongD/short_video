@@ -34,15 +34,15 @@ secret sweep clean, dry E2E genuinely chains M1→M8, gates.md is honest
 
 ---
 
-## 🟡 Plan deviations — needs a decision
+## 🟡 Plan deviations
 
-### D1. Weekly scheduling via user crontab instead of Kimi Work Automation
+### D1. Weekly scheduling via user crontab instead of Kimi Work Automation — ✅ DECIDED (2026-09-14): keep macOS crontab
 - Plan §M11 specified a Kimi Work Blueprint Automation; K3 built
   `modules/orchestrate/schedule.py` appending to the user crontab.
-- Crontab works but only fires while this Mac is awake, and results don't land
-  in the Kimi conversation. **Decision needed at Wave 3:** keep crontab, or
-  register the weekly run as a Blueprint Automation (recommended — off-peak
-  Monday minute, project workspace, shortlist delivered to the conversation).
+- **Owner decision: keep the crontab approach.** Accepted consequences:
+  fires only while this Mac is awake at the scheduled time; weekly shortlist
+  lands in `data/weekly/` + `logs/runs/`, not in the Kimi conversation.
+  BUILD_PLAN.md §M11 amended accordingly.
 
 ---
 
