@@ -11,7 +11,7 @@ Live gates (G1, G5–G10) additionally require human key/spend approval (Wave 3)
 | G3 | M3 Format Library | ⬜ pending | unit criteria met 2026-09-14: CRUD + stable IDs, extract validates + no-copy guard (>0.6 Jaccard rejected), match = exactly 1 default + labeled alt, promote/retire at exact thresholds. Live seeding (≥10 entries) pending LLM | — | — |
 | G4 | M4 Hook Bank | ⬜ pending | unit criteria met 2026-09-14: bank.json schema-valid, selector matches niche+type w/ niche fallback, attribution preserved, LookupError on empty niche. ≥5 hooks/niche needs weekly curation (docs/hook-curation.md) | — | — |
 | G5 | M5 Script Engine | ⬜ pending | unit criteria met 2026-09-14: 60-110w bound enforced, hook verbatim first sentence, 4-7 shots w/ durations tracking voice est, idx0 forced video, per-shot Pexels fallback, schema-valid shot_list. Human approval of 5 scripts pending LLM | — | — |
-| G6 | M6 Asset Pipeline | ⬜ pending | Lane B complete asset set passes ffprobe; Lane A smoke test (non-blocking) | — | — |
+| G6 | M6 Asset Pipeline | ⬜ pending | unit criteria met 2026-09-14: intake validates (≥720px, ≥3s, rejects bad/zero-byte), filename→shot_idx mapping + provenance tags, manifest schema-valid w/ missing_shots, Pexels fallback mocked, selector map parses. Lane B real drop + Lane A smoke pending | — | — |
 | G7 | M7 Voice | ⬜ pending | real generation, blind-listen win vs Edge TTS, duration in bounds | — | — |
 | G8 | M8 Assembly | ⬜ pending | full assembly QC green; operator watch: subs synced, hook first | — | — |
 | G9 | M9 Publishing | ⬜ pending | real video on test channel, publish_record complete, playable | — | — |
