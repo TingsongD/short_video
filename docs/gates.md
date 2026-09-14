@@ -9,7 +9,7 @@ Live gates (G1, G5–G10) additionally require human key/spend approval (Wave 3)
 | G1 | M1 Niche Radar | ⬜ pending | unit criteria met 2026-09-14: schema-valid report from fixture scan, quota counter caps search calls + degrades to channel-only, breakout flag at 5x/2x/14d. Live scan still needed | — | — |
 | G2 | M2 Idea Grill | ⬜ pending | unit criteria met 2026-09-14: 4 hard-reject rules fire correctly, thresholds at exact boundaries, temp-0 determinism, schema-valid output, raw judge output logged. Live audit (≥30% kill, ≥8/10 agreement) pending real LLM | — | — |
 | G3 | M3 Format Library | ⬜ pending | unit criteria met 2026-09-14: CRUD + stable IDs, extract validates + no-copy guard (>0.6 Jaccard rejected), match = exactly 1 default + labeled alt, promote/retire at exact thresholds. Live seeding (≥10 entries) pending LLM | — | — |
-| G4 | M4 Hook Bank | ⬜ pending | ≥ 5 hooks per seed niche, selector integrated with M5 | — | — |
+| G4 | M4 Hook Bank | ⬜ pending | unit criteria met 2026-09-14: bank.json schema-valid, selector matches niche+type w/ niche fallback, attribution preserved, LookupError on empty niche. ≥5 hooks/niche needs weekly curation (docs/hook-curation.md) | — | — |
 | G5 | M5 Script Engine | ⬜ pending | 5 scripts, ≥ 4 approved without edits | — | — |
 | G6 | M6 Asset Pipeline | ⬜ pending | Lane B complete asset set passes ffprobe; Lane A smoke test (non-blocking) | — | — |
 | G7 | M7 Voice | ⬜ pending | real generation, blind-listen win vs Edge TTS, duration in bounds | — | — |

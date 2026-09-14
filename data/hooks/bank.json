@@ -1,0 +1,100 @@
+{
+  "hooks": [
+    {
+      "id": "hook-psy-001",
+      "text": "If someone says these 3 phrases, walk away.",
+      "niche": "psychology_facts",
+      "hook_type": "onscreen",
+      "source_url": "https://viralhooks.org/",
+      "added_at": "2026-09-14"
+    },
+    {
+      "id": "hook-psy-002",
+      "text": "Nobody believes this psychology fact is real.",
+      "niche": "psychology_facts",
+      "hook_type": "spoken",
+      "source_url": "https://viralhooks.org/",
+      "added_at": "2026-09-14"
+    },
+    {
+      "id": "hook-mon-001",
+      "text": "This money habit quietly keeps you broke.",
+      "niche": "money_tips",
+      "hook_type": "onscreen",
+      "source_url": "https://viralhooks.org/",
+      "added_at": "2026-09-14"
+    },
+    {
+      "id": "hook-mon-002",
+      "text": "Your bank doesn't want you to check this one setting.",
+      "niche": "money_tips",
+      "hook_type": "caption",
+      "source_url": "https://viralhooks.org/",
+      "added_at": "2026-09-14"
+    },
+    {
+      "id": "hook-hea-001",
+      "text": "That 'healthy' breakfast is doing the opposite.",
+      "niche": "health_myths",
+      "hook_type": "onscreen",
+      "source_url": "https://viralhooks.org/",
+      "added_at": "2026-09-14"
+    },
+    {
+      "id": "hook-hea-002",
+      "text": "Doctors stopped believing this myth years ago.",
+      "niche": "health_myths",
+      "hook_type": "spoken",
+      "source_url": "https://viralhooks.org/",
+      "added_at": "2026-09-14"
+    },
+    {
+      "id": "hook-his-001",
+      "text": "This 100-year-old mystery was solved by accident.",
+      "niche": "history_mysteries",
+      "hook_type": "spoken",
+      "source_url": "https://viralhooks.org/",
+      "added_at": "2026-09-14"
+    },
+    {
+      "id": "hook-his-002",
+      "text": "The photo historians couldn't explain — until now.",
+      "niche": "history_mysteries",
+      "hook_type": "onscreen",
+      "source_url": "https://viralhooks.org/",
+      "added_at": "2026-09-14"
+    },
+    {
+      "id": "hook-spa-001",
+      "text": "Space does something to your body nobody talks about.",
+      "niche": "space_science",
+      "hook_type": "spoken",
+      "source_url": "https://viralhooks.org/",
+      "added_at": "2026-09-14"
+    },
+    {
+      "id": "hook-spa-002",
+      "text": "This planet shouldn't exist — but it does.",
+      "niche": "space_science",
+      "hook_type": "onscreen",
+      "source_url": "https://viralhooks.org/",
+      "added_at": "2026-09-14"
+    },
+    {
+      "id": "hook-ai-001",
+      "text": "This AI tool does in 10 seconds what took me an hour.",
+      "niche": "ai_tools",
+      "hook_type": "spoken",
+      "source_url": "https://viralhooks.org/",
+      "added_at": "2026-09-14"
+    },
+    {
+      "id": "hook-ai-002",
+      "text": "Stop paying for apps — this free AI does it better.",
+      "niche": "ai_tools",
+      "hook_type": "onscreen",
+      "source_url": "https://viralhooks.org/",
+      "added_at": "2026-09-14"
+    }
+  ]
+}
