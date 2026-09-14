@@ -21,7 +21,7 @@
 - [x] M7 Voice (2026-09-14): modules/voice/tts.py (ElevenLabs client, injectable transport) + duration gate + docs/voice-selection.md + CLI; 5 tests green; G7 unit criteria met (real generation pending)
 - [x] M8 Assembly/QC (2026-09-14): modules/assemble/{task_builder,runner,qc} + CLI; 14 tests green (ffmpeg lavfi finals rendered in-test); G8 unit criteria met (real MPT run pending)
 - [x] M9 Publishing (2026-09-14): modules/publish/{metadata,record,uploader} + docs/publish-manual.md + CLI; 7 tests green; G9 unit criteria met (real publish pending)
-- [ ] M10 Analytics Readback
+- [x] M10 Analytics Readback (2026-09-14): modules/analytics/{pull,windows,verdict,readback} + CLI; 8 tests green; G10 unit criteria met (live pulls pending)
 - [ ] M11 Orchestration
 - [ ] M12 E2E
 

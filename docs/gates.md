@@ -15,7 +15,7 @@ Live gates (G1, G5–G10) additionally require human key/spend approval (Wave 3)
 | G7 | M7 Voice | ⬜ pending | unit criteria met 2026-09-14: request payload (voice_id/model/text) verified, text re-cleaned before send, 15-60s ffprobe gate (20s ok / 8s rejected). Real generation + blind listen pending keys | — | — |
 | G8 | M8 Assembly | ⬜ pending | unit criteria met 2026-09-14: mpt_task maps manifest->MPT fields (local source, assets/ rel paths, word_by_word subs, 9:16), batch ≤100 validated, QC checks res/audio/duration/size + frame extract. Real MPT run + operator watch pending | — | — |
 | G9 | M9 Publishing | ⬜ pending | unit criteria met 2026-09-14: metadata bounded (≤100 title, ≤15 deduped tags, CTA enforced), record schema-valid + dupes rejected, cadence blocks 3rd daily post. Real publish pending | — | — |
-| G10 | M10 Readback | ⬜ pending | readbacks at all windows, ≥ 1 format status decision | — | — |
+| G10 | M10 Readback | ⬜ pending | unit criteria met 2026-09-14: tz-safe 48h/7d/28d scheduling, win=2x median & AVD>=70%, readback schema-valid, verdict feeds M3 promote/retire, weekly summary emitter. Live pulls pending keys | — | — |
 | G11 | M11 Orchestration | ⬜ pending | weekly cron fires, cost ledger caps, approval gate blocks unapproved spend | — | — |
 | G12 | M12 E2E | ⬜ pending | real published video, ≤ 30 min human time, cost in cap, 48h readback | — | — |
 
