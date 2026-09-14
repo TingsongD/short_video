@@ -25,5 +25,7 @@
 - [ ] M11 Orchestration
 - [ ] M12 E2E
 
-## Wave 2 — Integration ⬜ NOT STARTED (test_e2e_dry after M10)
+## Wave 2 — Integration ✅ DRY RUN GREEN (2026-09-14)
+
+- [x] `tests/test_e2e_dry.py`: M1→M8 driven on fixtures only — niche_report → scored_ideas → format_library → hooks → shot_list → asset_manifest → voice.mp3 → mpt_task + batch — every contract validated against its frozen schema and asserted written in pipeline order; zero network/spend (155 tests green)
 ## Wave 3 — Live gates + autonomy ⬜ NOT STARTED

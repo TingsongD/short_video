@@ -49,7 +49,8 @@ def get(lib, format_id):
 def add(lib, entry):
     """entry without format_id gets a stable slug; collisions get -2, -3..."""
     entry = dict(entry)
-    entry.setdefault("format_id", new_id(lib, entry["name"]))
+    if not entry.get("format_id"):
+        entry["format_id"] = new_id(lib, entry["name"])
     entry.setdefault("status", "candidate")
     entry.setdefault("our_stats", {"videos": 0, "wins": 0, "avg_multiplier": 0})
     if entry["status"] not in STATUSES:
