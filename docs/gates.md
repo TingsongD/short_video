@@ -6,7 +6,7 @@ Live gates (G1, G5–G10) additionally require human key/spend approval (Wave 3)
 | Gate | Module | Status | Evidence | Signed by | Date |
 |---|---|---|---|---|---|
 | **G0** | M0 Foundations | ✅ **SIGNED** | `make test` green (folders, config, secrets shape, schema round-trips); `uv run python cli.py --help` runs in vendor/MoneyPrinterTurbo; no key-shaped strings in tracked files; vendor pins in docs/vendor-pins.md | coordinator (Wave 0) | 2026-09-14 |
-| G1 | M1 Niche Radar | ⬜ pending | needs live YT scan < 5,000 units, schema-valid report, 3 manual spot-checks | — | — |
+| G1 | M1 Niche Radar | ⬜ pending | unit criteria met 2026-09-14: schema-valid report from fixture scan, quota counter caps search calls + degrades to channel-only, breakout flag at 5x/2x/14d. Live scan still needed | — | — |
 | G2 | M2 Idea Grill | ⬜ pending | ≥ 30% kill rate, ≥ 5 passing, human audit ≥ 8/10 agreement | — | — |
 | G3 | M3 Format Library | ⬜ pending | ≥ 10 seeded entries, all ideas matched, schema-valid library | — | — |
 | G4 | M4 Hook Bank | ⬜ pending | ≥ 5 hooks per seed niche, selector integrated with M5 | — | — |

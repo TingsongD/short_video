@@ -10,16 +10,20 @@
 - [x] AGENTS.md ownership map, docs/gates.md (G0 signed), docs/vendor-pins.md
 - [x] `make test` green; MPT `cli.py --help` smoke test OK
 
-## Wave 1 — Parallel module build ⬜ NOT STARTED (handed to K3 swarm)
+## Sequential build (single builder; swarm plan in AGENTS.md superseded)
 
-- [ ] Agent R → M1 Niche Radar
-- [ ] Agent G → M2 Idea Grill
-- [ ] Agent F → M3 Format Library + M4 Hook Bank
-- [ ] Agent S → M5 Script Engine
-- [ ] Agent V → M6 Asset Pipeline
-- [ ] Agent T → M7 Voice
-- [ ] Agent A → M8 Assembly/QC
-- [ ] Agent P → M9 Publishing + M10 Readback
+- [x] M1 Niche Radar (2026-09-14): modules/radar/{client,quota,metrics,scanner,cluster,report} + CLI `python -m modules.radar`; 23 tests green; G1 unit criteria met (live scan pending)
+- [ ] M2 Idea Grill
+- [ ] M3 Format Library
+- [ ] M4 Hook Bank
+- [ ] M5 Script Engine
+- [ ] M6 Asset Pipeline
+- [ ] M7 Voice
+- [ ] M8 Assembly/QC
+- [ ] M9 Publishing
+- [ ] M10 Analytics Readback
+- [ ] M11 Orchestration
+- [ ] M12 E2E
 
-## Wave 2 — Integration ⬜ NOT STARTED
+## Wave 2 — Integration ⬜ NOT STARTED (test_e2e_dry after M10)
 ## Wave 3 — Live gates + autonomy ⬜ NOT STARTED
