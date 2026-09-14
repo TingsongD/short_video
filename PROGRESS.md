@@ -18,7 +18,7 @@
 - [x] M4 Hook Bank (2026-09-14): modules/hooks/select.py + seeded data/hooks/bank.json + docs/hook-curation.md; 6 tests green; G4 unit criteria met (curation cadence is manual)
 - [x] M5 Script Engine (2026-09-14): modules/script/{write,shots,voicetext,engine} + CLI; 15 tests green; G5 unit criteria met (script approval pending LLM)
 - [x] M6 Asset Pipeline (2026-09-14): modules/assets/{queue,intake,pexels,jimeng_bridge,manifest} + jimeng_selectors.json + docs/jimeng-manual-lane.md; 17 tests green; G6 unit criteria met (Lane B real run pending)
-- [ ] M7 Voice
+- [x] M7 Voice (2026-09-14): modules/voice/tts.py (ElevenLabs client, injectable transport) + duration gate + docs/voice-selection.md + CLI; 5 tests green; G7 unit criteria met (real generation pending)
 - [ ] M8 Assembly/QC
 - [ ] M9 Publishing
 - [ ] M10 Analytics Readback
