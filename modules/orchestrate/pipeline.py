@@ -17,13 +17,18 @@ def run_stages(cmd, stages, log_dir=None, now=None):
         "stages": [],
         "status": "ok",
     }
+    import time
     for name, fn in stages:
+        t0 = time.monotonic()
         try:
             fn()
-            record["stages"].append({"name": name, "status": "ok"})
+            record["stages"].append({
+                "name": name, "status": "ok",
+                "duration_s": round(time.monotonic() - t0, 3)})
         except Exception as e:
             record["stages"].append({
                 "name": name, "status": "failed",
+                "duration_s": round(time.monotonic() - t0, 3),
                 "error": f"{type(e).__name__}: {e}",
             })
             record["status"] = "failed"

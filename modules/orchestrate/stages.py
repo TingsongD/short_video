@@ -53,7 +53,8 @@ def produce_stages(idea_id, ctx):
     """
     from modules.assets import manifest as manifest_mod
     from modules.assets import queue
-    from modules.assemble import qc, task_builder
+    from modules.assemble import qc as qc_mod
+    from modules.assemble import task_builder
     from modules.formats import library as format_lib
     from modules.formats import match as match_mod
     from modules.hooks import select as hook_sel
@@ -94,18 +95,28 @@ def produce_stages(idea_id, ctx):
         state["shot_list_path"] = engine.save_shot_list(doc, out_dir=base)
 
     def assets():
+        from modules.assets import intake
         adir = queue.render_cards(state["shot_list"], base=base)
-        shot_kinds = {s["idx"]: s["asset_type"]
-                      for s in state["shot_list"]["shots"]}
-        doc = manifest_mod.build_manifest(
-            video_id, adir, len(state["shot_list"]["shots"]), shot_kinds)
-        for s in state["shot_list"]["shots"]:
-            if s["idx"] in doc["missing_shots"] and ctx.get("pexels"):
+        shots = state["shot_list"]["shots"]
+        shot_kinds = {s["idx"]: s["asset_type"] for s in shots}
+
+        def missing():
+            found = intake.scan_folder(adir)
+            return [s for s in shots
+                    if not found.get(s["idx"], {}).get("ok")]
+
+        for s in missing():
+            if ctx.get("pexels"):
                 ctx["pexels"].fetch(
                     s["pexels_fallback_term"], s["asset_type"],
                     adir / queue.target_name(s))
+        left = missing()
+        if len(left) == len(shots):
+            raise RuntimeError(
+                f"assets incomplete — Lane B drop pending for all shots "
+                f"in {adir}")
         doc = manifest_mod.build_manifest(
-            video_id, adir, len(state["shot_list"]["shots"]), shot_kinds)
+            video_id, adir, len(shots), shot_kinds)
         manifest_mod.write_manifest(doc, adir)
         if not doc["complete"]:
             raise RuntimeError(
@@ -147,7 +158,7 @@ def produce_stages(idea_id, ctx):
 
     def qc():
         for f in state["finals"]:
-            ok, failures = qc.qc_video(
+            ok, failures = qc_mod.qc_video(
                 f, expected_res=tuple(
                     int(x) for x in cfg["assembly"]["resolution"].split("x")),
                 voice_duration=None)

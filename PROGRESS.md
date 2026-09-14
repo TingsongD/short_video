@@ -23,7 +23,7 @@
 - [x] M9 Publishing (2026-09-14): modules/publish/{metadata,record,uploader} + docs/publish-manual.md + CLI; 7 tests green; G9 unit criteria met (real publish pending)
 - [x] M10 Analytics Readback (2026-09-14): modules/analytics/{pull,windows,verdict,readback} + CLI; 8 tests green; G10 unit criteria met (live pulls pending)
 - [x] M11 Orchestration (2026-09-14): modules/orchestrate/{ledger,approval,pipeline,stages,schedule} + `run.sh` (produce/readback/weekly/approve/cron-line/install-cron/ledger); 18 tests green; G11 unit criteria met (live cron fire pending)
-- [ ] M12 E2E
+- [ ] M12 E2E — offline portion done (2026-09-14): 9 failure-drill tests green (dead LLM/TTS/YT-quota, empty Lane B, missing finals, QC fail, unapproved publish, killed idea); per-stage timing in run records; docs/e2e-report.md template. **Live run awaits keys + spend approval**
 
 ## Wave 2 — Integration ✅ DRY RUN GREEN (2026-09-14)
 
