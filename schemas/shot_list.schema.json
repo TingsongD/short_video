@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "shot_list.schema.json",
+  "title": "ShotList",
+  "description": "M5 -> M6 contract. Script + shot list for one video. Frozen in Wave 0.",
+  "type": "object",
+  "required": ["video_id", "idea_id", "format_id", "script_text", "hook_line", "voice_text", "subtitle_lang", "shots"],
+  "properties": {
+    "video_id": { "type": "string", "minLength": 1 },
+    "idea_id": { "type": "string", "minLength": 1 },
+    "format_id": { "type": "string", "minLength": 1 },
+    "script_text": { "type": "string", "minLength": 1 },
+    "hook_line": { "type": "string", "minLength": 1, "description": "must equal the first sentence of script_text" },
+    "voice_text": { "type": "string", "minLength": 1, "description": "TTS-clean text: no markdown, numbers spelled out" },
+    "subtitle_lang": { "type": "string", "default": "en" },
+    "shots": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 7,
+      "items": {
+        "type": "object",
+        "required": ["idx", "duration_s", "prompt_jimeng", "asset_type", "pexels_fallback_term"],
+        "properties": {
+          "idx": { "type": "integer", "minimum": 0 },
+          "duration_s": { "type": "number", "exclusiveMinimum": 0 },
+          "prompt_jimeng": { "type": "string", "minLength": 1 },
+          "asset_type": { "enum": ["video", "image"] },
+          "pexels_fallback_term": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  }
+}

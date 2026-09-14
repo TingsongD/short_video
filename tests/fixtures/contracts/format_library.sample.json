@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "formats": [
+    {
+      "format_id": "fmt-dark-list-3",
+      "name": "Dark-facts 3-item listicle",
+      "hook_type": "onscreen",
+      "beats": [
+        "Stakes: name the situation where the viewer is vulnerable",
+        "Mechanism: reveal the 3 items with one-line explanations",
+        "Payoff: give the counter-move or memorable takeaway"
+      ],
+      "visual_payoff": "Each item appears as bold on-screen text over a matching dramatic clip",
+      "cta_pattern": "Follow for part 2",
+      "watch_reference": "https://www.youtube.com/watch?v=vid_outlier_1",
+      "status": "candidate",
+      "our_stats": { "videos": 0, "wins": 0, "avg_multiplier": 0 },
+      "niche": "psychology_facts",
+      "notes": "Extracted from 2026-09-14 radar cluster (2 channels, dark psychology topic)"
+    }
+  ]
+}

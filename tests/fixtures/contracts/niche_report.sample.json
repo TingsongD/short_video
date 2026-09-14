@@ -1,0 +1,47 @@
+{
+  "scan_meta": {
+    "scanned_at": "2026-09-14T08:00:00Z",
+    "niches_scanned": ["psychology_facts", "money_tips"],
+    "quota_used": 4200,
+    "scanner_version": "0.1.0"
+  },
+  "niches": [
+    {
+      "niche": "psychology_facts",
+      "cluster_size": 2,
+      "confirmed": true,
+      "breakout_videos": [
+        {
+          "video_id": "vid_outlier_1",
+          "channel_id": "UCseed1",
+          "channel_title": "Fixture Psychology Channel",
+          "title": "dark psychology: 3 phrases that control any conversation",
+          "views": 6200,
+          "channel_avg": 1000.0,
+          "multiplier": 6.2,
+          "subs_ratio": 3.1,
+          "published_at": "2026-09-11T12:00:00Z",
+          "format_guess": "listicle_dark_facts"
+        },
+        {
+          "video_id": "vid_search_2",
+          "channel_id": "UCseed2",
+          "channel_title": "Fixture Second Channel",
+          "title": "the psychology fact nobody believes",
+          "views": 5400,
+          "channel_avg": 900.0,
+          "multiplier": 6.0,
+          "subs_ratio": 3.6,
+          "published_at": "2026-09-11T18:30:00Z",
+          "format_guess": "listicle_dark_facts"
+        }
+      ]
+    },
+    {
+      "niche": "money_tips",
+      "cluster_size": 0,
+      "confirmed": false,
+      "breakout_videos": []
+    }
+  ]
+}

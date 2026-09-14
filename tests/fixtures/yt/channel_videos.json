@@ -1,0 +1,12 @@
+{
+  "_comment": "videos.list response shape for M1 unit tests. One seeded outlier: vid_outlier_1 has 6200 views vs ~1000 median (multiplier 6.2). Channel subs = 2000 (subs_ratio 3.1). Ages relative to 2026-09-14.",
+  "items": [
+    { "id": "vid_normal_1", "snippet": { "title": "5 psychology tricks", "publishedAt": "2026-09-10T12:00:00Z", "channelId": "UCseed1" }, "statistics": { "viewCount": "1000" } },
+    { "id": "vid_normal_2", "snippet": { "title": "why you procrastinate", "publishedAt": "2026-09-08T12:00:00Z", "channelId": "UCseed1" }, "statistics": { "viewCount": "900" } },
+    { "id": "vid_normal_3", "snippet": { "title": "habits of calm people", "publishedAt": "2026-09-06T12:00:00Z", "channelId": "UCseed1" }, "statistics": { "viewCount": "1100" } },
+    { "id": "vid_normal_4", "snippet": { "title": "reading body language", "publishedAt": "2026-09-04T12:00:00Z", "channelId": "UCseed1" }, "statistics": { "viewCount": "950" } },
+    { "id": "vid_normal_5", "snippet": { "title": "the mere exposure effect", "publishedAt": "2026-09-02T12:00:00Z", "channelId": "UCseed1" }, "statistics": { "viewCount": "1050" } },
+    { "id": "vid_outlier_1", "snippet": { "title": "dark psychology: 3 phrases that control any conversation", "publishedAt": "2026-09-11T12:00:00Z", "channelId": "UCseed1" }, "statistics": { "viewCount": "6200" } },
+    { "id": "vid_old_1", "snippet": { "title": "old viral hit (must be excluded by age filter)", "publishedAt": "2026-08-20T12:00:00Z", "channelId": "UCseed1" }, "statistics": { "viewCount": "9000" } }
+  ]
+}

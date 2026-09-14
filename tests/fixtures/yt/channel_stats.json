@@ -1,0 +1,15 @@
+{
+  "_comment": "channels.list response shape for M1 unit tests.",
+  "items": [
+    {
+      "id": "UCseed1",
+      "snippet": { "title": "Fixture Psychology Channel" },
+      "statistics": { "subscriberCount": "2000", "videoCount": "42" }
+    },
+    {
+      "id": "UCseed2",
+      "snippet": { "title": "Fixture Second Channel" },
+      "statistics": { "subscriberCount": "1500", "videoCount": "18" }
+    }
+  ]
+}

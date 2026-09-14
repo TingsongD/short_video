@@ -1,0 +1,38 @@
+{
+  "generated_at": "2026-09-14T09:00:00Z",
+  "source_report": "data/radar/2026-09-14.json",
+  "ideas": [
+    {
+      "idea_id": "idea-20260914-001",
+      "niche": "psychology_facts",
+      "topic": "3 phrases manipulators use in arguments",
+      "hook_overlay": "If someone says these 3 phrases, walk away.",
+      "virality_score": 8.0,
+      "hook_score": 8.5,
+      "payoff": "Viewer learns the 3 exact phrases, why each works psychologically, and the counter-response for each.",
+      "three_bullets": [
+        "Stakes: manipulators reuse the same scripted phrases in arguments",
+        "Mechanism: each phrase exploits a known cognitive bias (gaslighting, anchoring, DARVO)",
+        "Result: the one-sentence counter that defuses each phrase"
+      ],
+      "cta": "Follow for the next phrase breakdown",
+      "status": "pass",
+      "kill_reason": null,
+      "source_video_ids": ["vid_outlier_1", "vid_search_2"]
+    },
+    {
+      "idea_id": "idea-20260914-002",
+      "niche": "psychology_facts",
+      "topic": "general thoughts on mindset",
+      "hook_overlay": "Mindset matters.",
+      "virality_score": 3.0,
+      "hook_score": 2.5,
+      "payoff": "Vague encouragement with no specific mechanism or demonstrable result.",
+      "three_bullets": ["mindset is important", "think differently", "results will follow"],
+      "cta": "",
+      "status": "kill",
+      "kill_reason": "no specific viewer, no repayable hook, no filmable payoff",
+      "source_video_ids": []
+    }
+  ]
+}

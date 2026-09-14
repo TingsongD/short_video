@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "scored_ideas.schema.json",
+  "title": "ScoredIdeas",
+  "description": "M2 -> M3/M5 contract. Grill-scored idea slate. Frozen in Wave 0.",
+  "type": "object",
+  "required": ["generated_at", "source_report", "ideas"],
+  "properties": {
+    "generated_at": { "type": "string", "format": "date-time" },
+    "source_report": { "type": "string", "description": "path to the niche_report this slate derives from" },
+    "ideas": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["idea_id", "niche", "topic", "hook_overlay", "virality_score", "hook_score", "payoff", "three_bullets", "cta", "status"],
+        "properties": {
+          "idea_id": { "type": "string", "minLength": 1 },
+          "niche": { "type": "string", "minLength": 1 },
+          "topic": { "type": "string", "minLength": 1 },
+          "hook_overlay": { "type": "string", "minLength": 1, "description": "5-second on-screen hook; must be repayable by the payoff" },
+          "virality_score": { "type": "number", "minimum": 1, "maximum": 10 },
+          "hook_score": { "type": "number", "minimum": 1, "maximum": 10 },
+          "payoff": { "type": "string", "minLength": 1 },
+          "three_bullets": { "type": "array", "items": { "type": "string" }, "minItems": 3, "maxItems": 3 },
+          "cta": { "type": "string" },
+          "status": { "enum": ["pass", "kill"] },
+          "kill_reason": { "type": ["string", "null"], "description": "required when status=kill" },
+          "source_video_ids": { "type": "array", "items": { "type": "string" } }
+        },
+        "if": { "properties": { "status": { "const": "kill" } } },
+        "then": { "required": ["kill_reason"] }
+      }
+    }
+  }
+}

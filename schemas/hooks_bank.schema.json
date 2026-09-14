@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "hooks_bank.schema.json",
+  "title": "HooksBank",
+  "description": "M4 contract. data/hooks/bank.json — curated hooks from viralhooks.org. Frozen in Wave 0.",
+  "type": "object",
+  "required": ["hooks"],
+  "properties": {
+    "hooks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "text", "niche", "hook_type", "source_url", "added_at"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "text": { "type": "string", "minLength": 1 },
+          "niche": { "type": "string", "minLength": 1 },
+          "hook_type": { "enum": ["spoken", "caption", "onscreen"] },
+          "source_url": { "type": "string", "pattern": "^https?://" },
+          "added_at": { "type": "string", "format": "date" }
+        }
+      }
+    }
+  }
+}

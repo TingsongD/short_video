@@ -1,0 +1,45 @@
+# Short-Form AI Video System — non-secret system configuration
+# Contract: BUILD_PLAN.md §3. Values here are the tunable thresholds.
+
+[radar]
+breakout_multiplier = 5.0      # views / channel median views
+breakout_subs_ratio = 2.0      # views / channel subscribers
+max_video_age_days = 14
+cluster_min_channels = 2       # distinct channels spiking = confirmed cluster
+daily_quota_budget = 9000      # YouTube Data API units/day
+
+[grill]
+pass_hook_score = 7.0          # 1.0–10.0
+pass_virality_score = 6.0      # 1.0–10.0
+ideas_per_cluster = 8
+
+[formats]
+promote_min_videos = 3         # our videos using the format
+promote_min_multiplier = 1.5   # vs our channel median
+retire_consecutive_losses = 3
+
+[voice]
+provider = "elevenlabs"
+model = "eleven_v3"
+voice_id = ""                  # pin after audition — see docs/voice-selection.md
+min_duration_s = 15
+max_duration_s = 60
+
+[assembly]
+video_aspect = "9:16"
+resolution = "1080x1920"
+video_count_variants = 2
+bgm_volume = 0.15
+subtitle_mode = "word_by_word"
+
+[publish]
+platforms = ["youtube"]        # shorts first; tiktok/instagram later
+max_posts_per_day = 2
+
+[readback]
+windows_hours = [48, 168, 672] # 48h / 7d / 28d
+win_views_multiplier = 2.0     # vs channel baseline
+win_avd_ratio = 0.7            # avg view duration / video length
+
+[costs]
+weekly_cap_usd = 25.0

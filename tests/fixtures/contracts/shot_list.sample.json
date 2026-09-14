@@ -1,0 +1,46 @@
+{
+  "video_id": "v-20260914-001",
+  "idea_id": "idea-20260914-001",
+  "format_id": "fmt-dark-list-3",
+  "script_text": "If someone says these 3 phrases, walk away. Manipulators reuse the same scripted lines in every argument. Phrase one: 'you're overreacting' — it makes you doubt your own read of the situation. Phrase two: 'I never said that' — pure gaslighting to rewrite what happened. Phrase three: 'after everything I've done for you' — guilt used as a weapon. The counter is one calm sentence: name the tactic out loud, and it stops working.",
+  "hook_line": "If someone says these 3 phrases, walk away.",
+  "voice_text": "If someone says these three phrases, walk away. Manipulators reuse the same scripted lines in every argument. Phrase one: you are overreacting. It makes you doubt your own read of the situation. Phrase two: I never said that. Pure gaslighting to rewrite what happened. Phrase three: after everything I have done for you. Guilt used as a weapon. The counter is one calm sentence: name the tactic out loud, and it stops working.",
+  "subtitle_lang": "en",
+  "shots": [
+    {
+      "idx": 0,
+      "duration_s": 4.0,
+      "prompt_jimeng": "Close-up of a tense argument across a table, dramatic low-key lighting, cinematic vertical 9:16",
+      "asset_type": "video",
+      "pexels_fallback_term": "couple arguing dramatic"
+    },
+    {
+      "idx": 1,
+      "duration_s": 5.0,
+      "prompt_jimeng": "Person looking confused and doubting themselves, moody shadows, vertical 9:16",
+      "asset_type": "video",
+      "pexels_fallback_term": "confused person thinking"
+    },
+    {
+      "idx": 2,
+      "duration_s": 5.0,
+      "prompt_jimeng": "Two people disagreeing about what was said, split lighting, vertical 9:16",
+      "asset_type": "video",
+      "pexels_fallback_term": "argument disagreement"
+    },
+    {
+      "idx": 3,
+      "duration_s": 5.0,
+      "prompt_jimeng": "Person with guilty expression being confronted, cinematic, vertical 9:16",
+      "asset_type": "image",
+      "pexels_fallback_term": "guilt expression portrait"
+    },
+    {
+      "idx": 4,
+      "duration_s": 6.0,
+      "prompt_jimeng": "Calm confident person speaking one sentence, warm light, resolution mood, vertical 9:16",
+      "asset_type": "video",
+      "pexels_fallback_term": "calm confident person speaking"
+    }
+  ]
+}

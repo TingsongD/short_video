@@ -1,0 +1,22 @@
+{
+  "video_subject": "3 phrases manipulators use in arguments",
+  "video_script": "If someone says these 3 phrases, walk away. Manipulators reuse the same scripted lines in every argument. Phrase one: 'you're overreacting'. Phrase two: 'I never said that'. Phrase three: 'after everything I've done for you'. The counter is one calm sentence: name the tactic out loud, and it stops working.",
+  "video_language": "en",
+  "video_source": "local",
+  "video_materials": [
+    { "url": "assets/shot-00.mp4" },
+    { "url": "assets/shot-01.mp4" },
+    { "url": "assets/shot-02.mp4" },
+    { "url": "assets/shot-03.png" },
+    { "url": "assets/shot-04.mp4" }
+  ],
+  "custom_audio_file": "voice.mp3",
+  "video_aspect": "9:16",
+  "video_count": 2,
+  "subtitle_enabled": true,
+  "subtitle_display_mode": "word_by_word",
+  "bgm_type": "random",
+  "bgm_volume": 0.15,
+  "voice_volume": 1.0,
+  "n_threads": 4
+}

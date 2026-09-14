@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "niche_report.schema.json",
+  "title": "NicheRadarReport",
+  "description": "M1 -> M2 contract. Weekly outlier scan output. Frozen in Wave 0.",
+  "type": "object",
+  "required": ["scan_meta", "niches"],
+  "properties": {
+    "scan_meta": {
+      "type": "object",
+      "required": ["scanned_at", "niches_scanned", "quota_used"],
+      "properties": {
+        "scanned_at": { "type": "string", "format": "date-time" },
+        "niches_scanned": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+        "quota_used": { "type": "integer", "minimum": 0 },
+        "scanner_version": { "type": "string" }
+      }
+    },
+    "niches": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["niche", "cluster_size", "confirmed", "breakout_videos"],
+        "properties": {
+          "niche": { "type": "string", "minLength": 1 },
+          "cluster_size": { "type": "integer", "minimum": 0 },
+          "confirmed": { "type": "boolean" },
+          "breakout_videos": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["video_id", "channel_id", "title", "views", "channel_avg", "multiplier", "subs_ratio", "published_at"],
+              "properties": {
+                "video_id": { "type": "string", "minLength": 1 },
+                "channel_id": { "type": "string", "minLength": 1 },
+                "channel_title": { "type": "string" },
+                "title": { "type": "string" },
+                "views": { "type": "integer", "minimum": 0 },
+                "channel_avg": { "type": "number", "minimum": 0 },
+                "multiplier": { "type": "number", "minimum": 0 },
+                "subs_ratio": { "type": "number", "minimum": 0 },
+                "published_at": { "type": "string", "format": "date-time" },
+                "format_guess": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

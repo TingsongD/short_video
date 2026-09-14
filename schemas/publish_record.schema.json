@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "publish_record.schema.json",
+  "title": "PublishRecord",
+  "description": "M9 -> M10 contract. One published video. Frozen in Wave 0.",
+  "type": "object",
+  "required": ["video_id", "platform_video_ids", "title", "caption", "hashtags", "published_at", "format_id", "idea_id", "niche"],
+  "properties": {
+    "video_id": { "type": "string", "minLength": 1 },
+    "platform_video_ids": {
+      "type": "object",
+      "minProperties": 1,
+      "properties": {
+        "youtube": { "type": "string" },
+        "tiktok": { "type": "string" },
+        "instagram": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "title": { "type": "string", "minLength": 1, "maxLength": 100 },
+    "caption": { "type": "string" },
+    "hashtags": { "type": "array", "items": { "type": "string" } },
+    "published_at": { "type": "string", "format": "date-time" },
+    "format_id": { "type": "string", "minLength": 1 },
+    "idea_id": { "type": "string", "minLength": 1 },
+    "niche": { "type": "string", "minLength": 1 },
+    "variant_index": { "type": "integer", "minimum": 1 }
+  }
+}

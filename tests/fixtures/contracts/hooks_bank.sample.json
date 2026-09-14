@@ -1,0 +1,28 @@
+{
+  "hooks": [
+    {
+      "id": "hook-psy-001",
+      "text": "If someone says these 3 phrases, walk away.",
+      "niche": "psychology_facts",
+      "hook_type": "onscreen",
+      "source_url": "https://viralhooks.org/",
+      "added_at": "2026-09-14"
+    },
+    {
+      "id": "hook-psy-002",
+      "text": "Nobody believes this psychology fact is real.",
+      "niche": "psychology_facts",
+      "hook_type": "spoken",
+      "source_url": "https://viralhooks.org/",
+      "added_at": "2026-09-14"
+    },
+    {
+      "id": "hook-mon-001",
+      "text": "This money habit quietly keeps you broke.",
+      "niche": "money_tips",
+      "hook_type": "onscreen",
+      "source_url": "https://viralhooks.org/",
+      "added_at": "2026-09-14"
+    }
+  ]
+}

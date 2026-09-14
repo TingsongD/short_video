@@ -1,0 +1,18 @@
+# Secrets — never commit
+config/secrets.toml
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Large generated artifacts
+data/production/
+logs/
+
+# Vendored repos — re-clone via pins in docs/vendor-pins.md
+vendor/
+
+# OS
+.DS_Store

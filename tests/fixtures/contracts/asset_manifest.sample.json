@@ -1,0 +1,10 @@
+{
+  "video_id": "v-20260914-001",
+  "assets": [
+    { "shot_idx": 0, "file": "shot-00.mp4", "kind": "video", "source": "jimeng", "duration_s": 4.0, "width": 720, "height": 1280 },
+    { "shot_idx": 1, "file": "shot-01.mp4", "kind": "video", "source": "manual", "duration_s": 5.0, "width": 720, "height": 1280 },
+    { "shot_idx": 2, "file": "shot-02.mp4", "kind": "video", "source": "stock", "duration_s": 5.0, "width": 720, "height": 1280 },
+    { "shot_idx": 3, "file": "shot-03.png", "kind": "image", "source": "jimeng", "width": 720, "height": 1280 },
+    { "shot_idx": 4, "file": "shot-04.mp4", "kind": "video", "source": "jimeng", "duration_s": 6.0, "width": 720, "height": 1280 }
+  ]
+}

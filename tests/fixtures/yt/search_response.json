@@ -1,0 +1,7 @@
+{
+  "_comment": "search.list response shape for M1 unit tests (keyword scan, publishedAfter=14d).",
+  "items": [
+    { "id": { "videoId": "vid_search_1" }, "snippet": { "title": "dark psychology trick that went viral", "channelId": "UCseed1", "publishedAt": "2026-09-12T09:00:00Z" } },
+    { "id": { "videoId": "vid_search_2" }, "snippet": { "title": "the psychology fact nobody believes", "channelId": "UCseed2", "publishedAt": "2026-09-11T18:30:00Z" } }
+  ]
+}

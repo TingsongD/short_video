@@ -1,0 +1,33 @@
+# Seed niches for the Niche Radar (M1). The radar expands from these;
+# treat as starting points, not a fixed list. seed_channels are public
+# competitor/reference channels used to anchor each niche's baseline.
+
+[[niche]]
+name = "psychology_facts"
+keywords = ["psychology facts", "dark psychology", "human behavior facts"]
+seed_channels = ["@Psych2Go"]
+
+[[niche]]
+name = "money_tips"
+keywords = ["money habits", "personal finance tips", "how to save money"]
+seed_channels = ["@GrahamStephan"]
+
+[[niche]]
+name = "health_myths"
+keywords = ["health myths", "nutrition myths debunked", "fitness myths"]
+seed_channels = ["@DoctorMike"]
+
+[[niche]]
+name = "history_mysteries"
+keywords = ["history mysteries", "unsolved history", "forgotten history"]
+seed_channels = ["@WeirdHistory"]
+
+[[niche]]
+name = "space_science"
+keywords = ["space facts", "universe explained", "astronomy facts"]
+seed_channels = ["@kurzgesagt"]
+
+[[niche]]
+name = "ai_tools"
+keywords = ["ai tools", "best ai tools", "ai productivity"]
+seed_channels = ["@mattwolfe"]

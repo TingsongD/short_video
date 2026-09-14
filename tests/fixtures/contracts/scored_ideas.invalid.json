@@ -1,0 +1,20 @@
+{
+  "_comment": "NEGATIVE fixture: must FAIL schema validation. Two violations: three_bullets has 2 items; status=kill without kill_reason.",
+  "generated_at": "2026-09-14T09:00:00Z",
+  "source_report": "data/radar/2026-09-14.json",
+  "ideas": [
+    {
+      "idea_id": "idea-bad-001",
+      "niche": "psychology_facts",
+      "topic": "broken idea",
+      "hook_overlay": "Broken.",
+      "virality_score": 5.0,
+      "hook_score": 5.0,
+      "payoff": "Broken payoff.",
+      "three_bullets": ["only one", "only two"],
+      "cta": "",
+      "status": "kill",
+      "source_video_ids": []
+    }
+  ]
+}

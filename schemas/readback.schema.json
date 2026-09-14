@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "readback.schema.json",
+  "title": "Readback",
+  "description": "M10 -> M1/M3 contract. Analytics readback for one published video. Frozen in Wave 0.",
+  "type": "object",
+  "required": ["video_id", "windows", "verdict", "format_promotion"],
+  "properties": {
+    "video_id": { "type": "string", "minLength": 1 },
+    "windows": {
+      "type": "object",
+      "properties": {
+        "48h": { "$ref": "#/$defs/window" },
+        "7d": { "$ref": "#/$defs/window" },
+        "28d": { "$ref": "#/$defs/window" }
+      },
+      "minProperties": 1,
+      "additionalProperties": false
+    },
+    "verdict": { "enum": ["win", "loss", "pending"] },
+    "format_promotion": { "enum": ["none", "promote", "retire"] },
+    "baseline_median_views": { "type": "number", "minimum": 0 },
+    "notes": { "type": "string" }
+  },
+  "$defs": {
+    "window": {
+      "type": "object",
+      "required": ["pulled_at", "views"],
+      "properties": {
+        "pulled_at": { "type": "string", "format": "date-time" },
+        "views": { "type": "integer", "minimum": 0 },
+        "avg_view_duration_s": { "type": "number", "minimum": 0 },
+        "ctr": { "type": "number", "minimum": 0, "maximum": 1 },
+        "impressions": { "type": "integer", "minimum": 0 },
+        "retention_points": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["t_ratio", "audience_ratio"],
+            "properties": {
+              "t_ratio": { "type": "number", "minimum": 0, "maximum": 1 },
+              "audience_ratio": { "type": "number", "minimum": 0, "maximum": 1 }
+            }
+          }
+        },
+        "subs_gained": { "type": "integer" }
+      }
+    }
+  }
+}

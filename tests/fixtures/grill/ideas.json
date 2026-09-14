@@ -1,0 +1,55 @@
+{
+  "_comment": "M2 unit-test fixtures: raw candidate ideas before scoring. Cases: clean pass candidate; missing viewer; unrepayable hook; unfilmable payoff; unsupported number claim.",
+  "candidates": [
+    {
+      "idea_id": "cand-pass-1",
+      "niche": "psychology_facts",
+      "topic": "3 phrases manipulators use in arguments",
+      "hook_overlay": "If someone says these 3 phrases, walk away.",
+      "target_viewer": "18-34 viewers interested in relationships and self-protection",
+      "payoff": "Viewer learns the 3 phrases, the bias each exploits, and the counter-sentence.",
+      "filmable": true,
+      "number_claims": []
+    },
+    {
+      "idea_id": "cand-reject-viewer",
+      "niche": "psychology_facts",
+      "topic": "general thoughts on mindset",
+      "hook_overlay": "Mindset matters.",
+      "target_viewer": "",
+      "payoff": "Vague encouragement.",
+      "filmable": true,
+      "number_claims": []
+    },
+    {
+      "idea_id": "cand-reject-hook",
+      "niche": "money_tips",
+      "topic": "index fund basics",
+      "hook_overlay": "This will change your life forever!!!",
+      "target_viewer": "beginner investors",
+      "payoff": "Explains expense ratios with one concrete example.",
+      "filmable": true,
+      "number_claims": []
+    },
+    {
+      "idea_id": "cand-reject-filmable",
+      "niche": "space_science",
+      "topic": "what a black hole feels like from inside",
+      "hook_overlay": "You would not survive this.",
+      "target_viewer": "space-curious viewers",
+      "payoff": "Abstract speculation with no visual demonstration possible.",
+      "filmable": false,
+      "number_claims": []
+    },
+    {
+      "idea_id": "cand-reject-number",
+      "niche": "health_myths",
+      "topic": "detox teas",
+      "hook_overlay": "Detox teas remove 97% of toxins.",
+      "target_viewer": "wellness viewers",
+      "payoff": "Explains what the liver actually does.",
+      "filmable": true,
+      "number_claims": ["97% of toxins (no source)"]
+    }
+  ]
+}

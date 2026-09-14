@@ -1,0 +1,24 @@
+{
+  "video_id": "v-20260914-001",
+  "windows": {
+    "48h": {
+      "pulled_at": "2026-09-16T15:00:00Z",
+      "views": 2400,
+      "avg_view_duration_s": 18.5,
+      "ctr": 0.062,
+      "impressions": 38500,
+      "retention_points": [
+        { "t_ratio": 0.0, "audience_ratio": 1.0 },
+        { "t_ratio": 0.25, "audience_ratio": 0.71 },
+        { "t_ratio": 0.5, "audience_ratio": 0.55 },
+        { "t_ratio": 0.75, "audience_ratio": 0.44 },
+        { "t_ratio": 1.0, "audience_ratio": 0.36 }
+      ],
+      "subs_gained": 12
+    }
+  },
+  "verdict": "pending",
+  "format_promotion": "none",
+  "baseline_median_views": 1000.0,
+  "notes": "48h window only; 7d and 28d windows due later"
+}

@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "format_library.schema.json",
+  "title": "FormatLibrary",
+  "description": "M3 contract. data/formats/library.json. Frozen in Wave 0.",
+  "type": "object",
+  "required": ["version", "formats"],
+  "properties": {
+    "version": { "type": "integer", "minimum": 1 },
+    "formats": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["format_id", "name", "hook_type", "beats", "visual_payoff", "cta_pattern", "watch_reference", "status", "our_stats"],
+        "properties": {
+          "format_id": { "type": "string", "minLength": 1 },
+          "name": { "type": "string", "minLength": 1 },
+          "hook_type": { "enum": ["spoken", "caption", "onscreen"] },
+          "beats": { "type": "array", "items": { "type": "string" }, "minItems": 3, "maxItems": 3 },
+          "visual_payoff": { "type": "string", "minLength": 1 },
+          "cta_pattern": { "type": "string" },
+          "watch_reference": { "type": "string", "pattern": "^https?://" },
+          "status": { "enum": ["candidate", "proven", "retired"] },
+          "our_stats": {
+            "type": "object",
+            "required": ["videos", "wins"],
+            "properties": {
+              "videos": { "type": "integer", "minimum": 0 },
+              "wins": { "type": "integer", "minimum": 0 },
+              "avg_multiplier": { "type": "number", "minimum": 0 }
+            }
+          },
+          "niche": { "type": "string" },
+          "notes": { "type": "string" }
+        }
+      }
+    }
+  }
+}
