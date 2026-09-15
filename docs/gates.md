@@ -83,6 +83,24 @@ settled charges were not independently verified. Evidence is in
 G6/G8/G12 remain unsigned pending full asset coverage, real narration/subtitles,
 assembly and human review. No publishing took place.
 
+Hypit local editing follow-up (2026-09-15): the global Hypit Skill and local
+runtime are installed. The existing Jimeng coffee clip rendered successfully
+with two timed titles and original audio: five seconds, 1080×1920, 30 fps, AAC.
+Full decode and existing assembly QC pass using the authored five-second timeline
+as the duration reference; this is not real narration verification. Encoded frame
+review shows both titles and motion; the user's Chrome Studio plays to the final
+frame. Listening and creative acceptance remain for the user.
+
+The initial local render failed on Hypit 0.1.8's missing capture-child package
+resolution. A version-checked project bootstrap now loads the native resolvers;
+an offline child-process import regression passes. The repaired render reused
+the existing normalized clip and planned three local requests, zero hosted calls.
+No additional generation spend. Full suite: **231 passed in 25.48s**. Evidence:
+`data/production/v-jimeng-hypit-pilot/pilot_qc.json`, local build receipts,
+`data/production/setup-test-evidence.json`; instructions in
+`docs/jimeng-hypit-workflow.md`. G6/G8/G12 remain unsigned for full asset coverage,
+narration, speech-aligned captions and operator acceptance.
+
 - Folder tree per plan: `data/{radar,grill,formats,hooks,production,published,analytics,costs}`, `modules/`, `schemas/`, `tests/fixtures/`, `vendor/`, `config/`, `logs/`, `docs/`
 - Vendored: ai-marketing-skills @ `bc84dbc`, MoneyPrinterTurbo v1.3.7 @ `cf5a3ae` (uv sync --frozen, Python 3.11)
 - Contracts frozen: 9 schemas × 9 valid fixtures + 1 negative fixture, all round-trip via jsonschema

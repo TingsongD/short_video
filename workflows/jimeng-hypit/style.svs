@@ -1,0 +1,7 @@
+<?svml using="@hypit/svs@1"?>
+<sheet version="1">
+  film.main { background: #211810; }
+  media.full { stack-order: 0; fit: cover; playback: once-start; }
+  text.title { size: 88; weight: 400; line-height: 1.1; align: start; block-align: center; stack-order: 20; }
+  text.label { size: 28; weight: 400; tracking: 5; align: start; block-align: center; stack-order: 21; }
+</sheet>

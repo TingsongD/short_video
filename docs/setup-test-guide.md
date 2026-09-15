@@ -8,12 +8,13 @@ cost. Hypit is the editing/runtime tool; HypiHub is its hosted generation servic
 
 | Check | Result |
 | --- | --- |
-| Offline suite | 230 passed in 24.40 seconds after live-protocol and wait-recovery fixes |
+| Offline suite | 231 passed in 25.48 seconds, including local renderer startup regression |
 | Fresh MoneyPrinterTurbo render | Passed: 1080×1920, 8.07 seconds, audio present |
 | Smoke-test content | Synthetic fixture media, subtitles disabled; not a finished creative video |
 | Jimeng Canvas CLI | 1.0.1 authorized; pilot generated and downloaded under a 30-credit ceiling; media checks passed |
 | Real script/narration | LLM and ElevenLabs keys missing; channel voice not selected |
 | Hypit executable | 0.1.8 installed in `vendor/hypit-runtime`, isolated from production |
+| Hypit skill + local editing | Global skill installed; Jimeng coffee clip rendered with timed titles and source audio, 1080×1920, five seconds; see [workflow guide](jimeng-hypit-workflow.md) |
 | HypiHub draft | Valid source; one five-second, 720p, 9:16 Seedance fast request |
 | HypiHub result | Authorized and preflight passed, but the one submitted build failed with HTTP 402 `insufficient_credits`; no output |
 | Approved work | One generation submitted to each service; no automatic regeneration. HypiHub estimate was 142.6 credits / US$0.713; settled charges not independently verified |
@@ -226,9 +227,12 @@ applied unchanged to a silent 720p source clip.
 - Render with subtitles enabled, watch the hook/order/captions/audio and run QC.
   Stop for review before publishing. See [production resume](production-resume.md).
 
-Testing Hypit's local editor/rendering is a separate comparison: use the same
-accepted clips/narration in a short composition with captions and one callout.
-That rendering runtime has not been prepared or tested by this generation-only setup.
+The separate local editing test is now complete: the global Hypit skill and local
+runtime are installed, and the accepted Jimeng shot rendered with two timed titles
+and source audio. The launcher repairs a Hypit 0.1.8 capture-process packaging bug.
+See [the subscription workflow](jimeng-hypit-workflow.md) for the editable Studio,
+finished MP4 and reuse steps. Full narration and speech-aligned captions still need
+their own production check.
 
 Sources: [Hypit installation](https://github.com/hypit-ai/hypit/blob/07bf1cca6730091691030bbe8a064275b2dcf817/skills/hypit/references/environment/distribution.md),
 [HypiHub provider](https://github.com/hypit-ai/hypit/blob/07bf1cca6730091691030bbe8a064275b2dcf817/packages/provider-hypihub/README.md),

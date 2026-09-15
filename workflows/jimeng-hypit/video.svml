@@ -1,0 +1,51 @@
+<?svml using="@hypit/markup@1"?>
+<svml>
+  <import as="asset" from="@hypit/media@1"/>
+  <import as="time" from="@hypit/timeline-author@1"/>
+  <import as="space" from="@hypit/spatial@1"/>
+  <import as="pipeline" from="@hypit/media-pipeline@1"/>
+  <import as="media" from="@hypit/media-track@1"/>
+  <import as="typo" from="@hypit/typography-track@1"/>
+  <import as="film" from="@hypit/film@1"/>
+  <import as="render" from="@hypit/render-hyperframes@1"/>
+  <import as="look" source="./style.svs"/>
+
+  <time:Clock id="clock" frame-rate="30"/>
+  <time:Timeline id="program" clock={clock} end="5s"/>
+  <space:Canvas id="canvas" width="1080" height="1920"/>
+  <space:Frame id="full" within={canvas} left="0%" top="0%" right="100%" bottom="100%"/>
+  <space:Frame id="heading" within={canvas} left="7%" top="74%" right="93%" bottom="86%"/>
+  <space:Frame id="label" within={canvas} left="7%" top="86%" right="93%" bottom="91%"/>
+
+  <asset:Video id="source" src="./assets/source.mp4"/>
+  <asset:Font id="title-font" src="./assets/title.ttf" weight="400" style="normal"/>
+  <asset:Font id="label-font" src="./assets/label.ttf" weight="400" style="normal"/>
+  <pipeline:Normalize id="clip" source={source} clock={clock}
+    video="primary-moving" audio="default" span-authority="video"/>
+
+  <media:Track id="footage" timeline={program.timeline} canvas={canvas}>
+    <media:Item id="coffee" media={clip.media} frame={full} during="program"
+      appearance={look.media.full} source-audio="content"/>
+  </media:Track>
+
+  <typo:Style id="title-style" recipe={look.text.title} font={title-font}>
+    <typo:Shadow color="#1c140fee" x="0" y="3" blur="14"/>
+    <typo:Fill color="#fff5e4"/>
+  </typo:Style>
+  <typo:Style id="label-style" recipe={look.text.label} font={label-font}>
+    <typo:Shadow color="#1c140fee" x="0" y="2" blur="8"/>
+    <typo:Fill color="#fff5e4"/>
+  </typo:Style>
+  <typo:Track id="titles" timeline={program.timeline}>
+    <typo:Area id="opening" placement={heading} style={title-style} start="0s" end="2.4s">A slower start.</typo:Area>
+    <typo:Area id="closing" placement={heading} style={title-style} start="2.4s" end="5s">One quiet moment.</typo:Area>
+    <typo:Area id="series" placement={label} style={label-style} during="program">MORNING RITUAL</typo:Area>
+  </typo:Track>
+
+  <film:Film id="main" canvas={canvas} timeline={program.timeline} appearance={look.film.main}>
+    <film:Track source={footage.visual}/>
+    <film:Track source={footage.audio}/>
+    <film:Track source={titles.track}/>
+  </film:Film>
+  <render:Video id="final" composition={main.composition} timeline={program.timeline}/>
+</svml>

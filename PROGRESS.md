@@ -112,3 +112,31 @@
 - Evidence: `data/production/setup-test-evidence.json`, Jimeng `pilot_qc.json`,
   and HypiHub `submission.json`/`status.json`/`approval.json`. Full asset-set,
   narration/subtitle assembly and publishing gates remain pending.
+
+### Jimeng subscription → Hypit local editing (2026-09-15)
+
+- Installed the global Hypit Skill for Codex via the requested skills installer;
+  read its production instructions. Jimeng generation stays in the existing
+  official Canvas workflow; accepted local files become Hypit inputs.
+- Added `workflows/jimeng-hypit/`: five-second portrait source, timed titles,
+  original audio, local-only runtime and reuse guidance. Added `scripts/hypit.sh`
+  for the separately pinned Hypit 0.1.8 installation. Guide:
+  `docs/jimeng-hypit-workflow.md`. No custom generation provider is needed.
+- Local runtime installed and doctor passed. Real export exposed a 0.1.8
+  packaging bug: capture children omitted Hypit's distribution resolver and
+  failed to import `@hypit/hyperframes`. Project-owned Node bootstrap supplies
+  the native resolvers to worker/child processes without editing vendor code.
+  Added an offline child-import regression; **231 tests passed in 25.48s**.
+- Reused the failed local build's normalized coffee clip. Repaired build
+  `bld_20260915T182740926Z_30543A5A62` completed: three local requests, zero hosted
+  calls. Exported `data/production/v-jimeng-hypit-pilot/final.mp4`: H.264,
+  1080×1920, 30 fps, five seconds, AAC stereo. Original media is 720p, scaled.
+- Full decode and assembly resolution/audio/timeline-duration QC pass. Ten
+  sampled frames plus a full-size closing frame show both titles, the label and
+  source motion. Studio playback reaches the closing frame in the user's Chrome
+  profile at `http://localhost:5184/#comments`. User listening/creative review
+  remains pending; this pilot contains titles, not speech-aligned captions.
+- No new media generation or credits used for this editing test. Existing MPT
+  production remains the default; full shot coverage, real narration/captions,
+  human review and publishing are separate gates. Local receipts and checks are
+  retained in the pilot folder and consolidated setup evidence.
