@@ -40,7 +40,7 @@ image_resolution = "2K"
 [assembly]
 video_aspect = "9:16"
 resolution = "1080x1920"
-video_count_variants = 2
+video_count_variants = 1
 bgm_volume = 0.15
 subtitle_mode = "word_by_word"
 

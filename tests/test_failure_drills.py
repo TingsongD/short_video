@@ -159,6 +159,9 @@ def good_runner(final_dir):
 
         class R:
             returncode = 0
+            stdout = json.dumps({"total": 1, "succeeded": 1, "failed": 0,
+                                 "tasks": [{"index": 1, "status": "succeeded", "result": {
+                                     "videos": [str(Path(final_dir) / "final-1.mp4")]}}]})
         return R()
     return runner
 
@@ -243,6 +246,9 @@ def test_drill_bad_video_fails_at_qc(tmp_path):
 
         class R:
             returncode = 0
+            stdout = json.dumps({"total": 1, "succeeded": 1, "failed": 0,
+                                 "tasks": [{"index": 1, "status": "succeeded", "result": {
+                                     "videos": [str(base / "final-1.mp4")]}}]})
         return R()
     ctx = make_ctx(tmp_path, mpt_runner=bad_runner)
     rec = run_produce("idea-drill-1", ctx, tmp_path)

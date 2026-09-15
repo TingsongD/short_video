@@ -24,7 +24,8 @@ def test_task_maps_manifest_to_mpt_fields():
     assert t["video_script"] == SHOT_LIST["script_text"]
     assert t["custom_audio_file"] == "voice.mp3"
     assert t["subtitle_display_mode"] == "word_by_word"
-    assert t["video_count"] == 2
+    assert t["video_count"] == 1
+    assert t["video_concat_mode"] == "sequential"
     assert t["bgm_volume"] == 0.15
 
 

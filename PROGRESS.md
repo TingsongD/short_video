@@ -39,3 +39,7 @@
   Canvas authorization challenge expired; account/catalog and paid pilot pending.
 - M6 validation: `make test` **208 passed in 15.20s**, fully offline. No contract
   changes and no generation spend. Details: `docs/jimeng-canvas-cli.md`.
+- M8: ordered clips now trim videos/render stills in proportion to measured
+  narration, with frame-accurate duration checks and reusable validated outputs.
+  MPT runs sequentially with one output, returns actual task-file paths, and
+  automatic upload is disabled in its local process. Local launcher help passed.

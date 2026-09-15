@@ -30,6 +30,13 @@ download retries, media-kind matching and explicit stock fallback. Full suite:
 Account/catalog checks, quoted pilot and full live asset set remain pending.
 No credits spent; G6 remains unsigned. See `docs/jimeng-canvas-cli.md`.
 
+G8 addendum: actual FFmpeg tests verify ordered video/still preparation, narration
+timing, insufficient footage and cache reuse. MPT subprocess tests verify result
+JSON, task failures and copying the returned vendor output instead of accepting
+stale finals. The local MPT launcher disables auto-upload and selects Whisper for
+custom-audio subtitles. Its `--help` smoke test passed. Full rendered MPT workflow
+and operator review remain pending; G8 remains unsigned.
+
 - Folder tree per plan: `data/{radar,grill,formats,hooks,production,published,analytics,costs}`, `modules/`, `schemas/`, `tests/fixtures/`, `vendor/`, `config/`, `logs/`, `docs/`
 - Vendored: ai-marketing-skills @ `bc84dbc`, MoneyPrinterTurbo v1.3.7 @ `cf5a3ae` (uv sync --frozen, Python 3.11)
 - Contracts frozen: 9 schemas × 9 valid fixtures + 1 negative fixture, all round-trip via jsonschema

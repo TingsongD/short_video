@@ -13,7 +13,7 @@ from modules.common.schema import validate
 MAX_BATCH_TASKS = 100
 
 
-def build_task(video_id, shot_list, manifest, cfg, video_subject):
+def build_task(video_id, shot_list, manifest, cfg, video_subject, prepared=None):
     """cfg = system.toml [assembly]. manifest must be complete."""
     if not manifest.get("complete"):
         raise ValueError(
@@ -24,13 +24,16 @@ def build_task(video_id, shot_list, manifest, cfg, video_subject):
         "video_script": shot_list["script_text"],
         "video_language": "en",
         "video_source": "local",
-        "video_materials": [
+        "video_materials": ([{"url": m["url"]} for m in prepared["materials"]] if prepared else [
             {"url": f"assets/{a['file']}"}
             for a in sorted(manifest["assets"], key=lambda a: a["shot_idx"])
-        ],
+        ]),
         "custom_audio_file": "voice.mp3",
         "video_aspect": cfg.get("video_aspect", "9:16"),
-        "video_count": cfg.get("video_count_variants", 1),
+        "video_count": 1,
+        "video_concat_mode": "sequential",
+        "video_clip_duration": (prepared["video_clip_duration"] if prepared else
+                                max(s["duration_s"] for s in shot_list["shots"])),
         "subtitle_enabled": True,
         "subtitle_display_mode": cfg.get("subtitle_mode", "word_by_word"),
         "bgm_type": "random",

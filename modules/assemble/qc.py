@@ -6,6 +6,7 @@
 - subtitle spot check: extract a frame for the operator to eyeball
 """
 import json
+import math
 import subprocess
 from pathlib import Path
 
@@ -34,7 +35,7 @@ def qc_video(path, expected_res=DEFAULT_RES, voice_duration=None,
     failures = []
     try:
         data = probe_full(path)
-    except RuntimeError as e:
+    except (RuntimeError, ValueError, OSError, subprocess.TimeoutExpired) as e:
         return False, [str(e)]
     streams = data.get("streams") or []
     vids = [s for s in streams if s.get("codec_type") == "video"]
@@ -47,6 +48,8 @@ def qc_video(path, expected_res=DEFAULT_RES, voice_duration=None,
     if not auds:
         failures.append("no audio stream")
     dur = float(data.get("format", {}).get("duration") or 0)
+    if not math.isfinite(dur) or dur <= 0:
+        failures.append("invalid video duration")
     if voice_duration is not None and abs(dur - voice_duration) > tolerance_s:
         failures.append(
             f"duration {dur:.1f}s drifts >{tolerance_s}s from voice {voice_duration}s"

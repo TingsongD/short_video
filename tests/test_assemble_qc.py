@@ -62,5 +62,5 @@ def test_extract_frame_for_subtitle_check(tmp_path):
 
 def test_batch_command_shape():
     cmd = build_command("data/production/v-1/batch.json")
-    assert cmd[:3] == ["uv", "run", "python"]
-    assert "--batch-file" in cmd and "cli.py" in cmd
+    assert cmd[:5] == ["uv", "run", "--frozen", "--no-sync", "python"]
+    assert "--batch-file" in cmd and Path(cmd[5]).name == "mpt_local.py"

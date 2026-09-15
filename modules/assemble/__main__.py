@@ -11,6 +11,7 @@ from pathlib import Path
 from modules.common.config import DATA_DIR, system
 
 from .qc import extract_frame, qc_video
+from .materials import prepare_clips
 from .runner import run_batch
 from .task_builder import build_task, write_batch, write_task
 
@@ -33,14 +34,17 @@ def main(argv=None):
         d = DATA_DIR / "production" / args.video_id
         shot_list = json.loads((d / "shot_list.json").read_text())
         manifest = json.loads((d / "assets" / "manifest.json").read_text())
+        cfg = system()["assembly"]
+        prepared = prepare_clips(d, shot_list, manifest, tuple(map(int, cfg["resolution"].split("x"))))
         task = build_task(args.video_id, shot_list, manifest,
-                          system()["assembly"], args.subject)
+                          cfg, args.subject, prepared=prepared)
         out = write_task(task, video_dir=d)
+        write_batch([task], d / "batch.json")
         print(f"mpt_task: {out}")
         return 0
 
     if args.cmd == "run":
-        res = run_batch(args.batch)
+        res = run_batch(args.batch, output_dir=Path(args.batch).resolve().parent)
         print(f"mpt exit={res['returncode']} log={res['log']}")
         return res["returncode"]
 
