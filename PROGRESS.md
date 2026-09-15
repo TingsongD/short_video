@@ -91,3 +91,24 @@
   estimate of **142.6 HypiHub credits / US$0.713**. Doctor reports unavailable
   Grok/Mimo routes that this pilot does not request. Approval pending.
 - Full offline suite **229 passed in 23.81s**. No media generated or paid charges.
+
+### Approved single-shot tests (2026-09-15)
+
+- User approved both quoted pilots. Submitted Jimeng once under the native
+  **30-credit ceiling**, then submitted the matching HypiHub build once at the
+  refreshed estimate of **142.6 credits / US$0.713**. No automatic regeneration.
+- Jimeng completed: `data/production/v-jimeng-cli-pilot/assets/shot-00.jimeng.mp4`,
+  H.264, 720×1280, 5.017 seconds of video, audio present. Native checksum,
+  full FFmpeg decode and M6 media intake passed. Sampled frames show rising steam
+  and camera push-in; the steam looks stylized. Manifest provenance is Jimeng;
+  only shot 0 is covered, with shots 1–3 correctly missing.
+- Recovered a native wait timeout without partial data and a download transport
+  failure using the original submission/resource. Added a regression test for
+  status recovery after an empty wait response: **230 tests passed in 24.40s**.
+- HypiHub build `bld_20260915T180019904Z_F956C7995D` failed during submission:
+  HTTP 402 `insufficient_credits`, zero outputs. Receipt retained; no top-up,
+  subscription purchase or repeat build. Quality comparison awaits account funding
+  and an explicitly requested fresh test. Settled charges were not verified.
+- Evidence: `data/production/setup-test-evidence.json`, Jimeng `pilot_qc.json`,
+  and HypiHub `submission.json`/`status.json`/`approval.json`. Full asset-set,
+  narration/subtitle assembly and publishing gates remain pending.

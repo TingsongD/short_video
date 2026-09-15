@@ -260,6 +260,11 @@ class CanvasAssets:
         if wait_seconds:
             args += ["--timeout", f"{wait_seconds}s", "--interval", "5s"]
         data = self.cli.call(*args, timeout=wait_seconds + 30, incomplete=True)
+        if wait_seconds and not data:
+            # A native wait timeout may omit partialData entirely. Recover the
+            # current facts with one read of the original submission, never run.
+            data = self.cli.call("operation", "status", item["submit_id"],
+                                 "--project-id", job["project_id"], incomplete=True)
         if data.get("operationRef") != item["submit_id"]:
             item["state"] = "unknown"
             return

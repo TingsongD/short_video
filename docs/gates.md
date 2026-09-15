@@ -67,6 +67,22 @@ authenticated rates estimate 142.6 credits / US$0.713 for the matching shot.
 Both spends remain unapproved. The user's Chrome canvas editor reports
 `draft_reader_too_old`; CLI save/read/quote succeed. G6/G8/G12 remain unsigned.
 
+Approved pilot follow-up (2026-09-15): the user approved both single-shot tests.
+Jimeng generated and downloaded one five-second 720×1280 video under a native
+30-credit ceiling. Checksum, full FFmpeg decode and M6 intake passed; sampled
+frames show steam and camera motion. The manifest records Jimeng provenance and
+correctly retains missing shots 1–3. Wait timeout and download failure recovered
+using the original submission, without regeneration. New timeout regression
+coverage passes; full offline suite **230 passed in 24.40s**.
+
+HypiHub's one matching build failed with HTTP 402 `insufficient_credits` during
+submission, with zero outputs. Its receipt is retained; no top-up or repeat
+generation occurred. The quoted estimate remains separate from Jimeng credits;
+settled charges were not independently verified. Evidence is in
+`data/production/setup-test-evidence.json` and the two pilot directories.
+G6/G8/G12 remain unsigned pending full asset coverage, real narration/subtitles,
+assembly and human review. No publishing took place.
+
 - Folder tree per plan: `data/{radar,grill,formats,hooks,production,published,analytics,costs}`, `modules/`, `schemas/`, `tests/fixtures/`, `vendor/`, `config/`, `logs/`, `docs/`
 - Vendored: ai-marketing-skills @ `bc84dbc`, MoneyPrinterTurbo v1.3.7 @ `cf5a3ae` (uv sync --frozen, Python 3.11)
 - Contracts frozen: 9 schemas × 9 valid fixtures + 1 negative fixture, all round-trip via jsonschema

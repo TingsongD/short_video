@@ -232,6 +232,29 @@ def test_pending_job_stops_batch_and_status_does_not_write(setup):
     assert len(paid_calls(p)) == len(DOC["shots"])
 
 
+def test_wait_timeout_without_partial_data_reads_same_submission_status(setup):
+    assets, process = setup
+    def wait_timeout(cmd, **kwargs):
+        args = cmd[cmd.index("--region") + 2:]
+        if args[:2] == ["operation", "wait"]:
+            process.calls.append(args)
+            return SimpleNamespace(returncode=20, stdout=json.dumps({
+                "schemaVersion": "1", "ok": False,
+                "error": {"code": "cli.operation_wait_timeout",
+                          "requiredAction": "resume", "operationRef": args[2]}}))
+        return process(cmd, **kwargs)
+    assets.cli.runner = wait_timeout
+    assets.prepare(shot_list(), [0])
+    process.pending = True
+    result = assets.generate("canvas-test", 10, wait_seconds=5)
+    assert result["shots"][0]["state"] == "running"
+    process.pending = False
+    assert assets.resume("canvas-test", wait_seconds=5)["complete"]
+    assert len(paid_calls(process)) == 1
+    submit_id = paid_calls(process)[0][paid_calls(process)[0].index("--submit-id") + 1]
+    assert all(c[2] == submit_id for c in process.calls if c[0] == "operation")
+
+
 def test_download_failure_recovers_without_regeneration(setup):
     assets, p = setup
     assets.prepare(shot_list(), [0])

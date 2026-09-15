@@ -8,20 +8,37 @@ cost. Hypit is the editing/runtime tool; HypiHub is its hosted generation servic
 
 | Check | Result |
 | --- | --- |
-| Offline suite | 229 passed in 23.81 seconds after live-protocol fixes |
+| Offline suite | 230 passed in 24.40 seconds after live-protocol and wait-recovery fixes |
 | Fresh MoneyPrinterTurbo render | Passed: 1080×1920, 8.07 seconds, audio present |
 | Smoke-test content | Synthetic fixture media, subtitles disabled; not a finished creative video |
-| Jimeng Canvas CLI | 1.0.1 authorized; account/catalog verified; five-second pilot quoted at 30 Jimeng credits |
+| Jimeng Canvas CLI | 1.0.1 authorized; pilot generated and downloaded under a 30-credit ceiling; media checks passed |
 | Real script/narration | LLM and ElevenLabs keys missing; channel voice not selected |
 | Hypit executable | 0.1.8 installed in `vendor/hypit-runtime`, isolated from production |
 | HypiHub draft | Valid source; one five-second, 720p, 9:16 Seedance fast request |
-| HypiHub readiness | Authorized; pilot preflight passes; estimated 142.6 credits / US$0.713 from authenticated rates |
-| Paid work | No generation submitted or credits spent in this test |
+| HypiHub result | Authorized and preflight passed, but the one submitted build failed with HTTP 402 `insufficient_credits`; no output |
+| Approved work | One generation submitted to each service; no automatic regeneration. HypiHub estimate was 142.6 credits / US$0.713; settled charges not independently verified |
 
 The diagnostic evidence is saved in `data/production/setup-test-evidence.json`.
-Both generation approvals are still pending. Chrome is the user's selected
-browser. Its Canvas editor reports `draft_reader_too_old` despite one refresh;
-the CLI successfully saved, read and quoted the draft.
+The user approved both single-shot tests on 2026-09-15. Chrome is the user's
+selected browser. Its Canvas editor reports `draft_reader_too_old` despite one
+refresh; CLI generation and download succeeded.
+
+### Completed pilot evidence
+
+- Jimeng output: `data/production/v-jimeng-cli-pilot/assets/shot-00.jimeng.mp4`.
+  H.264, 720×1280, 5.017 seconds of video (5.088-second container), audio present.
+  Checksum, full FFmpeg decode and M6 intake passed. Three sampled frames show
+  rising steam and a camera push-in, with no visible text/logos. The steam is
+  stylized; review the actual playback for creative acceptance.
+- The original Jimeng submission survived a wait timeout and a failed download.
+  Status and download recovery reused that submission; no generation was repeated.
+  `pilot_qc.json` holds local checks. The manifest correctly lists shots 1–3 as
+  missing because only shot 0 was selected.
+- HypiHub build `bld_20260915T180019904Z_F956C7995D` failed during submission with
+  HTTP 402 `insufficient_credits`. `status.json`, `submission.json` and
+  `approval.json` retain its receipt under `data/production/v-hypihub-pilot`.
+  No result is available for comparison. A top-up/subscription is a separate
+  purchase decision; a fresh generation must be explicitly requested after funding.
 
 ## 1. Repeat the current local test
 
@@ -158,6 +175,11 @@ start a build if its applicable cost cannot be established. A subscription/top-u
 is a separate purchase decision; neither has been made here.
 
 ### Submit once, after spend approval
+
+The recorded pilot has already been submitted and failed for insufficient
+credits. The commands below describe a future approved attempt; do not run them
+to recover this failed build or overwrite its receipts. Use a fresh pilot folder
+after the account is funded and a new attempt is approved.
 
 ```bash
 "$HYPIT_TEST_CLI" runtime up --endpoint hypihub.default

@@ -12,7 +12,8 @@ returned link in your logged-in Jimeng browser, and follow the returned
 `auth wait` command. Then run `python -m modules.assets doctor`.
 Authorization succeeded on 2026-09-15 after replacing an expired challenge.
 Account verification and video/image model discovery passed (CN production,
-VIP level `maestro`). No media has been generated or credits spent.
+VIP level `maestro`). One approved pilot was generated and downloaded on
+2026-09-15 under a 30-credit ceiling.
 Credentials belong to native CLI storage (macOS Keychain); never copy them into
 project config or logs. Confirm the intended account in `auth account` and CN
 production region in `auth status` before proceeding.
@@ -43,10 +44,11 @@ The prepared `v-jimeng-cli-pilot` uses `seedance_2.0_fast_vip`, shot 0 only:
 ```
 
 Its live quote on 2026-09-15 was **30 Jimeng credits** for five seconds at 720p,
-9:16, one result. Approval is pending. Retain these settings on repeated prepare.
+9:16, one result. The user approved this ceiling, and the pilot completed.
+Retain these settings on repeated prepare; use status/resume for recovery.
 The canvas is open in the user's logged-in Chrome profile. Its editor currently
 reports `draft_reader_too_old`, including after one refresh. CLI draft save,
-readback and quote succeed; browser editing remains unverified.
+readback, quote, generation and download succeed; browser editing remains unverified.
 
 Preparation saves a canvas and typed nodes, then obtains quotes without running
 them. Open the returned canvas URL to review the drafts. A quote is not spend
@@ -71,6 +73,11 @@ submits generation. To start remaining unsubmitted shots, review the remaining
 quote and use `generate` with the original batch ceiling. An uncertain operation
 blocks subsequent submissions, even if its record cannot be found. Resolve it
 in the original canvas; do not automatically retry generation.
+
+A native wait timeout can omit partial progress entirely. The adapter then
+reads status once with the same submission identity. The live pilot also
+recovered a download transport failure by downloading the same resource again.
+Neither recovery submits another generation.
 
 A valid manual replacement can satisfy a failed/rejected/invalid shot and allow
 the unsubmitted remainder to proceed. The original submission and conservative
@@ -109,8 +116,17 @@ validation can return its JSON error on stderr. The adapter now follows both
 rules without logging raw responses. The one locally rejected, never-submitted
 pilot draft was repaired with a canonical Node ID; its previous state was
 retained privately and canvas/update/submission identities preserved. A native
-CLI dry-run and actual server save/readback/quote passed. Full suite: **229 passed
-in 23.81s**. No frozen contract changes.
+CLI dry-run and actual server save/readback/quote passed. Wait-timeout recovery
+now also has a regression test proving one submission across timeout/restart.
+Full suite: **230 passed in 24.40s**. No frozen contract changes.
+
+The approved single-shot pilot passed checksum, full FFmpeg decode and intake:
+720×1280, 5.017 seconds of video, saved as
+`data/production/v-jimeng-cli-pilot/assets/shot-00.jimeng.mp4`. Sampled frames
+show steam and the requested camera push-in; steam is visibly stylized. The
+30-credit ceiling is a maximum commitment, not an independently verified settled
+charge. The full manifest still correctly reports missing shots 1–3. This pilot
+does not sign off a complete asset set or final narration/subtitle assembly.
 
 Live sequence: verify account/catalog → prepare and quote one five-second shot
 → obtain explicit spend approval → generate/download/inspect → separately quote
