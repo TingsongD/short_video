@@ -62,15 +62,25 @@ project-scoped routes. Project-scoped checks for `gemini-2.5-flash-tts` and
 successful speech synthesis, quota availability or final audio quality.
 
 Model Garden listing rejects API-key authentication with 401
-`CREDENTIALS_MISSING`. The project-scoped Interactions list check also returns
-401, so music access remains unverified. The existing Cloud CLI identity needs
-reauthentication. A browser reauthorization flow is open in the user's Chrome;
-the account with access to this project must be confirmed before continuing.
-Native credential storage owns the OAuth flow; no token is copied to the project.
+`CREDENTIALS_MISSING`; the project-scoped Interactions list check also returns
+401 with that key. Cloud CLI reauthorization through the user's Chrome is now
+complete. A fresh OAuth token succeeds on both checks (HTTP 200). The model
+listing returns 27 entries, including Gemini 2.5 Flash/Pro TTS, with no next page.
+The Interactions list returns an empty result successfully. This establishes
+read access, not permission or quota to create a music generation.
 
-The supplied Cloud music guide currently lists Lyria 3 Clip/Pro preview models.
-The separate Gemini API guide lists Lyria 3.5. Lyria 3.5 access through this Vertex
-project has not been established. No TTS or music generation was submitted.
+Direct Model Garden lookups return HTTP 200 for `lyria-3-clip-preview` and
+`lyria-3-pro-preview`, even though neither appears in the list response.
+Lookups for `lyria-3.5` and `lyria-002` return 404 on the same catalog route;
+that result alone does not establish availability on other inference routes.
+Native Cloud CLI storage owns the credentials. Access tokens were used only in
+memory; no OAuth code or token is copied to project configuration or receipts.
+
+The supplied Cloud music guide lists Lyria 3 Clip/Pro preview models, matching
+the successful direct catalog lookups. The separate Gemini API guide lists
+Lyria 3.5. Lyria 3.5 access through this Vertex project has not been established.
+No TTS or music generation was submitted. Generation access, audio validation
+and the automated Google provider adapters remain pending.
 Sanitized receipts: `data/production/google-audio-setup/verification.json`.
 
 Sources checked on 2026-09-15:

@@ -185,3 +185,19 @@
 - Sanitized evidence: `data/production/google-audio-setup/verification.json`.
   No generation submitted. Configuration/docs-only follow-up; the latest full
   offline suite remains 239 passing tests.
+
+### Vertex OAuth completed (2026-09-15)
+
+- User completed the Chrome authorization flow. Cloud CLI login completed and
+  a fresh access token was obtained using native credential storage. No OAuth
+  code or token was saved in project files or verification receipts.
+- OAuth Model Garden listing and project Interactions listing both return 200.
+  The catalog list contains Gemini 2.5 Flash/Pro TTS. Direct catalog lookups for
+  `lyria-3-clip-preview` and `lyria-3-pro-preview` also return 200; these preview
+  models are absent from the list response. `lyria-3.5` and `lyria-002` catalog
+  lookups return 404, without establishing their other inference-route access.
+- Authentication and read access are verified. Actual speech/music generation,
+  quota, audio quality and automated Google provider integration remain pending.
+  Zero generation calls made. Updated sanitized setup receipts and
+  `docs/audio-providers.md`; no production code changed. Latest full offline
+  suite remains **239 passed in 26.22s**.

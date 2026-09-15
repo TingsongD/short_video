@@ -118,9 +118,12 @@ G7/G8/G12 remain unsigned. See `docs/audio-providers.md`.
 Saved-credential follow-up: the new `.env` is now populated. ElevenLabs account
 verification passes using it. Vertex key checks for token counting pass for
 Gemini 2.5 Flash/Pro TTS in `us-central1`. These are not synthesis tests.
-Project Interactions listing rejects key authentication; Cloud reauthorization
-and project-account confirmation are pending. Lyria access remains unverified;
-no audio generation submitted. Receipts: `data/production/google-audio-setup/verification.json`.
+Project Interactions listing rejects key authentication. Cloud reauthorization
+has since completed: both OAuth catalog and project Interactions listing return
+200. Direct catalog lookups verify Lyria 3 Clip/Pro preview model records;
+Lyria 3.5 lookup returns 404 on this route. Actual speech/music generation,
+quota and audio quality remain unverified; no audio generation submitted.
+Receipts: `data/production/google-audio-setup/verification.json`.
 G7/G8/G12 remain unsigned.
 
 - Folder tree per plan: `data/{radar,grill,formats,hooks,production,published,analytics,costs}`, `modules/`, `schemas/`, `tests/fixtures/`, `vendor/`, `config/`, `logs/`, `docs/`
