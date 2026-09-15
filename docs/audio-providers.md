@@ -52,11 +52,26 @@ accepted files for edits. Listing a model does not prove paid generation access.
 
 ## Verification status — 2026-09-15
 
-The new `.env` existed but was zero bytes on disk when inspected. No Google key
-was available, so no Google authentication or model access has been verified.
-The existing privately configured ElevenLabs account remains available. Save the
-new credentials and identify AI Studio versus Vertex before the Google access
-check. No TTS or music generation was submitted during configuration setup.
+The user saved `.env` and confirmed Vertex AI. Cloud project and `us-central1`
+region are configured privately. The mixed-case ElevenLabs field was normalized
+to `ELEVENLABS_API_KEY`, preserving its value; account verification returned 200.
+
+The Google key passes Vertex `countTokens` checks through both the express and
+project-scoped routes. Project-scoped checks for `gemini-2.5-flash-tts` and
+`gemini-2.5-pro-tts` also return 200. These establish token-counting access, not
+successful speech synthesis, quota availability or final audio quality.
+
+Model Garden listing rejects API-key authentication with 401
+`CREDENTIALS_MISSING`. The project-scoped Interactions list check also returns
+401, so music access remains unverified. The existing Cloud CLI identity needs
+reauthentication. A browser reauthorization flow is open in the user's Chrome;
+the account with access to this project must be confirmed before continuing.
+Native credential storage owns the OAuth flow; no token is copied to the project.
+
+The supplied Cloud music guide currently lists Lyria 3 Clip/Pro preview models.
+The separate Gemini API guide lists Lyria 3.5. Lyria 3.5 access through this Vertex
+project has not been established. No TTS or music generation was submitted.
+Sanitized receipts: `data/production/google-audio-setup/verification.json`.
 
 Sources checked on 2026-09-15:
 
@@ -64,3 +79,5 @@ Sources checked on 2026-09-15:
 - [Cloud music generation](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/music/generate-music)
 - [Gemini speech generation](https://ai.google.dev/gemini-api/docs/speech-generation)
 - [Vertex express-mode authentication example](https://docs.cloud.google.com/vertex-ai/generative-ai/docs/samples/googlegenaisdk-vertexai-express-mode)
+- [Vertex express REST operations](https://docs.cloud.google.com/gemini-enterprise-agent-platform/reference/express-mode/api-reference)
+- [Gemini TTS through Google Cloud](https://docs.cloud.google.com/text-to-speech/docs/gemini-tts)

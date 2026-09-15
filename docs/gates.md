@@ -115,6 +115,14 @@ The new `.env` was empty on disk; Google route/auth/model access and TTS/music
 generation remain unverified. Existing ElevenLabs credentials still load.
 G7/G8/G12 remain unsigned. See `docs/audio-providers.md`.
 
+Saved-credential follow-up: the new `.env` is now populated. ElevenLabs account
+verification passes using it. Vertex key checks for token counting pass for
+Gemini 2.5 Flash/Pro TTS in `us-central1`. These are not synthesis tests.
+Project Interactions listing rejects key authentication; Cloud reauthorization
+and project-account confirmation are pending. Lyria access remains unverified;
+no audio generation submitted. Receipts: `data/production/google-audio-setup/verification.json`.
+G7/G8/G12 remain unsigned.
+
 - Folder tree per plan: `data/{radar,grill,formats,hooks,production,published,analytics,costs}`, `modules/`, `schemas/`, `tests/fixtures/`, `vendor/`, `config/`, `logs/`, `docs/`
 - Vendored: ai-marketing-skills @ `bc84dbc`, MoneyPrinterTurbo v1.3.7 @ `cf5a3ae` (uv sync --frozen, Python 3.11)
 - Contracts frozen: 9 schemas × 9 valid fixtures + 1 negative fixture, all round-trip via jsonschema

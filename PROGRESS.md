@@ -169,3 +169,19 @@
   User was asked to save the file and identify the key's origin. Existing
   ElevenLabs configuration remains available. Google generation adapters and
   full narration/music testing remain pending; no audio generation submitted.
+
+### Saved Vertex credentials follow-up (2026-09-15)
+
+- `.env` now contains credentials and Cloud project/region; user confirmed Vertex
+  AI. Normalized the ElevenLabs field name without changing credential values.
+  ElevenLabs account check passes with the `.env` value.
+- Vertex API-key token-counting checks return 200 on express and project routes,
+  including `gemini-2.5-flash-tts` and `gemini-2.5-pro-tts` in `us-central1`.
+  Synthesis, quota and audio quality have not been tested.
+- Model catalog and project Interactions listing return 401 for API-key auth.
+  Existing Cloud CLI login requires reauthentication. Browser flow opened in the
+  user's Chrome; correct project account is pending confirmation. Music access,
+  including Lyria 3.5 on this Vertex project, remains unverified.
+- Sanitized evidence: `data/production/google-audio-setup/verification.json`.
+  No generation submitted. Configuration/docs-only follow-up; the latest full
+  offline suite remains 239 passing tests.
