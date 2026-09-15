@@ -43,3 +43,18 @@
   narration, with frame-accurate duration checks and reusable validated outputs.
   MPT runs sequentially with one output, returns actual task-file paths, and
   automatic upload is disabled in its local process. Local launcher help passed.
+- M11: Canvas-first asset stage, saved quotes and review status, production
+  checkpoints/resume, explicit stock substitution, assets/QC review stops, lazy
+  clients and a lock against simultaneous producers. Default production stops at
+  QC; `--publish` enters the existing separate publishing gate.
+- Native MPT smoke passed using schema-valid local fixture inputs: eight-second
+  narration, mixed video/still material, sequential 1080×1920 final with audio;
+  actual task output copied into `data/production/v-mpt-local-smoke/final-1.mp4`.
+  `qc_report.json` records success. Subtitles were disabled for this smoke, so
+  full Whisper/subtitle rendering and a real Jimeng asset set remain unverified.
+- Five-second pilot input is ready at
+  `data/production/v-jimeng-cli-pilot/shot_list.json`; prepare only shot 0 after
+  account/catalog verification. No pilot quote or paid generation yet.
+- Operations and review instructions: `docs/production-resume.md`.
+- Final offline validation: `make test` **225 passed in 24.76s**;
+  `git diff --check` passed. Frozen schemas and fixtures are unchanged.

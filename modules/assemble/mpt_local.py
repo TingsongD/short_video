@@ -17,6 +17,10 @@ def main():
     sys.path.insert(0, str(vendor))
     from app.config import config
     configure_local(config)
+    # Vendor config initializes its logger on stdout. Keep the JSON result
+    # channel clean when invoking it through this entry point.
+    from app.utils.logging_utils import configure_terminal_logger
+    configure_terminal_logger(sys.stderr, level=config.log_level, colorize=False)
     import cli
     cli._force_utf8_console()
     return cli.run_cli()

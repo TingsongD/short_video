@@ -1,7 +1,7 @@
 """M6 manifest: turn the assets folder into asset_manifest.json.
 Every shot must be covered by a validated file; uncovered shots are listed in
 `missing_shots` (schema allows the extra top-level field) and `complete`
-is false — callers should run the Pexels fallback, then rebuild."""
+is false. Stock substitution is an explicit operator choice."""
 import json
 from pathlib import Path
 
@@ -37,6 +37,7 @@ def build_manifest(video_id, assets_dir, shot_count, shot_kinds=None, shot_durat
         "assets": sorted(assets, key=lambda a: a["shot_idx"]),
         "missing_shots": missing,
         "complete": not missing,
+        "rejected_shots": {str(idx): found[idx]["detail"] for idx in missing if idx in found},
     }
     # The frozen contract requires at least one asset. Empty results are a local
     # intake status, never a contract file passed to another module.

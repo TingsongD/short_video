@@ -5,6 +5,7 @@ are `assets/shot-NN.ext` and audio is `voice.mp3` (MPT resolves them against
 the manifest directory, verified against cli.py batch docs).
 """
 import json
+import math
 from pathlib import Path
 
 from modules.common.config import DATA_DIR
@@ -33,7 +34,7 @@ def build_task(video_id, shot_list, manifest, cfg, video_subject, prepared=None)
         "video_count": 1,
         "video_concat_mode": "sequential",
         "video_clip_duration": (prepared["video_clip_duration"] if prepared else
-                                max(s["duration_s"] for s in shot_list["shots"])),
+                                math.ceil(max(s["duration_s"] for s in shot_list["shots"]))),
         "subtitle_enabled": True,
         "subtitle_display_mode": cfg.get("subtitle_mode", "word_by_word"),
         "bgm_type": "random",

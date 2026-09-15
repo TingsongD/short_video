@@ -9,14 +9,17 @@ Lane B is always available and is what G6 validates. ~10 min per video.
    - download the render as `shot-NN.mp4` / `shot-NN.png` into the
      `data/production/<video_id>/assets/` folder
 3. Rules enforced at intake: file name `shot-NN.<ext>` (NN = shot idx,
-   zero-padded), video ≥ 3s, min dimension ≥ 720px, mp4/png/mov/webm/jpg/webp.
+   zero-padded), video covers its requested shot duration (at least 3s),
+   min dimension ≥ 720px, mp4/png/mov/webm/jpg/webp. Actual media type must match.
    Tag provenance via `shot-NN.jimeng.mp4` (or `.stock.` for Pexels you
    grabbed manually). Untagged files count as `manual`.
 4. `python -m modules.assets collect <video_id>` — validates everything,
-   fills gaps from Pexels (if `PEXELS_API_KEY` set), emits `manifest.json`.
+   emits `manifest.json` when there is at least one valid asset. To explicitly
+   fill gaps from Pexels, add `--fallback stock` (requires `PEXELS_API_KEY`).
    Exit code 2 = shots still missing; check the printed list.
 5. Corrupt or undersized files are rejected with a reason — re-render and
    drop the file again under the same name.
 
-Lane A (`jimeng_bridge.py`) automates steps 2–3 when a WebBridge endpoint is
-configured; it is best-effort and never required.
+The production backend is now the [official Canvas CLI](jimeng-canvas-cli.md).
+The old best-effort `jimeng_bridge.py` remains available for diagnostics and is
+not used by production. Manual imports continue to work without Canvas login.

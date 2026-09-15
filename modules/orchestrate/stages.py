@@ -51,8 +51,12 @@ def produce_stages(idea_id, ctx):
     hooks_path, formats_path; optional: grill_dir, base_dir, approvals_dir,
     video_id, est (cost estimates), published_dir, analytics hooks.
     """
-    from modules.assets import manifest as manifest_mod
     from modules.assets import queue
+    from modules.assets.canvas import fingerprint
+    from modules.assets.canvas_state import atomic_json
+    from modules.assemble.materials import prepare_clips, narration_duration, file_hash
+    from modules.orchestrate.assets import production_assets
+    from modules.orchestrate.checkpoint import Checkpoint
     from modules.assemble import qc as qc_mod
     from modules.assemble import task_builder
     from modules.formats import library as format_lib
@@ -70,9 +74,27 @@ def produce_stages(idea_id, ctx):
 
     idea = find_idea(idea_id, ctx.get("grill_dir"))
     video_id = ctx.get("video_id") or f"v-{idea_id}"
+    queue.validate_video_id(video_id)
+    directory = base / video_id
+    checkpoint = Checkpoint(directory, video_id, idea_id)
     state = {}
 
     def hook():
+        saved = directory / "shot_list.json"
+        if saved.exists():
+            if not ctx.get("resume"):
+                raise ValueError("production already exists; use --resume or a new --video-id")
+            doc = queue.validate_shots(json.loads(saved.read_text()))
+            if doc["video_id"] != video_id or doc["idea_id"] != idea_id:
+                raise ValueError("saved shot list belongs to a different production")
+            checkpoint.script(doc)
+            state["shot_list"] = doc
+            state["shot_list_path"] = saved
+            lib = format_lib.load(ctx["formats_path"])
+            state["format"] = format_lib.get(lib, doc["format_id"])
+            return
+        if ctx.get("resume"):
+            raise ValueError("no saved shot list to resume")
         hooks = hook_sel.load_bank(ctx["hooks_path"])
         lib = format_lib.load(ctx["formats_path"])
         fmt_id = match_mod.match_ideas(
@@ -82,6 +104,8 @@ def produce_stages(idea_id, ctx):
             hooks, idea["niche"], state["format"].get("hook_type"))
 
     def script():
+        if "shot_list" in state:
+            return
         e = est.get("llm", 0.05)
         doc = paid_call(
             ledger, "llm", e,
@@ -93,68 +117,67 @@ def produce_stages(idea_id, ctx):
             approvals_dir)
         state["shot_list"] = doc
         state["shot_list_path"] = engine.save_shot_list(doc, out_dir=base)
+        checkpoint.script(doc)
 
     def assets():
-        from modules.assets import intake
-        adir = queue.render_cards(state["shot_list"], base=base)
-        shots = state["shot_list"]["shots"]
-        shot_kinds = {s["idx"]: s["asset_type"] for s in shots}
-
-        def missing():
-            found = intake.scan_folder(adir)
-            return [s for s in shots
-                    if not found.get(s["idx"], {}).get("ok")]
-
-        for s in missing():
-            if ctx.get("pexels"):
-                ctx["pexels"].fetch(
-                    s["pexels_fallback_term"], s["asset_type"],
-                    adir / queue.target_name(s))
-        left = missing()
-        if len(left) == len(shots):
-            raise RuntimeError(
-                f"assets incomplete — Lane B drop pending for all shots "
-                f"in {adir}")
-        doc = manifest_mod.build_manifest(
-            video_id, adir, len(shots), shot_kinds)
-        manifest_mod.write_manifest(doc, adir)
-        if not doc["complete"]:
-            raise RuntimeError(
-                f"assets incomplete — Lane B drop pending for shots "
-                f"{doc['missing_shots']} in {adir}")
-        state["assets_dir"] = adir
-        state["manifest"] = doc
+        state["manifest"] = production_assets(state["shot_list"], ctx, base)
+        state["assets_dir"] = directory / "assets"
 
     def voice():
         e = est.get("elevenlabs", 0.20)
-        out = base / video_id / "voice.mp3"
-        vp = paid_call(
-            ledger, "elevenlabs", e,
-            lambda: ctx["tts"].synthesize(
-                state["shot_list"]["voice_text"], out),
-            lambda p: (e, {"units": len(state["shot_list"]["voice_text"]),
-                           "unit_type": "chars", "video_id": video_id}),
-            approvals_dir)
-        from modules.voice.tts import duration_ok
+        out = directory / "voice.mp3"
+        identity = fingerprint({"text": state["shot_list"]["voice_text"], "settings": cfg["voice"]})
+        saved = checkpoint.data.get("voice", {})
+        if saved and saved.get("fingerprint") != identity:
+            raise ValueError("narration settings changed; review before starting a new production")
+        if out.exists():
+            if not saved or (saved.get("sha256") and saved["sha256"] != file_hash(out)):
+                raise ValueError("existing narration has no matching receipt; review it before reuse")
+        else:
+            if saved:
+                raise RuntimeError("narration file missing after a previous attempt; restore it or review before regenerating")
+            def synthesize():
+                checkpoint.save(voice={"fingerprint": identity, "state": "submitting"})
+                result = ctx["tts"].synthesize(state["shot_list"]["voice_text"], out)
+                if Path(result).resolve() != out.resolve():
+                    raise ValueError("TTS returned an unexpected output path")
+                return result
+            paid_call(
+                ledger, "elevenlabs", e, synthesize,
+                lambda p: (e, {"units": len(state["shot_list"]["voice_text"]),
+                               "unit_type": "chars", "video_id": video_id}),
+                approvals_dir)
         lo, hi = cfg["voice"]["min_duration_s"], cfg["voice"]["max_duration_s"]
-        if not duration_ok(vp, lo, hi):
+        duration = narration_duration(out)
+        if not lo <= duration <= hi:
             raise RuntimeError(f"voice duration out of bounds {lo}-{hi}s")
-        state["voice_path"] = vp
+        checkpoint.save(voice={"fingerprint": identity, "state": "validated", "sha256": file_hash(out)})
+        state["voice_path"], state["voice_duration"] = out, duration
 
     def assemble():
+        resolution = tuple(map(int, cfg["assembly"]["resolution"].split("x")))
+        prepared = ctx.get("prepare_clips", prepare_clips)(
+            directory, state["shot_list"], state["manifest"], resolution)
         task = task_builder.build_task(
             video_id, state["shot_list"], state["manifest"],
-            cfg["assembly"], idea["topic"])
+            cfg["assembly"], idea["topic"], prepared=prepared)
+        identity = fingerprint({"prepared": prepared["fingerprint"], "task": task})
+        cached = checkpoint.valid_final(identity) if ctx.get("resume") else None
+        if cached and all(qc_mod.qc_video(f, expected_res=resolution,
+                                        voice_duration=state["voice_duration"])[0] for f in cached):
+            state["finals"] = cached
+            return
         task_builder.write_task(task, video_dir=base / video_id)
         batch = task_builder.write_batch([task], base / video_id / "batch.json")
         from modules.assemble.runner import run_batch
         runner = ctx.get("mpt_runner")
         state["assemble_result"] = run_batch(
-            batch, **({"runner": runner} if runner else {}))
-        finals = sorted((base / video_id).glob("final-*.mp4"))
-        if not finals:
-            raise RuntimeError("assembly produced no final-*.mp4")
+            batch, output_dir=directory, **({"runner": runner} if runner else {}))
+        finals = [Path(p) for p in state["assemble_result"]["finals"]]
         state["finals"] = finals
+        checkpoint.save(assembly={"fingerprint": identity, "finals": [
+            {"path": str(p.resolve()), "sha256": file_hash(p)} for p in finals]})
+        atomic_json(directory / "assembly_result.json", state["assemble_result"])
 
     def qc():
         durations = []
@@ -162,7 +185,7 @@ def produce_stages(idea_id, ctx):
             ok, failures = qc_mod.qc_video(
                 f, expected_res=tuple(
                     int(x) for x in cfg["assembly"]["resolution"].split("x")),
-                voice_duration=None)
+                voice_duration=state["voice_duration"])
             if not ok:
                 raise RuntimeError(f"QC failed for {f.name}: {failures}")
             data = qc_mod.probe_full(f)
@@ -171,6 +194,10 @@ def produce_stages(idea_id, ctx):
         # B2 fix: publish record carries the measured length so M10 verdicts
         # compare AVD against the real duration, not a 30s default.
         state["video_len_s"] = round(durations[0], 2) if durations else None
+        atomic_json(directory / "qc_report.json", {
+            "passed": True, "voice_duration_s": state["voice_duration"],
+            "video_durations_s": durations, "finals": [str(f) for f in state["finals"]]})
+        qc_mod.extract_frame(state["finals"][0])
 
     def publish():
         records = rec_mod.load_records(ctx.get("published_dir"))
@@ -203,8 +230,12 @@ def produce_stages(idea_id, ctx):
         rec_mod.write_record(rec, directory=ctx.get("published_dir"))
         state["publish_record"] = rec
 
-    return list(zip(STAGE_ORDER_PRODUCE,
-                    [hook, script, assets, voice, assemble, qc, publish]))
+    stop_after = ctx.get("stop_after", "qc")
+    if stop_after not in {"assets", "qc", "publish"}:
+        raise ValueError("stop_after must be assets, qc or publish")
+    sequence = list(zip(STAGE_ORDER_PRODUCE,
+                        [hook, script, assets, voice, assemble, qc, publish]))
+    return sequence[:STAGE_ORDER_PRODUCE.index(stop_after) + 1]
 
 
 def _pull_window(client, rec):

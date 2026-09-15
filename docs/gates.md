@@ -37,6 +37,21 @@ stale finals. The local MPT launcher disables auto-upload and selects Whisper fo
 custom-audio subtitles. Its `--help` smoke test passed. Full rendered MPT workflow
 and operator review remain pending; G8 remains unsigned.
 
+Native MPT follow-up: a schema-valid batch with local fixture media rendered
+successfully. The returned file under `storage/tasks/6c3b445e-10a6-4f16-8523-d274609e550c/`
+was copied into `data/production/v-mpt-local-smoke/final-1.mp4`; QC passed for
+1080×1920, audio and eight-second narration timing. Evidence is in that production
+folder's `assembly_result.json` and `qc_report.json`. Subtitles were disabled;
+this does not sign off the full subtitle or Jimeng workflow.
+
+G11 integration: quoted Canvas batches now pause before spending, resume reuses
+saved script/narration/finals, credit reservations remain separate from USD,
+manual replacement does not replay rejected generation, and production defaults
+to a QC review stop. Offline integration tests cover these paths and verify
+returned final retrieval. No publishing or paid generation has occurred.
+Full offline suite: **225 passed in 24.76s**. Frozen schemas/fixtures unchanged.
+G6/G8/G12 remain pending their live account, generation, subtitle and review steps.
+
 - Folder tree per plan: `data/{radar,grill,formats,hooks,production,published,analytics,costs}`, `modules/`, `schemas/`, `tests/fixtures/`, `vendor/`, `config/`, `logs/`, `docs/`
 - Vendored: ai-marketing-skills @ `bc84dbc`, MoneyPrinterTurbo v1.3.7 @ `cf5a3ae` (uv sync --frozen, Python 3.11)
 - Contracts frozen: 9 schemas × 9 valid fixtures + 1 negative fixture, all round-trip via jsonschema

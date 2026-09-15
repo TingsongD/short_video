@@ -333,3 +333,46 @@ def test_empty_collect_and_no_implicit_stock(tmp_path):
     result = collect("canvas-test", tmp_path)
     assert result["assets"] == [] and result["missing_shots"]
     assert not (tmp_path / "canvas-test/assets/manifest.json").exists()
+
+
+def test_discrete_duration_catalog_preserves_cli_integer_values():
+    items = catalog("video")
+    items[0]["modes"][0]["flags"][-1] = {"flag": "--duration", "values": ["5", "10"]}
+    shot = shot_list()["shots"][0] | {"duration_s": 5.2}
+    params = generation_parameters(shot, choose_model(items, "video"))
+    assert params["duration"] == 10 and type(params["duration"]) is int
+
+
+def test_nonfinite_duration_and_active_other_video_block_new_work(setup):
+    assets, process = setup
+    invalid = shot_list()
+    invalid["shots"][0]["duration_s"] = float("nan")
+    with pytest.raises(ValueError, match="finite"):
+        assets.prepare(invalid)
+    assert not process.projects
+    assets.prepare(shot_list(), [0])
+    process.pending = True
+    assets.generate("canvas-test", 10)
+    other = shot_list() | {"video_id": "another-video"}
+    assets.prepare(other, [0])
+    with pytest.raises(CanvasError, match="already_active"):
+        assets.generate("another-video", 10)
+    assert len(paid_calls(process)) == 1
+
+
+def test_manual_replacement_of_rejected_shot_allows_remaining_batch_without_replay(setup):
+    assets, process = setup
+    assets.prepare(shot_list())
+    job = read_state(assets.path("canvas-test"))
+    process.reject_shot = job["shots"][1]["node_id"]
+    assets.generate("canvas-test", 100)
+    replacement = assets.path("canvas-test").parent / "shot-01.mp4"
+    shutil.copy(FIXTURES / "media/good_video.mp4", replacement)
+    assert assets.generate("canvas-test", 100)["complete"]
+    submitted = len(paid_calls(process))
+    assert submitted == len(DOC["shots"])
+    replacement.unlink()
+    assert not assets.status("canvas-test")["complete"]
+    with pytest.raises(CanvasError, match="needs_review"):
+        assets.generate("canvas-test", 100)
+    assert len(paid_calls(process)) == submitted

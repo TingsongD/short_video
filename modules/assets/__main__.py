@@ -79,7 +79,8 @@ def main(argv=None):
             if args.cmd == "doctor":
                 result = assets.cli.doctor()
                 result.pop("userId", None)
-                result["models"] = {k: [{"model": i["model"], "aliases": i.get("aliases", [])}
+                result["models"] = {k: [{"model": i["model"], "aliases": i.get("aliases", []),
+                                         "modes": i.get("modes", [])}
                                         for i in assets.cli.catalog(k)] for k in ("video", "image")}
             elif args.cmd == "prepare":
                 for kind in ("video", "image"):

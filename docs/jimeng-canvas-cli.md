@@ -59,6 +59,11 @@ quote and use `generate` with the original batch ceiling. An uncertain operation
 blocks subsequent submissions, even if its record cannot be found. Resolve it
 in the original canvas; do not automatically retry generation.
 
+A valid manual replacement can satisfy a failed/rejected/invalid shot and allow
+the unsubmitted remainder to proceed. The original submission and conservative
+credit reservation remain recorded. Removing that replacement restores the
+review requirement; it does not turn the original attempt into a fresh job.
+
 Prompt/settings changes require an explicit new video ID. Repeated preparation
 reuses the original canvas and nodes. Valid local assets are reused at zero
 generation cost. Downloaded outputs use `shot-NN.jimeng.*`; resource ownership,

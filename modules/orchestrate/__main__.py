@@ -8,8 +8,10 @@
   python -m modules.orchestrate ledger              print weekly spend
 """
 import argparse
+import json
 import sys
 from pathlib import Path
+from contextlib import nullcontext
 
 from modules.common.config import DATA_DIR, ROOT
 from modules.orchestrate import approval, pipeline, schedule, stages
@@ -28,6 +30,10 @@ def _ctx(args):
     }
     if args.cmd == "produce":
         ctx.update(_live_production_clients(cfg))
+        ctx.update(resume=args.resume, stop_after="publish" if args.publish else args.stop_after,
+                   video_id=args.video_id, asset_provider=args.asset_provider or
+                   cfg.get("assets", {}).get("provider", "jimeng-canvas"),
+                   asset_fallback=args.asset_fallback, jimeng_credit_ceiling=args.jimeng_credit_ceiling)
     elif args.cmd == "readback":
         ctx["analytics_client"] = _live_analytics_client(cfg)
         from modules.common.config import secrets
@@ -46,6 +52,16 @@ def _estimates(cfg):
     return {"llm": 0.05, "elevenlabs": 0.20}
 
 
+class _LazyClient:
+    def __init__(self, factory):
+        self.factory, self.client = factory, None
+
+    def __getattr__(self, name):
+        if self.client is None:
+            self.client = self.factory()
+        return getattr(self.client, name)
+
+
 def _live_production_clients(cfg):
     """Real externals — constructed lazily so `run.sh produce` fails at the
     gate, not at import time, when keys are missing."""
@@ -56,11 +72,12 @@ def _live_production_clients(cfg):
 
     sec = secrets()
     return {
-        "llm": LLMClient.from_secrets(sec),
-        "tts": ElevenLabsTTS(
+        "llm": _LazyClient(lambda: LLMClient.from_secrets(sec)),
+        "tts": _LazyClient(lambda: ElevenLabsTTS(
             sec.get("ELEVENLABS_API_KEY", ""), cfg["voice"]["voice_id"],
-            model=cfg["voice"]["model"]),
-        "pexels": PexelsClient(sec.get("PEXELS_API_KEY", "")),
+            model=cfg["voice"]["model"])),
+        "pexels": (_LazyClient(lambda: PexelsClient(sec["PEXELS_API_KEY"]))
+                   if sec.get("PEXELS_API_KEY") else None),
         "mpt_runner": None,
         "uploader": _live_uploader(sec),
     }
@@ -132,7 +149,19 @@ def main(argv=None):
                                     "approve", "cron-line", "install-cron",
                                     "ledger"])
     ap.add_argument("arg", nargs="?")
+    ap.add_argument("--resume", action="store_true", help="reuse saved script and validated artifacts")
+    ap.add_argument("--video-id", help="explicit new production ID")
+    ap.add_argument("--stop-after", choices=["assets", "qc"], default="qc")
+    ap.add_argument("--publish", action="store_true", help="continue through the separate publishing gate")
+    ap.add_argument("--asset-provider", choices=["jimeng-canvas", "manual"])
+    ap.add_argument("--asset-fallback", choices=["none", "stock"], default="none")
+    ap.add_argument("--jimeng-credit-ceiling", type=int,
+                    help="explicit approval of a previously reviewed Jimeng batch quote")
     args = ap.parse_args(argv)
+    if args.publish and args.stop_after == "assets":
+        ap.error("--publish cannot be combined with --stop-after assets")
+    if args.jimeng_credit_ceiling is not None and args.jimeng_credit_ceiling < 0:
+        ap.error("--jimeng-credit-ceiling must be nonnegative")
 
     if args.cmd == "approve":
         if not args.arg:
@@ -156,20 +185,29 @@ def main(argv=None):
         return 0
 
     ctx = _ctx(args)
+    lock = nullcontext()
     if args.cmd == "produce":
         if not args.arg:
             ap.error("produce requires an idea_id")
-        st = stages.produce_stages(args.arg, ctx)
-    elif args.cmd == "readback":
-        st = stages.readback_stages(ctx)
-    else:
-        st = stages.weekly_stages(ctx)
-
-    record = pipeline.run_stages(args.cmd, st)
+        from modules.assets.queue import validate_video_id
+        from modules.orchestrate.checkpoint import production_lock
+        video_id = args.video_id or f"v-{args.arg}"
+        validate_video_id(video_id)
+        lock = production_lock(DATA_DIR / "production" / video_id)
+    with lock:
+        if args.cmd == "produce":
+            st = stages.produce_stages(args.arg, ctx)
+        elif args.cmd == "readback":
+            st = stages.readback_stages(ctx)
+        else:
+            st = stages.weekly_stages(ctx)
+        record = pipeline.run_stages(args.cmd, st)
     print(f"{args.cmd}: {record['status']} (log: {record['log_path']})")
     for s in record["stages"]:
         mark = "ok" if s["status"] == "ok" else f"FAILED: {s['error']}"
         print(f"  {s['name']:<10} {mark}")
+        if s.get("details"):
+            print(json.dumps(s["details"], indent=2))
     return 0 if record["status"] == "ok" else 1
 
 

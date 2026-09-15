@@ -3,7 +3,8 @@
 Pass 1 audited + patched (B1, B2 fixed; S1, S2 partially; D1 decided; V3 decided).
 Pass 2 (this document): full line-by-line audit of all 67 module files.
 Patch round 2: B3, B4 fixed (see "Fixed in patch round 2" below).
-Suite state: **194 tests green**, secrets clean, data files schema-valid.
+Historical review baseline: **194 tests green**. See the Canvas integration
+addendum below and `PROGRESS.md` for current validation.
 
 ---
 
@@ -38,9 +39,8 @@ B3 and B4 were the only open bugs; both fixed in patch round 2. See below.
 - M1. `analytics/windows.py:15` maps window names to hours by positional zip —
   a reordered `windows_hours` in config would silently rename windows. Guarded
   only by the sorted-order config test; make it order-explicit when touching M10.
-- M2. `assets/manifest.py:26` — `shot_kinds` override can relabel an image file
-  as kind "video" when the shot wanted video but the folder had an image. MPT
-  tolerates images in materials; manifest then misrepresents the file. Minor.
+- M2. Image relabeling in the asset manifest — fixed by Canvas integration:
+  actual media kind and requested duration are validated before acceptance.
 - M3. `assemble/task_builder.py:45` — fallback output dir uses unsanitized
   `video_subject`; dormant because produce always passes `video_dir`. Harden
   if the fallback is ever used.
@@ -55,11 +55,23 @@ B3 and B4 were the only open bugs; both fixed in patch round 2. See below.
   (keys present, voice_id set) before the approval prompt.
 - V1. YT Analytics `ctr` units (÷100 assumption in `_pull_window`) — confirm at
   G10 first pull. Also confirm metric name availability for Shorts traffic.
-- V2. Lane A bridge protocol (`JIMENG_BRIDGE_URL` + `/run`) is an assumed shape;
-  Lane B is the supported path. No action unless Lane A is wanted.
-- V3. MPT batch-manifest field compatibility (`subtitle_display_mode` etc. vs
-  actual `VideoParams` fields in vendored v1.3.7) — confirm at G8 live run.
+- V2. Legacy assumed WebBridge protocol is no longer used by production.
+  The official Canvas CLI is primary; manual intake remains available.
+- V3. Native MPT local fixture render and returned-file retrieval passed with
+  subtitles disabled. The full subtitle/Whisper path still needs live validation.
 - V4. MODULE_REPORT convention — ✅ DECIDED: gates.md is canonical.
+
+## Canvas integration addendum
+
+- Implemented Canvas-first production, resumable quoted batches, strict media
+  acceptance, explicit stock substitution and native credit ceilings.
+- Fixed shuffled clips, narration timing and stale/mislocated final detection.
+  MPT auto-upload is disabled in the assembly process; production defaults to QC.
+- Canvas CLI 1.0.1 and its Skill installed. Separate Canvas authorization and
+  live catalog verification are pending. No paid generation has been performed.
+- Pilot and complete asset-set spend require explicit approval after quotes.
+  Blender remains deferred. See `docs/jimeng-canvas-cli.md` and
+  `docs/production-resume.md` for operation and recovery.
 
 ---
 

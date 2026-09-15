@@ -13,9 +13,12 @@ def choose_model(catalog, kind, requested=None):
     candidates = []
     for item in catalog:
         names = [item["model"], *item.get("aliases", [])]
-        matches = (any(_same(requested, n) for n in names) if requested else
-                   any("seedance" in n.lower() and "fast" in n.lower() for n in names)
-                   if kind == "video" else len(catalog) == 1)
+        if requested:
+            matches = any(_same(requested, n) for n in names)
+        elif kind == "video":
+            matches = any("seedance" in n.lower() and "fast" in n.lower() for n in names)
+        else:
+            matches = len(catalog) == 1
         if not matches:
             continue
         for spec in item.get("modes", []):
@@ -61,10 +64,13 @@ def generation_parameters(shot, selected, resolution="720P", ratio="9:16"):
             raise CanvasError(f"unsupported_model_parameter_{key}")
         spec = specs[key]
         if spec.get("values"):
-            matches = [v for v in spec["values"] if _same(value, v)]
+            matches = [v for v in spec["values"] if
+                       (float(value) == float(v) if key in {"duration", "count"} else _same(value, v))]
             if not matches:
                 raise CanvasError(f"unsupported_{key}")
             params[key] = matches[0]
+        if key in {"duration", "count"} and float(params[key]).is_integer():
+            params[key] = int(float(params[key]))
         if key in {"duration", "count"}:
             number = float(value)
             if number < spec.get("min", number) or number > spec.get("max", number):

@@ -164,12 +164,14 @@ class CanvasAssets:
         found = scan_folder(folder, {s["idx"]: s["asset_type"] for s in doc["shots"]},
                             {s["idx"]: s["duration_s"] for s in doc["shots"]})
         for item in job["shots"]:
-            if item["state"] in {"prepared", "local"}:
+            if item["state"] in {"prepared", "local", "failed", "rejected", "invalid"}:
                 entry = found.get(item["idx"], {})
                 if entry.get("ok"):
+                    if item["state"] != "local":
+                        item["pre_import_state"] = item["state"]
                     item["state"], item["file"] = "local", entry["file"]
                 elif item["state"] == "local":
-                    item["state"] = "prepared"
+                    item["state"] = item.get("pre_import_state", "prepared")
                     item.pop("file", None)
 
     def _block_other_active(self, job):
@@ -320,6 +322,7 @@ class CanvasAssets:
     def status(self, video_id):
         job = read_state(self.path(video_id))
         self._identity(job)
+        self._reuse_local(job)
         for item in job["shots"]:
             self._observe(job, item)
         return self.summary(job)
@@ -329,6 +332,7 @@ class CanvasAssets:
             job = read_state(self.path(video_id))
             self._identity(job)
             self._shot_list(job)
+            self._reuse_local(job)
             for item in job["shots"]:
                 self._observe(job, item, wait_seconds, download=True)
                 self._save(job)
@@ -339,9 +343,13 @@ class CanvasAssets:
 
     @staticmethod
     def summary(job):
+        quotes = {i["nodeId"]: i["maxCredits"] for i in (job.get("quote") or {}).get("items", [])}
         return {"video_id": job["video_id"], "canvas_url": job.get("web_url"),
                 "cli_version": job["account"]["version"], "credit_unit": "jimeng_credits",
                 "quote": job.get("quote"), "approved_ceiling": job.get("approved_ceiling"),
+                "shot_quotes": [{"shot_idx": i["idx"], "max_credits": quotes[i["node_id"]],
+                                 "parameters": i["parameters"]} for i in job["shots"]
+                                if i["node_id"] in quotes],
                 "reserved_credits": sum(i.get("authorized_credit_ceiling", 0) for i in job["shots"]),
                 "complete": all(i["state"] in {"downloaded", "local"} for i in job["shots"]),
                 "shots": [{k: i[k] for k in ("idx", "kind", "state", "node_id", "submit_id", "file")

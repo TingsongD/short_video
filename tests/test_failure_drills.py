@@ -101,7 +101,12 @@ class FakePexels:
             return False
         src = MEDIA / ("good_image.png" if kind == "image"
                        else "good_video.mp4")
-        shutil.copy(src, out_path)
+        if kind == "video":
+            subprocess.run(["ffmpeg", "-y", "-v", "error", "-stream_loop", "-1",
+                            "-i", str(src), "-t", "30", "-c", "copy", str(out_path)],
+                           capture_output=True, check=True)
+        else:
+            shutil.copy(src, out_path)
         return True
 
 
@@ -139,6 +144,8 @@ def make_ctx(tmp_path, *, llm=None, tts=None, pexels=None,
         "base_dir": tmp_path / "production",
         "published_dir": tmp_path / "published",
         "video_id": "v-drill-1",
+        "asset_provider": "manual", "asset_fallback": "stock", "stop_after": "publish",
+        "prepare_clips": fake_prepare_clips,
         "est": {"llm": 0.05, "elevenlabs": 0.20},
         "llm": llm if llm is not None else llm_ok(),
         "tts": tts or FakeTTS(),
@@ -146,6 +153,15 @@ def make_ctx(tmp_path, *, llm=None, tts=None, pexels=None,
         "mpt_runner": mpt_runner,
         "uploader": uploader or (lambda v, m: {"youtube": "drill-yt-id"}),
     }
+
+
+def fake_prepare_clips(directory, shot_list, manifest, resolution):
+    # Actual FFmpeg timing is covered in test_assemble_materials; these drills
+    # isolate stage failures and downstream approvals.
+    from modules.assets.canvas import fingerprint
+    return {"fingerprint": fingerprint(shot_list), "video_clip_duration": 30,
+            "materials": [{"url": f"assets/{a['file']}"} for a in
+                          sorted(manifest["assets"], key=lambda a: a["shot_idx"])]}
 
 
 def run_produce(idea_id, ctx, tmp_path):

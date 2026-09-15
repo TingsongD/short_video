@@ -2,6 +2,7 @@
 Lane B (manual) is the supported path: cards are copy-paste ready for Jimeng.
 """
 import json
+import math
 import re
 from pathlib import Path
 
@@ -29,6 +30,8 @@ def validate_shots(shot_list):
     validate_video_id(shot_list["video_id"])
     if [s["idx"] for s in shot_list["shots"]] != list(range(len(shot_list["shots"]))):
         raise ValueError("shot indices must be unique and ordered from zero")
+    if any(not math.isfinite(s["duration_s"]) for s in shot_list["shots"]):
+        raise ValueError("shot durations must be finite")
     return shot_list
 
 
@@ -47,7 +50,7 @@ def render_cards(shot_list, base=None):
         "",
         "Drop rendered files into THIS folder as `shot-NN.mp4` / `shot-NN.png`.",
         "Optional source tag: `shot-NN.jimeng.mp4` or `shot-NN.stock.mp4`.",
-        "Requirements: video >=3s, min dimension >=720px, mp4/png preferred.",
+        "Requirements: video covers the requested duration (at least 3s), min dimension >=720px.",
         "",
     ]
     for s in shot_list["shots"]:

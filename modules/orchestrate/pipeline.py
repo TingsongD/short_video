@@ -9,6 +9,12 @@ from modules.common.config import ROOT
 LOGS_DIR = ROOT / "logs" / "runs"
 
 
+class ReviewRequired(RuntimeError):
+    def __init__(self, message, details=None):
+        super().__init__(message)
+        self.details = details
+
+
 def run_stages(cmd, stages, log_dir=None, now=None):
     """stages: ordered list of (name, callable). Returns the run record."""
     record = {
@@ -25,6 +31,13 @@ def run_stages(cmd, stages, log_dir=None, now=None):
             record["stages"].append({
                 "name": name, "status": "ok",
                 "duration_s": round(time.monotonic() - t0, 3)})
+        except ReviewRequired as e:
+            record["stages"].append({"name": name, "status": "needs_review",
+                                     "duration_s": round(time.monotonic() - t0, 3),
+                                     "error": str(e), "details": e.details})
+            record["status"] = "needs_review"
+            record["stopped_at"] = name
+            break
         except Exception as e:
             record["stages"].append({
                 "name": name, "status": "failed",
