@@ -282,3 +282,22 @@
   account credits are the blocker. No purchase, top-up, retry or scope change.
 - Live result mapping, candidate relevance and downstream live handoff remain
   untested. No code changed; latest full offline suite remains **300 passing**.
+
+### Generated assets uploaded to Google Drive (2026-09-15)
+
+- User requested all generated assets in the supplied Google Drive folder with
+  descriptive filenames. Inventoried production media and MoneyPrinterTurbo
+  task/storage outputs: 44 original/cached files represent 20 distinct media
+  assets by SHA-256. Every distinct file was included; identical copies were
+  consolidated and mapped in the uploaded catalog.
+- Uploaded 20 descriptively named videos, audio files and preview images,
+  plus a readme and CSV catalog: **22 files**, about **14.4 MB** of media.
+  Includes Jimeng coffee footage, Hypit final/intermediates, Vertex narration,
+  background music and mix, and clearly labeled synthetic assembly-test files.
+- Local decoding checks passed for each media asset. Google Drive's upload
+  dialog confirmed **22 uploads complete**, with all expected filenames.
+  Destination: https://drive.google.com/drive/folders/1XQU20m_xk5030kAxbbIumeHYkrRPkPbs
+- Used the existing signed-in Chrome account; original local files and project
+  references were preserved. No new generation or changes to sharing settings.
+  Local staged files and verification receipt:
+  `data/production/drive-export-20260915/upload-manifest.json`.
