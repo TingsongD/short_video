@@ -21,6 +21,15 @@ Live gates (G1, G5–G10) additionally require human key/spend approval (Wave 3)
 
 ## G0 evidence detail (2026-09-14)
 
+### Canvas integration addendum (2026-09-14)
+
+G6 offline coverage now includes the official Canvas subprocess protocol,
+preflight model/parameter checks, quote ceilings, ambiguous submission recovery,
+download retries, media-kind matching and explicit stock fallback. Full suite:
+208 passed in 15.20s. Canvas CLI 1.0.1 installed; separate authorization expired.
+Account/catalog checks, quoted pilot and full live asset set remain pending.
+No credits spent; G6 remains unsigned. See `docs/jimeng-canvas-cli.md`.
+
 - Folder tree per plan: `data/{radar,grill,formats,hooks,production,published,analytics,costs}`, `modules/`, `schemas/`, `tests/fixtures/`, `vendor/`, `config/`, `logs/`, `docs/`
 - Vendored: ai-marketing-skills @ `bc84dbc`, MoneyPrinterTurbo v1.3.7 @ `cf5a3ae` (uv sync --frozen, Python 3.11)
 - Contracts frozen: 9 schemas × 9 valid fixtures + 1 negative fixture, all round-trip via jsonschema

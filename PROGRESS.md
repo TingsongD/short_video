@@ -29,3 +29,13 @@
 
 - [x] `tests/test_e2e_dry.py`: M1→M8 driven on fixtures only — niche_report → scored_ideas → format_library → hooks → shot_list → asset_manifest → voice.mp3 → mpt_task + batch — every contract validated against its frozen schema and asserted written in pipeline order; zero network/spend (155 tests green)
 ## Wave 3 — Live gates + autonomy ⬜ NOT STARTED
+
+## Jimeng Canvas integration (2026-09-14)
+
+- M6: official Canvas CLI adapter, model validation, quoted credit ceilings,
+  private recovery journal, stable submissions, verified downloads, strict media
+  intake, explicit stock fallback and doctor/prepare/generate/status/resume CLI.
+- Canvas CLI 1.0.1 (83aeb67) and bundled Skill installed; dreamina preserved.
+  Canvas authorization challenge expired; account/catalog and paid pilot pending.
+- M6 validation: `make test` **208 passed in 15.20s**, fully offline. No contract
+  changes and no generation spend. Details: `docs/jimeng-canvas-cli.md`.

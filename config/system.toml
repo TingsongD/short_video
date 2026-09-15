@@ -25,6 +25,18 @@ voice_id = ""                  # pin after audition — see docs/voice-selection
 min_duration_s = 15
 max_duration_s = 60
 
+[assets]
+provider = "jimeng-canvas"
+fallback = "none"             # stock substitution must be requested explicitly
+
+[assets.jimeng]
+executable = "dreamina-canvas"
+profile = "default"
+video_resolution = "720P"
+image_resolution = "2K"
+# Pin video_model / image_model from `python -m modules.assets doctor`.
+# Automatic selection only succeeds for an unambiguous catalog match.
+
 [assembly]
 video_aspect = "9:16"
 resolution = "1080x1920"

@@ -2,18 +2,34 @@
 Lane B (manual) is the supported path: cards are copy-paste ready for Jimeng.
 """
 import json
+import re
 from pathlib import Path
 
 from modules.common.config import DATA_DIR
+from modules.common.schema import validate
 
 VIDEO_EXTS = {".mp4", ".mov", ".webm"}
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
 
 
 def assets_dir(video_id, base=None):
+    validate_video_id(video_id)
     d = Path(base or DATA_DIR / "production") / video_id / "assets"
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+def validate_video_id(video_id):
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", video_id):
+        raise ValueError("video_id must be a single safe folder name")
+
+
+def validate_shots(shot_list):
+    validate(shot_list, "shot_list.schema.json")
+    validate_video_id(shot_list["video_id"])
+    if [s["idx"] for s in shot_list["shots"]] != list(range(len(shot_list["shots"]))):
+        raise ValueError("shot indices must be unique and ordered from zero")
+    return shot_list
 
 
 def target_name(shot):
@@ -24,6 +40,7 @@ def target_name(shot):
 def render_cards(shot_list, base=None):
     """Write prompt_cards.md + shot_list copy into the assets dir.
     Returns the assets dir path."""
+    validate_shots(shot_list)
     d = assets_dir(shot_list["video_id"], base)
     lines = [
         f"# Jimeng prompt cards — {shot_list['video_id']}",
