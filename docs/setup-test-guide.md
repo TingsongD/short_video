@@ -12,7 +12,7 @@ cost. Hypit is the editing/runtime tool; HypiHub is its hosted generation servic
 | Fresh MoneyPrinterTurbo render | Passed: 1080×1920, 8.07 seconds, audio present |
 | Smoke-test content | Synthetic fixture media, subtitles disabled; not a finished creative video |
 | Jimeng Canvas CLI | 1.0.1 authorized; pilot generated and downloaded under a 30-credit ceiling; media checks passed |
-| Real script/narration | LLM and ElevenLabs keys missing; channel voice not selected |
+| Real script/narration | ElevenLabs key configured and read-only API checks pass; channel voice not selected and live narration untested. Script LLM configuration remains pending. |
 | Hypit executable | 0.1.8 installed in `vendor/hypit-runtime`, isolated from production |
 | Hypit skill + local editing | Global skill installed; Jimeng coffee clip rendered with timed titles and source audio, 1080×1920, five seconds; see [workflow guide](jimeng-hypit-workflow.md) |
 | HypiHub draft | Valid source; one five-second, 720p, 9:16 Seedance fast request |
@@ -215,8 +215,9 @@ applied unchanged to a silent 720p source clip.
 
 ## 4. Finish the full workflow after the single-shot comparison
 
-- Supply the script LLM configuration and ElevenLabs key in the existing ignored
+- Supply the script LLM configuration in the existing ignored
   `config/secrets.toml`, and select `[voice].voice_id` in `config/system.toml`.
+  The ElevenLabs key is now configured; account, voices and model discovery pass.
   The remaining live-system credentials are YouTube Data API, optional Pexels
   for stock fallback, and the publishing/analytics OAuth account. The single-shot
   tests above do not need them.

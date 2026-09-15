@@ -140,3 +140,14 @@
   production remains the default; full shot coverage, real narration/captions,
   human review and publishing are separate gates. Local receipts and checks are
   retained in the pilot folder and consolidated setup evidence.
+
+### ElevenLabs credential setup (2026-09-15)
+
+- Stored the user-provided key in ignored `config/secrets.toml`, permissions
+  0600, preserving all other settings. No credentials appear in tracked files.
+- Read-only account, voices and model requests returned HTTP 200. Active Starter
+  account, 30 voices and configured `eleven_v3` model discovered. Sanitized local
+  evidence: `data/production/elevenlabs-setup/verification.json`.
+- No synthesis or music generation submitted. Channel voice remains unset;
+  voice audition, synthesis permissions and real narration QC/listening remain
+  pending. Code is unchanged; the previous 231-test result remains the latest.

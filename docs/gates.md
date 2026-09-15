@@ -101,6 +101,12 @@ No additional generation spend. Full suite: **231 passed in 25.48s**. Evidence:
 `docs/jimeng-hypit-workflow.md`. G6/G8/G12 remain unsigned for full asset coverage,
 narration, speech-aligned captions and operator acceptance.
 
+G7 setup follow-up (2026-09-15): ElevenLabs credential saved privately. Account,
+voice list and model discovery return HTTP 200; 30 voices and `eleven_v3` are
+listed. No audio generation performed. Voice choice, actual synthesis permissions,
+duration validation and blind listening remain pending; G7 stays unsigned.
+Sanitized evidence: `data/production/elevenlabs-setup/verification.json`.
+
 - Folder tree per plan: `data/{radar,grill,formats,hooks,production,published,analytics,costs}`, `modules/`, `schemas/`, `tests/fixtures/`, `vendor/`, `config/`, `logs/`, `docs/`
 - Vendored: ai-marketing-skills @ `bc84dbc`, MoneyPrinterTurbo v1.3.7 @ `cf5a3ae` (uv sync --frozen, Python 3.11)
 - Contracts frozen: 9 schemas × 9 valid fixtures + 1 negative fixture, all round-trip via jsonschema
