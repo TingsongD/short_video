@@ -301,3 +301,16 @@
   references were preserved. No new generation or changes to sharing settings.
   Local staged files and verification receipt:
   `data/production/drive-export-20260915/upload-manifest.json`.
+
+### Google Drive CLI authorization verified (2026-09-15)
+
+- User completed authorization for the existing `gdrive 3.9.1` connection
+  (`n8nworkflow` OAuth application, account `tingsong.dai@gmail.com`).
+- The pending folder-info command completed successfully. Authenticated CLI
+  listing confirms all 22 expected delivered files, with no missing files or
+  duplicate names; no files were re-uploaded.
+- Saved remote file IDs in the existing upload manifest and changed the
+  sanitized setup receipt to authenticated. Native gdrive manages credentials
+  outside the project. Guide: `docs/google-drive-uploads.md`.
+- Future requested uploads can use the CLI. No scheduled uploads, sharing
+  changes or production code changes were made.
