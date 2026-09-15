@@ -136,3 +136,8 @@ The starter demonstrates picture, source audio, timed titles and rendering.
 Real narration, speech-aligned captions and full 4–7-shot coverage remain separate
 production checks. Our MoneyPrinterTurbo backend and frozen contracts remain the
 existing production baseline; this adds an agent-directed Hypit editing lane.
+
+Narration and music credentials can now come from the project `.env`; see
+[audio provider setup](audio-providers.md). Google TTS/Lyria require route and
+account verification before generation adapters are connected. Import accepted
+audio into the Hypit composition after validating its actual format and duration.

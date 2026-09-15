@@ -12,6 +12,12 @@ The channel voice is still unset. Verification evidence, excluding credentials
 and personal account details, is saved at
 `data/production/elevenlabs-setup/verification.json`.
 
+The project now also accepts credentials in its root `.env`; nonempty process
+environment values override `.env`, which overrides the private TOML file.
+Empty placeholders keep the existing credential. See
+[audio provider setup](audio-providers.md) for Google TTS/music options and the
+remaining access checks. The production voice provider is still ElevenLabs.
+
 ## Audition
 
 Audition 3 ElevenLabs voices on the same 20s script, blind-listen, pick one.

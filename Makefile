@@ -4,7 +4,7 @@ PY := .venv/bin/python
 
 setup:
 	uv venv .venv
-	uv pip install -p .venv pytest jsonschema
+	uv pip install -p .venv pytest jsonschema python-dotenv==1.2.3
 
 test:
 	$(PY) -m pytest tests -q

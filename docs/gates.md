@@ -107,6 +107,14 @@ listed. No audio generation performed. Voice choice, actual synthesis permission
 duration validation and blind listening remain pending; G7 stays unsigned.
 Sanitized evidence: `data/production/elevenlabs-setup/verification.json`.
 
+Credential-loader follow-up (2026-09-15): root `.env` support and Git exclusions
+added following the user's selected credential location. Regression coverage
+verifies source precedence, working TOML fallback, path isolation, literal values
+and errors that omit credential contents. Full suite **239 passed in 26.22s**.
+The new `.env` was empty on disk; Google route/auth/model access and TTS/music
+generation remain unverified. Existing ElevenLabs credentials still load.
+G7/G8/G12 remain unsigned. See `docs/audio-providers.md`.
+
 - Folder tree per plan: `data/{radar,grill,formats,hooks,production,published,analytics,costs}`, `modules/`, `schemas/`, `tests/fixtures/`, `vendor/`, `config/`, `logs/`, `docs/`
 - Vendored: ai-marketing-skills @ `bc84dbc`, MoneyPrinterTurbo v1.3.7 @ `cf5a3ae` (uv sync --frozen, Python 3.11)
 - Contracts frozen: 9 schemas × 9 valid fixtures + 1 negative fixture, all round-trip via jsonschema

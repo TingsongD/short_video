@@ -1,5 +1,8 @@
 # Secrets — never commit
 config/secrets.toml
+.env
+.env.*
+!.env.example
 
 # Python
 .venv/

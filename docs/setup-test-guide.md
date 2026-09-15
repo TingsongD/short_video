@@ -8,7 +8,7 @@ cost. Hypit is the editing/runtime tool; HypiHub is its hosted generation servic
 
 | Check | Result |
 | --- | --- |
-| Offline suite | 231 passed in 25.48 seconds, including local renderer startup regression |
+| Offline suite | 239 passed in 26.22 seconds, including private .env loading and local renderer startup regression |
 | Fresh MoneyPrinterTurbo render | Passed: 1080×1920, 8.07 seconds, audio present |
 | Smoke-test content | Synthetic fixture media, subtitles disabled; not a finished creative video |
 | Jimeng Canvas CLI | 1.0.1 authorized; pilot generated and downloaded under a 30-credit ceiling; media checks passed |

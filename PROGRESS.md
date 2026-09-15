@@ -151,3 +151,21 @@
 - No synthesis or music generation submitted. Channel voice remains unset;
   voice audition, synthesis permissions and real narration QC/listening remain
   pending. Code is unchanged; the previous 231-test result remains the latest.
+
+### Root .env and Google audio setup (2026-09-15)
+
+- User selected a root `.env` for credentials. Added Git exclusions and a safe
+  example. Shared configuration now reads it with nonempty environment > `.env`
+  > private TOML precedence; empty placeholders preserve working settings.
+  Values remain local to the loader, with no shell execution or interpolation.
+- Pinned `python-dotenv==1.2.3` in setup. Offline tests cover precedence, quotes,
+  BOM/comments, path isolation, empty placeholders, reloads and malformed-input
+  errors without revealing credential contents. **239 passed in 26.22s**.
+- Google primary docs confirm Lyria 3.5 through Gemini Interactions. The Cloud
+  guide uses a separate project/auth route and different model examples; a key
+  named `GEMINI_TTS_VERTEX_API_KEY` does not establish access to either route.
+  Details and primary sources: `docs/audio-providers.md`.
+- The new `.env` was zero bytes on disk; Google credentials/access are unverified.
+  User was asked to save the file and identify the key's origin. Existing
+  ElevenLabs configuration remains available. Google generation adapters and
+  full narration/music testing remain pending; no audio generation submitted.
