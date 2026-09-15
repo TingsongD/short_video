@@ -219,3 +219,21 @@
   is below the production 15-second minimum; this is a provider smoke test,
   not a G7/G8/G12 sign-off. Latest full offline suite remains 239 passing tests;
   no production code changes in this follow-up.
+
+### Outlier discovery tool research (2026-09-15)
+
+- Reviewed all nine supplied candidates against first-party pages, extension
+  listings, source code and API documentation. Recommendation: Viral Outliers
+  for an API pilot, Handler for free browser/MCP research, ClipRanker for CSV
+  intake. Full comparison, pricing corrections and proposed integration:
+  `docs/outlier-tools-review.md`.
+- Viral Outliers free trending/pricing endpoints returned HTTP 200. Sample
+  exposes views/followers but lacks publication times, contains photo posts and
+  repeated creators; authenticated search quality and YouTube coverage remain
+  untested. Receipt: `data/production/outlier-tools-research-20260915/public-api-check.json`.
+- Documented the mismatch between the user's strict views/followers > 2 rule
+  and the current scanner's rounded >= 2 ratio plus >= 5 median-performance
+  requirement. Proposed separate eligibility and ranking signals with a
+  cross-platform intake artifact; implementation and frozen contracts unchanged.
+- Research only: no purchases, installations or paid API requests. Latest full
+  offline suite remains 239 passing tests; no production code changed.
