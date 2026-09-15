@@ -6,7 +6,7 @@ Live gates (G1, G5–G10) additionally require human key/spend approval (Wave 3)
 | Gate | Module | Status | Evidence | Signed by | Date |
 |---|---|---|---|---|---|
 | **G0** | M0 Foundations | ✅ **SIGNED** | `make test` green (folders, config, secrets shape, schema round-trips); `uv run python cli.py --help` runs in vendor/MoneyPrinterTurbo; no key-shaped strings in tracked files; vendor pins in docs/vendor-pins.md | coordinator (Wave 0) | 2026-09-14 |
-| G1 | M1 Niche Radar | ⬜ pending | unit criteria met 2026-09-14: schema-valid report from fixture scan, quota counter caps search calls + degrades to channel-only, breakout flag at 5x/2x/14d. Live scan still needed | — | — |
+| G1 | M1 Niche Radar | ⬜ pending | unit criteria met 2026-09-14: schema-valid report from fixture scan, quota counter caps search calls + degrades to channel-only, historical breakout flag at 5x/2x/14d. 2026-09-15: Viral Outliers + strict views/followers >2 integrated; 300 offline tests pass, key verified, balance 0; live search pending (see addendum) | — | — |
 | G2 | M2 Idea Grill | ⬜ pending | unit criteria met 2026-09-14: 4 hard-reject rules fire correctly, thresholds at exact boundaries, temp-0 determinism, schema-valid output, raw judge output logged. Live audit (≥30% kill, ≥8/10 agreement) pending real LLM | — | — |
 | G3 | M3 Format Library | ⬜ pending | unit criteria met 2026-09-14: CRUD + stable IDs, extract validates + no-copy guard (>0.6 Jaccard rejected), match = exactly 1 default + labeled alt, promote/retire at exact thresholds. library.json seeded offline with 10 pattern entries (2026-09-14 patch); radar-extracted refresh pending G1 + LLM | — | — |
 | G4 | M4 Hook Bank | ⬜ pending | unit criteria met 2026-09-14: bank.json schema-valid, selector matches niche+type w/ niche fallback, attribution preserved, LookupError on empty niche. Bank topped up to 5/niche: 12 curated + 18 labeled `original-pattern` (2026-09-14 patch); authentic viralhooks.org curation per docs/hook-curation.md still pending | — | — |
@@ -141,3 +141,28 @@ is pending and no full production video was assembled in this test.
 - Contracts frozen: 9 schemas × 9 valid fixtures + 1 negative fixture, all round-trip via jsonschema
 - Media fixtures generated with ffmpeg (312 KB total): good/bad/zero-byte video, image, 20s/8s voice
 - CLI smoke test: `cli.py --help` OK (sources: pexels/pixabay/coverr/volcengine_seedance/ofox/metaso_minimax/openai_image/local confirmed)
+
+## Viral Outliers discovery addendum (2026-09-15)
+
+- **G1 unit criteria:** configured provider is Viral Outliers for YouTube/TikTok;
+  strict unrounded views/followers >2 replaces the previous combined median
+  gate for current runs. Evidence normalization, missing-date/media rejection,
+  duplicate removal, creator confirmation and frozen report validation pass.
+- **G2/G3 handoff:** follower ratios and unavailable-median metadata reach idea
+  prompts; TikTok references remain TikTok links in extracted formats.
+- **G11 unit criteria:** CLI and weekly workflow share provider selection.
+  Explicit batch ceilings and existing weekly dollar caps precede submission.
+  Durable receipts stop uncertain retries, preserve partial responses, and
+  recheck unexpected charges after a restart. Scheduled runs receive no new
+  implicit paid-search approval.
+- Full offline suite: **300 passed in 26.22s**. Schemas and frozen fixtures
+  unchanged. New tests do not contact any service or use real credentials.
+- Free live checks: key authenticated, available balance **0**, search price
+  **1 credit**. Teaser feed returned 12 posts with no publication timestamps;
+  these are browsing evidence, not accepted fresh candidates.
+- Prepared two-platform `ai tools` pilot: **2 credits** nominally **$0.02**.
+  No paid search or billing action performed. Account credit allocation,
+  approved paid pilot, actual search response mapping, relevance and YouTube
+  coverage remain pending. **G1/G2/G3/G11 are not signed off by this addendum.**
+- Guide: `docs/radar-viral-outliers.md`; private checks and the plan are in
+  `data/radar/viral-outliers/`.

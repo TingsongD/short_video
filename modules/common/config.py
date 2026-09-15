@@ -16,6 +16,7 @@ GOOGLE_SETTINGS = {
     "GOOGLE_CLOUD_PROJECT", "GOOGLE_CLOUD_LOCATION",
     "GOOGLE_GENAI_USE_VERTEXAI", "GOOGLE_APPLICATION_CREDENTIALS",
 }
+PROVIDER_KEYS = {"VIRAL_OUTLIERS_API_KEY"}
 
 
 def load_toml(name):
@@ -59,7 +60,7 @@ def secrets():
     """Nonempty environment > project .env > private TOML; never export values."""
     values = load_toml("secrets.toml")
     values.update({key: value for key, value in dotenv_secrets().items() if value != ""})
-    for key in values.keys() | GOOGLE_SETTINGS:
+    for key in values.keys() | GOOGLE_SETTINGS | PROVIDER_KEYS:
         if os.environ.get(key):
             values[key] = os.environ[key]
     return values

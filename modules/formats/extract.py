@@ -4,6 +4,7 @@ title's wording (token overlap > 0.6)."""
 import re
 
 from modules.common.llm import parse_json
+from modules.common.video_reference import video_reference
 
 MAX_TOKEN_OVERLAP = 0.6
 
@@ -39,10 +40,14 @@ def watch_url(video_id):
 def draft_format(video, niche, llm, idea=None):
     """video: breakout_videos[] entry. Returns a full format_entry dict.
     Raises ValueError on no-copy violation or bad LLM output."""
+    reference = video_reference(video)
+    baseline = (f"{video.get('multiplier')}x vs channel median"
+                if video.get("baseline_available", True) else "channel median unavailable")
     user = (
         f"Niche: {niche}\nReference title: {video['title']}\n"
         f"Observed format guess: {video.get('format_guess', '')}\n"
-        f"Multiplier: {video.get('multiplier')}x vs channel median\n"
+        f"Views / followers: {video.get('subs_ratio')}x; {baseline}\n"
+        f"Platform: {video.get('platform', 'youtube')}; reference: {reference}\n"
         + (f"Related approved idea payoff: {idea['payoff']}\n" if idea else "")
         + "Draft the reusable format structure."
     )
@@ -56,11 +61,11 @@ def draft_format(video, niche, llm, idea=None):
         "beats": beats,
         "visual_payoff": str(d["visual_payoff"]).strip(),
         "cta_pattern": str(d.get("cta_pattern", "")).strip(),
-        "watch_reference": watch_url(video["video_id"]),
+        "watch_reference": reference,
         "status": "candidate",
         "our_stats": {"videos": 0, "wins": 0, "avg_multiplier": 0},
         "niche": niche,
-        "notes": f"Extracted from {video['video_id']} ({video.get('multiplier')}x outlier)",
+        "notes": f"Extracted from {video['video_id']} ({video.get('subs_ratio')}x views/followers; {baseline})",
     }
     if len(beats) != 3 or entry["hook_type"] not in ("spoken", "caption", "onscreen"):
         raise ValueError("extracted format fails structural requirements")

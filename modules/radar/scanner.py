@@ -7,8 +7,8 @@
    expensive calls. On QuotaExhausted the scan degrades to channel-only data.
 4. Batch-resolve channels discovered via search so their hits get real
    baseline/subs context.
-5. Flag breakouts: multiplier >= cfg.breakout_multiplier AND
-   subs_ratio >= cfg.breakout_subs_ratio AND age <= max_video_age_days.
+5. Apply the configured eligibility rule and age window. The current followers
+   mode uses strict views/followers > 2; historical median mode is retained.
 
 Returns cluster dicts: {niche, topic, confirmed, videos:[contract-shaped]}.
 """
@@ -136,7 +136,11 @@ def _breakout_entry(video, baseline, subscribers, now, thresholds):
         "views": views,
         "channel_avg": baseline,
         "multiplier": multiplier(views, baseline),
-        "subs_ratio": subs_ratio(views, subscribers),
+        "subs_ratio": (views / subscribers if thresholds.get("eligibility") == "followers"
+                       else subs_ratio(views, subscribers)),
+        "followers": subscribers,
+        "baseline_available": baseline > 0,
+        "platform": "youtube",
         "published_at": video["snippet"]["publishedAt"],
         "format_guess": guess_format(video["snippet"]["title"]),
     }

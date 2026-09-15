@@ -12,6 +12,7 @@ __pycache__/
 
 # Large generated artifacts
 data/production/
+data/radar/viral-outliers/
 logs/
 
 # Vendored repos — re-clone via pins in docs/vendor-pins.md

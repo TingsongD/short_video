@@ -39,7 +39,9 @@ def _ctx(args):
         from modules.common.config import secrets
         ctx["channel_handle"] = secrets().get("YT_CHANNEL_HANDLE", "")
     elif args.cmd == "weekly":
-        ctx.update(_live_weekly_clients(cfg))
+        ctx.update(_live_weekly_clients(
+            cfg, ledger=ledger, provider=args.radar_provider,
+            run_id=args.radar_run_id, credit_ceiling=args.radar_credit_ceiling))
     return ctx
 
 
@@ -104,42 +106,20 @@ def _live_analytics_client(cfg):
         oauth_token_path=sec.get("YT_ANALYTICS_TOKEN", ""))
 
 
-def _live_weekly_clients(cfg):
+def _live_weekly_clients(cfg, *, ledger=None, provider=None, run_id=None, credit_ceiling=None):
     from modules.common.config import niches, secrets
     from modules.common.llm import LLMClient
     from modules.grill.gate import run as grill_run
-    from modules.radar.client import YouTubeClient
-    from modules.radar.quota import QuotaManager
-    from modules.radar.scanner import scan
+    from modules.radar.service import discover
 
     sec = secrets()
     ncfg = niches()
-    client = YouTubeClient(
-        sec.get("YOUTUBE_API_KEY", ""),
-        QuotaManager(cfg["radar"]["daily_quota_budget"]))
-    llm = LLMClient.from_secrets(sec)
-
-    def radar_scan():
-        """B4 fix: compose scan -> build_report -> write_report so the grill
-        receives the niche_report CONTRACT shape (raw scan output has no
-        'niches' key and silently produced empty shortlists), and the G1
-        evidence artifact lands in data/radar/."""
-        from datetime import date
-
-        from modules.radar.report import build_report, write_report
-
-        result = scan(client, ncfg["niche"], cfg["radar"])
-        report = build_report(
-            result["clusters"], result["scanned_at"],
-            [n["name"] for n in ncfg["niche"]], client.quota.used,
-            degraded=result.get("degraded", False))
-        write_report(report, DATA_DIR / "radar", date.today().isoformat())
-        return report
-
+    llm = _LazyClient(lambda: LLMClient.from_secrets(sec))
     return {
-        "radar_scan": radar_scan,
-        "grill_run": lambda report: grill_run(
-            report, llm, cfg["grill"]),
+        "radar_scan": lambda: discover(
+            cfg, ncfg["niche"], sec, provider=provider, run_id=run_id,
+            credit_ceiling=credit_ceiling, ledger=ledger),
+        "grill_run": lambda report: grill_run(report, llm, cfg["grill"]),
     }
 
 
@@ -157,6 +137,10 @@ def main(argv=None):
     ap.add_argument("--asset-fallback", choices=["none", "stock"], default="none")
     ap.add_argument("--jimeng-credit-ceiling", type=int,
                     help="explicit approval of a previously reviewed Jimeng batch quote")
+    ap.add_argument("--radar-provider", choices=["viral-outliers", "youtube"])
+    ap.add_argument("--radar-run-id", help="prepared discovery batch to use for weekly")
+    ap.add_argument("--radar-credit-ceiling", type=int,
+                    help="approve the reviewed Viral Outliers search batch")
     args = ap.parse_args(argv)
     if args.publish and args.stop_after == "assets":
         ap.error("--publish cannot be combined with --stop-after assets")

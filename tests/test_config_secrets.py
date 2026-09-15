@@ -82,3 +82,12 @@ def test_saved_edits_are_read_on_next_call(private_config):
     assert config.secrets()["ELEVENLABS_API_KEY"] == "first-test-value"
     path.write_text('ELEVENLABS_API_KEY=second-test-value\n')
     assert config.secrets()["ELEVENLABS_API_KEY"] == "second-test-value"
+
+
+def test_viral_outliers_environment_and_dotenv(private_config, monkeypatch):
+    (private_config / '.env').write_text('VIRAL_OUTLIERS_API_KEY=dotenv-viral-value\n')
+    monkeypatch.delenv('VIRAL_OUTLIERS_API_KEY', raising=False)
+    assert config.secrets()['VIRAL_OUTLIERS_API_KEY'] == 'dotenv-viral-value'
+    (private_config / '.env').unlink()
+    monkeypatch.setenv('VIRAL_OUTLIERS_API_KEY', 'environment-viral-value')
+    assert config.secrets()['VIRAL_OUTLIERS_API_KEY'] == 'environment-viral-value'

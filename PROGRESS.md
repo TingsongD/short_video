@@ -237,3 +237,35 @@
   cross-platform intake artifact; implementation and frozen contracts unchanged.
 - Research only: no purchases, installations or paid API requests. Latest full
   offline suite remains 239 passing tests; no production code changed.
+
+### Viral Outliers discovery integration (2026-09-15)
+
+- User selected Viral Outliers and supplied the key through the private root
+  `.env`. Configured it as the radar provider for YouTube + TikTok; retained an
+  explicit native YouTube route. Both use the user's strict unrounded
+  views/followers >2 eligibility rule. Median performance is separate context.
+- Added free doctor/preview, saved search plans, per-batch credit ceilings,
+  conservative weekly dollar reservations, durable request receipts and safe
+  resume. Unknown request outcomes and unexpected charges block resubmission;
+  completed responses can be reprocessed without API calls. No enrichment,
+  top-up purchases or implicit paid-search approval were added.
+- Filtered missing/invalid counts, missing/stale dates, deleted/inactive posts,
+  photos and unsupported references; deduplicated posts and kept distinct
+  creators for topic confirmation. Original platform URLs and follower ratios
+  now reach M2/M3. Frozen contracts/fixtures are unchanged; unavailable medians
+  use zero plus explicit metadata, never the vendor's average-based score.
+- Wired the shared provider service into weekly orchestration; missing radar
+  credit approval stops before paid searches or the LLM stage. Operating guide:
+  `docs/radar-viral-outliers.md`.
+- Live free checks passed: authentication, 1-credit search price and 0 available
+  credits; trending returned 12 posts, all without publication timestamps.
+  Free teaser evidence stays outside production. Receipts:
+  `data/radar/viral-outliers/doctor.json` and `free-preview.json`.
+- Prepared `viral-pilot-20260915`: one `ai tools` query each for YouTube/TikTok,
+  up to 100 records per platform; **2 credits / $0.02 nominal**. No paid calls
+  submitted. User reports a subscription allowance, but available API credits
+  are still zero; billing/credit allocation must be resolved before the pilot.
+  Paid response mapping, niche relevance, YouTube coverage and G1 remain pending.
+- Validation: **300 passed in 26.22s** in full offline `make test` (baseline 239).
+  Includes recovery after receipt persistence, charge checks on restart,
+  missing credentials, malformed responses, caps, provenance and weekly wiring.

@@ -13,7 +13,10 @@ def expand_cluster(cluster_entry, llm, n_ideas):
     evidence = [
         {
             "title": v["title"],
-            "multiplier": v["multiplier"],
+            "multiplier_vs_median": v["multiplier"] if v.get("baseline_available", True) else None,
+            "views_to_followers": v.get("subs_ratio"),
+            "platform": v.get("platform", "youtube"),
+            "source_url": v.get("source_url"),
             "views": v["views"],
             "format_guess": v.get("format_guess", ""),
         }

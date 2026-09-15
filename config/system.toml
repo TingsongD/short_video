@@ -2,6 +2,9 @@
 # Contract: BUILD_PLAN.md §3. Values here are the tunable thresholds.
 
 [radar]
+provider = "viral-outliers"
+platforms = ["youtube", "tiktok"]
+eligibility = "followers" # strict views / followers > breakout_subs_ratio
 breakout_multiplier = 5.0      # views / channel median views
 breakout_subs_ratio = 2.0      # views / channel subscribers
 max_video_age_days = 14

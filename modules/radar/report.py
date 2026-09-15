@@ -5,11 +5,11 @@ from pathlib import Path
 
 from . import __version__
 
-OUTLIER_CHECKLIST = """## Outlier.so cross-check (manual, ~10 min)
+OUTLIER_CHECKLIST = """## Reference review
 
-- [ ] Open outlier.so free tier; search each confirmed topic key above
-- [ ] Note any breakout format the API scan missed (thumbnail/title pattern)
-- [ ] Add missed candidates to the grill slate manually if they pass smell test
+- [ ] Open candidate references and verify the hook and payoff
+- [ ] Confirm the post is still available and relevant to the selected niche
+- [ ] Treat views/followers as an eligibility signal, not proof of repeatable success
 """
 
 
@@ -35,10 +35,15 @@ def build_report(clusters, scanned_at, niches_scanned, quota_used, degraded=Fals
 
 
 def to_markdown(report, topics=None):
+    meta = report["scan_meta"]
+    usage = (f"Viral Outliers: {meta.get('credits_reserved', 0)} credits reserved; "
+             "provider charges are recorded in the JSON receipt"
+             if meta.get("provider") == "viral-outliers"
+             else f"YouTube quota used: {meta['quota_used']} units")
     lines = [
         f"# Niche Radar — {report['scan_meta']['scanned_at'][:10]}",
         "",
-        f"Quota used: {report['scan_meta']['quota_used']} units"
+        usage
         + ("  ⚠️ DEGRADED (channel-only, quota exhausted)" if report["scan_meta"].get("degraded") else ""),
         "",
     ]
@@ -51,9 +56,7 @@ def to_markdown(report, topics=None):
             lines.append(f"### {n['niche']} — {n['cluster_size']} breakout(s)")
             for v in n["breakout_videos"]:
                 lines.append(
-                    f"- **{v['multiplier']}x** ({v['views']:,} views, "
-                    f"{v['subs_ratio']}x subs) [{v.get('channel_title') or v['channel_id']}] "
-                    f"{v['title']} — {v['published_at'][:10]}"
+                    f"- {_video_summary(v)}"
                 )
             lines.append("")
     unconfirmed = [n for n in report["niches"] if not n["confirmed"] and n["cluster_size"]]
@@ -62,7 +65,7 @@ def to_markdown(report, topics=None):
         for n in unconfirmed:
             for v in n["breakout_videos"]:
                 lines.append(
-                    f"- {n['niche']}: {v['multiplier']}x [{v.get('channel_title') or v['channel_id']}] {v['title']}"
+                    f"- {n['niche']}: {_video_summary(v)}"
                 )
         lines.append("")
     quiet = [n["niche"] for n in report["niches"] if n["cluster_size"] == 0]
@@ -71,6 +74,15 @@ def to_markdown(report, topics=None):
         lines.append("")
     lines.append(OUTLIER_CHECKLIST)
     return "\n".join(lines)
+
+
+def _video_summary(video):
+    from modules.common.video_reference import video_reference
+    baseline = (f"{video['multiplier']}x channel median" if video.get("baseline_available", True)
+                else "channel median unavailable")
+    title = video['title'].replace("[", "(").replace("]", ")").replace("\n", " ")
+    return (f"**{video['subs_ratio']}x views/followers** ({video['views']:,} views; {baseline}) "
+            f"[{title}]({video_reference(video)}) — {video['published_at'][:10]}")
 
 
 def write_report(report, out_dir, date_str):
