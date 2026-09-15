@@ -7,6 +7,7 @@ import hashlib
 import json
 import shutil
 from pathlib import Path
+from secrets import choice
 from uuid import uuid4
 
 from modules.common.config import DATA_DIR
@@ -19,6 +20,11 @@ from .queue import render_cards, validate_shots, validate_video_id
 
 STATE_NAME = "jimeng_jobs.json"
 ACTIVE = {"submitting", "accepted", "pending", "running", "unknown"}
+
+
+def new_node_id():
+    """Canvas Node IDs use ten lowercase Crockford Base32 characters."""
+    return "node_" + "".join(choice("0123456789abcdefghjkmnpqrstvwxyz") for _ in range(10))
 
 
 def fingerprint(value):
@@ -100,7 +106,7 @@ class CanvasAssets:
                         s, models[kind], self.settings.get(f"{kind}_resolution",
                                                           "720P" if kind == "video" else "2K"))
                     plans.append({"idx": s["idx"], "kind": kind, "duration_s": s["duration_s"],
-                                  "node_id": "node_" + uuid4().hex, "update_id": str(uuid4()),
+                                  "node_id": new_node_id(), "update_id": str(uuid4()),
                                   "submit_id": str(uuid4()), "parameters": params,
                                   "draft_state": "new", "state": "prepared"})
                 job = {"version": 1, "video_id": shot_list["video_id"], "fingerprint": digest,

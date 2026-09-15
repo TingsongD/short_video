@@ -2,6 +2,7 @@
 import copy
 import hashlib
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -100,6 +101,8 @@ class FakeProcess:
         elif args[:2] == ["node", "create"]:
             assert "--run" not in args
             nid = flag("node-id")
+            # Canvas 1.0.1 rejects other IDs locally, before saving the draft.
+            assert re.fullmatch(r"node_[0-9a-hjkmnp-tv-z]{10}", nid), "invalid Canvas Node ID"
             g = {k: flag(k) for k in ["model", "mode", "prompt", "ratio", "resolution"]}
             g["outputCount"] = int(flag("count"))
             if args[2] == "video":
@@ -292,6 +295,31 @@ def test_missing_cli_expired_login_wrong_account_and_malformed_response(setup):
     with pytest.raises(CanvasError, match="invalid_response") as e:
         assets.cli.doctor()
     assert "DO-NOT-LOG" not in str(e.value)
+
+
+def test_native_validation_error_on_stderr_preserves_code_without_leaking_message():
+    error = {"schemaVersion": "1", "ok": False,
+             "error": {"code": "cli.invalid_command", "requiredAction": "none",
+                       "message": "PRIVATE-TOKEN",
+                       "validation": {"reasonCode": "CLI_NODE_ID_INVALID"}}}
+    def rejected(*args, **kwargs):
+        return SimpleNamespace(returncode=2, stdout="", stderr=json.dumps(error))
+    with pytest.raises(CanvasError, match="cli.invalid_command") as caught:
+        CanvasCLI(runner=rejected).call("node", "create", "video")
+    assert "PRIVATE" not in str(caught.value)
+
+
+@pytest.mark.parametrize("returncode,stdout,stderr", [
+    (2, "", "not JSON PRIVATE-TOKEN"),
+    (0, "", '{"schemaVersion":"1","ok":true,"data":{"unexpected":true}}'),
+    (2, "not JSON", '{"schemaVersion":"1","ok":false,"error":{"code":"other"}}'),
+])
+def test_error_stream_never_hides_malformed_stdout_or_supplies_success(returncode, stdout, stderr):
+    def response(*args, **kwargs):
+        return SimpleNamespace(returncode=returncode, stdout=stdout, stderr=stderr)
+    with pytest.raises(CanvasError, match="invalid_response") as caught:
+        CanvasCLI(runner=response).call("version")
+    assert "PRIVATE" not in str(caught.value)
 
 
 def test_duration_rounds_up_and_unsupported_combination_fails_before_writes(setup):

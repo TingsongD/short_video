@@ -32,10 +32,16 @@ class CanvasCLI:
         except OSError:
             raise CanvasError("cli_execution_failed", "check executable permissions") from None
         try:
-            doc = json.loads(result.stdout)
+            # Native argument validation emits its JSON error on stderr.
+            # Never use stderr to replace malformed stdout or to accept success.
+            error_stream = bool(result.returncode and not result.stdout.strip())
+            raw = getattr(result, "stderr", "") if error_stream else result.stdout
+            doc = json.loads(raw)
             if not isinstance(doc, dict) or doc.get("schemaVersion") != "1":
                 raise ValueError()
             if type(doc.get("ok")) is not bool:
+                raise ValueError()
+            if error_stream and doc["ok"]:
                 raise ValueError()
         except (ValueError, TypeError):
             raise CanvasError("invalid_response", "inspect saved operation; do not resubmit") from None

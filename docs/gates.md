@@ -52,6 +52,21 @@ returned final retrieval. No publishing or paid generation has occurred.
 Full offline suite: **225 passed in 24.76s**. Frozen schemas/fixtures unchanged.
 G6/G8/G12 remain pending their live account, generation, subtitle and review steps.
 
+2026-09-15 recheck: 225 tests passed in 25.60s. Fresh local MPT fixture assembly
+passed resolution/audio/duration QC (1080×1920, 8.07 seconds); subtitles disabled.
+Canvas login remains pending. Isolated Hypit 0.1.8 installation and one-shot
+HypiHub source check passed; its plan/doctor identify missing credentials.
+No paid generation occurred. These checks do not sign G6/G7/G8/G12. See
+`docs/setup-test-guide.md` and `data/production/setup-test-evidence.json`.
+
+Authorization follow-up: both OAuth flows completed. Canvas account/catalog
+checks and one saved five-second Seedance fast quote passed (30 Jimeng credits).
+Node ID and native stderr protocol regressions fixed; **229 tests passed in
+23.81s**. HypiHub's requested Seedance fast capability passes preflight and its
+authenticated rates estimate 142.6 credits / US$0.713 for the matching shot.
+Both spends remain unapproved. The user's Chrome canvas editor reports
+`draft_reader_too_old`; CLI save/read/quote succeed. G6/G8/G12 remain unsigned.
+
 - Folder tree per plan: `data/{radar,grill,formats,hooks,production,published,analytics,costs}`, `modules/`, `schemas/`, `tests/fixtures/`, `vendor/`, `config/`, `logs/`, `docs/`
 - Vendored: ai-marketing-skills @ `bc84dbc`, MoneyPrinterTurbo v1.3.7 @ `cf5a3ae` (uv sync --frozen, Python 3.11)
 - Contracts frozen: 9 schemas × 9 valid fixtures + 1 negative fixture, all round-trip via jsonschema
