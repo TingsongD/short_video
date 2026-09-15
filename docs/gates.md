@@ -166,3 +166,12 @@ is pending and no full production video was assembled in this test.
   coverage remain pending. **G1/G2/G3/G11 are not signed off by this addendum.**
 - Guide: `docs/radar-viral-outliers.md`; private checks and the plan are in
   `data/radar/viral-outliers/`.
+
+### Approved pilot attempt — 2026-09-15, 21:37 UTC
+
+User approved the prepared two-search Viral Outliers pilot. Execution with a
+2-credit ceiling stopped at preflight: authenticated account balance remains
+0. Neither search was submitted; no credits were spent. Approval is retained
+for this batch, but credit availability blocks the live test. Receipt:
+`data/radar/viral-outliers/viral-pilot-20260915/last-attempt.json`. G1 remains
+pending; latest full offline suite is still 300 passing (no code changes).

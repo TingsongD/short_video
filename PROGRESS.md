@@ -269,3 +269,16 @@
 - Validation: **300 passed in 26.22s** in full offline `make test` (baseline 239).
   Includes recovery after receipt persistence, charge checks on restart,
   missing credentials, malformed responses, caps, provenance and weekly wiring.
+
+### Approved Viral Outliers pilot attempt (2026-09-15)
+
+- User explicitly approved running the prepared `viral-pilot-20260915` batch.
+  Ran the discovery command with the reviewed **2-credit ceiling**.
+- Preflight stopped on insufficient credits before either search was submitted.
+  A fresh free account check confirms authentication succeeds, balance **0**,
+  and price **1 credit per search**. **0 searches submitted; 0 credits spent.**
+- Sanitized receipt: `data/radar/viral-outliers/viral-pilot-20260915/last-attempt.json`.
+  The two-search approval remains valid for this unchanged batch; available
+  account credits are the blocker. No purchase, top-up, retry or scope change.
+- Live result mapping, candidate relevance and downstream live handoff remain
+  untested. No code changed; latest full offline suite remains **300 passing**.

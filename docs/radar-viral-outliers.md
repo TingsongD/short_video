@@ -173,3 +173,13 @@ shapes, retaining receipts for an offline parser correction without repayment.
 
 Sources: [official content search documentation](https://viraloutliers.com/docs/skills/api/search-viral-outlier-posts)
 and [live API pricing catalog](https://viraloutliers.com/api/v1/pricing).
+
+### Pilot execution update — 2026-09-15, 21:37 UTC
+
+The user approved the two-search batch and execution was attempted with its
+2-credit ceiling. The balance check returned **0**, so execution stopped before
+submitting either search. **No credits were spent.** A fresh authentication
+check succeeded. The receipt is saved as `last-attempt.json` in the pilot folder.
+The unchanged pilot is approved; resolving the available API balance is now
+the blocker. Resume the same run after that is resolved, without expanding
+its scope or buying credits automatically.
