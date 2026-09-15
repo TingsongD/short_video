@@ -79,9 +79,41 @@ memory; no OAuth code or token is copied to project configuration or receipts.
 The supplied Cloud music guide lists Lyria 3 Clip/Pro preview models, matching
 the successful direct catalog lookups. The separate Gemini API guide lists
 Lyria 3.5. Lyria 3.5 access through this Vertex project has not been established.
-No TTS or music generation was submitted. Generation access, audio validation
-and the automated Google provider adapters remain pending.
+The subsequent authorized generation test below verifies Flash TTS and Lyria 3
+Clip. Automated Google provider adapters remain pending.
 Sanitized receipts: `data/production/google-audio-setup/verification.json`.
+
+## Authorized live audio test — 2026-09-15
+
+The user requested one Vertex TTS and background-music test. Both requests used
+native Cloud CLI OAuth, returned HTTP 200 and produced local files. Exactly two
+generation POSTs were made, with no retries or replacement generations.
+
+| Sample | Model | Actual output |
+| --- | --- | --- |
+| English narration, Kore voice | `gemini-2.5-flash-tts`, `us-central1` | 14.531 seconds, 24 kHz mono PCM wrapped as WAV |
+| Instrumental morning-coffee cue | `lyria-3-clip-preview`, global Interactions | 28.813 seconds, 44.1 kHz stereo MP3; requested 30-second clip |
+
+Both files decode fully and contain non-silent audio. The narration completed
+with `STOP`; music completed with a recoverable Interaction ID. A separate
+16.531-second local preview mixes the narration over quieter music, reduces
+music further during speech, and adds fades. Its decoded peak is -4.5 dBFS.
+Original audio files are preserved. Listening quality, exact spoken-text
+fidelity and the absence of vocals in the music require operator review.
+
+List-price usage estimate: **US$0.043666**, comprising $0.003666 for 72 input text
+tokens and 363 output audio tokens, plus $0.04 for one Lyria 3 Clip. This is not
+settled billing. The ledger reservations were reconciled to these estimates.
+Sources: [Google TTS pricing](https://cloud.google.com/text-to-speech/pricing)
+and [Vertex music pricing](https://cloud.google.com/gemini-enterprise-agent-platform/generative-ai/pricing).
+
+Files and receipts: `data/production/v-vertex-audio-pilot-20260915/`, including
+`narration.wav`, `background-music.mp3`, `narration-with-music.mp3`,
+`test-report.json`, request/response receipts and `audio-qc.json`. The local pilot
+runner refuses to submit again when a receipt exists. Credentials remain outside
+these artifacts. This test does not switch the production voice provider or
+modify the existing Hypit edit. The narration is below the production 15-second
+minimum; G7/G8/G12 remain unsigned.
 
 Sources checked on 2026-09-15:
 

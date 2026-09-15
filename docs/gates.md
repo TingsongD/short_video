@@ -126,6 +126,16 @@ quota and audio quality remain unverified; no audio generation submitted.
 Receipts: `data/production/google-audio-setup/verification.json`.
 G7/G8/G12 remain unsigned.
 
+Authorized Vertex audio pilot (2026-09-15): one Gemini 2.5 Flash TTS request
+(Kore) and one Lyria 3 Clip preview request both return HTTP 200. Narration is
+14.531 seconds at 24 kHz mono; music is 28.813 seconds at 44.1 kHz stereo. Both
+fully decode and contain audio. Local mixed preview passes decoding with peak
+-4.5 dBFS. Two generation calls total, no retries; estimated $0.043666 recorded,
+settled billing unverified. Evidence: `data/production/v-vertex-audio-pilot-20260915/test-report.json`.
+This verifies those Vertex generation routes; G7/G8/G12 remain unsigned because
+the short narration is below the production minimum, listening/voice comparison
+is pending and no full production video was assembled in this test.
+
 - Folder tree per plan: `data/{radar,grill,formats,hooks,production,published,analytics,costs}`, `modules/`, `schemas/`, `tests/fixtures/`, `vendor/`, `config/`, `logs/`, `docs/`
 - Vendored: ai-marketing-skills @ `bc84dbc`, MoneyPrinterTurbo v1.3.7 @ `cf5a3ae` (uv sync --frozen, Python 3.11)
 - Contracts frozen: 9 schemas × 9 valid fixtures + 1 negative fixture, all round-trip via jsonschema

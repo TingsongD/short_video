@@ -201,3 +201,21 @@
   Zero generation calls made. Updated sanitized setup receipts and
   `docs/audio-providers.md`; no production code changed. Latest full offline
   suite remains **239 passed in 26.22s**.
+
+### Vertex TTS and music generation pilot (2026-09-15)
+
+- User explicitly approved both audio tests. Submitted exactly one
+  `gemini-2.5-flash-tts` request (Kore, `us-central1`) and one
+  `lyria-3-clip-preview` request (global Interactions); both returned HTTP 200.
+  No retries. Native OAuth credentials stayed out of project artifacts.
+- Outputs: 14.531-second 24 kHz mono narration WAV and 28.813-second 44.1 kHz
+  stereo music MP3. Full decoding and non-silent audio checks pass. A local
+  16.531-second preview mixes narration over quiet music with fades and speech
+  ducking; peak -4.5 dBFS. Listening review remains pending.
+- Estimated list-price spend $0.043666, recorded in the dollar ledger; actual
+  billing is not verified. Evidence and previews are under
+  `data/production/v-vertex-audio-pilot-20260915/`; setup receipts updated.
+- Production adapters/settings and frozen contracts are unchanged. Narration
+  is below the production 15-second minimum; this is a provider smoke test,
+  not a G7/G8/G12 sign-off. Latest full offline suite remains 239 passing tests;
+  no production code changes in this follow-up.
