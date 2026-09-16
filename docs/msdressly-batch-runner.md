@@ -53,6 +53,23 @@ authorization.
 .venv/bin/python -m modules.batch run
 ```
 
+If independent speech timing reveals drift in an otherwise sound clip, local
+picture correction can preserve the already accepted narration and avoid a paid
+replacement:
+
+```bash
+.venv/bin/python -m modules.batch fit-picture clip-01 --comparison review/timing-comparison.json
+```
+
+The comparison must record `same_transcript: true` after actual inspection and
+at least eight ordered word pairs with `reference_start`, `reference_end`,
+`generated_start`, and `generated_end`. Never set this flag to hide an omission.
+The fit requires monotonic bounded speed changes, verifies the frame count and
+retains the native source. Review the edited picture before recording its gate.
+Both reviews and Hypit rendering use the edit only while source, edited-file and
+speech hashes match. Changing a previously rendered section's inputs blocks
+stale-output reuse. A finished export requires an intentional new version.
+
 Use the live balance visible in the user's logged-in Chrome profile; never copy
 the example balance into a later observation. The CLI's current account command
 does not provide reliable credit-balance data. Refresh the observation between
@@ -124,6 +141,10 @@ vendor/speech-qc/.venv/bin/python scripts/batch_speech_check.py narration.wav \
 It downloads the public `base.en` weights once, then transcribes locally without
 paid analysis calls. Its transcript is supporting evidence, not proof of visual
 lip synchronization. [Faster Whisper documentation](https://github.com/SYSTRAN/faster-whisper).
+Use `--model small.en` for a stronger local check when the base model misses a
+word; those public weights are also cached. Compare transcription of both the
+generated track and the exact narration recording before concluding that the
+video omitted speech.
 
 Offline tests cover budget caps, complete quote coverage, durable spending holds,
 single-controller locking, unknown submissions, download recovery, narration

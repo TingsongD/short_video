@@ -23,6 +23,9 @@ def main():
     fix = sub.add_parser("repair")
     fix.add_argument("key")
     fix.add_argument("--prompt-file", required=True)
+    picture = sub.add_parser("fit-picture")
+    picture.add_argument("key")
+    picture.add_argument("--comparison", required=True)
     args = parser.parse_args()
     try:
         with exclusive(__import__("pathlib").Path(args.selection_dir) / "batch-plan"):
@@ -44,6 +47,10 @@ def main():
                 from pathlib import Path
                 repair(batch, n, args.key, Path(args.prompt_file).read_text())
                 print("Correction prepared and quoted within the reserved allowance.")
+            elif args.command == "fit-picture":
+                from .picture import fit_picture
+                result = fit_picture(batch, n, args.key, args.comparison)
+                print(json.dumps({"file": result["file"], "frames": result["frames"], "max_anchor_residual_s": result["max_anchor_residual_s"], "paid_calls": 0}))
             elif args.command == "dry-run":
                 local = Local(batch.folder / "dry-run")
                 receipt = read(PREVIOUS / "drive-delivery/upload-receipt.json")

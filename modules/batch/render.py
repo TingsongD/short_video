@@ -6,6 +6,7 @@ from pathlib import Path
 
 from modules.assemble.hypit_markup import escape_markup_text as esc
 from .local import probe, verify_media
+from .picture import selected_picture
 from .state import Pause, digest, now, read, write
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -51,8 +52,8 @@ def author(folder, brief, v, selected=None):
         lines.append(f'<typo:Style id="{key}-style" recipe={{look.text.{key}}} font={{{key}-font}}><typo:Shadow color="#000000dd" x="0" y="2" blur="4"/><typo:Fill color="#ffffff"/></typo:Style>')
     for take in takes:
         key = take["id"]
-        job = v["jobs"][v.get("selected_jobs", {}).get(key, key)]
-        lines += [f'<asset:Video id="{key}-file" src="./{esc(job["file"])}"/>',
+        file = selected_picture(v, folder, v.get("selected_jobs", {}).get(key, key)).relative_to(folder)
+        lines += [f'<asset:Video id="{key}-file" src="./{esc(str(file))}"/>',
                   f'<pipeline:Normalize id="{key}" source={{{key}-file}} clock={{clock}} video="primary-moving" audio="none" span-authority="video"/>']
     lines.append('<media:Track id="footage" timeline={program.timeline} canvas={canvas}>')
     for take in takes:
@@ -117,16 +118,20 @@ class Render:
             key = take["id"]
             file, receipt = sections / (key + ".mp4"), sections / (key + ".json")
             doc = read(receipt) if receipt.exists() else {}
+            name = author(self.folder, brief, self.v, take)
+            inputs = {"author": digest(self.folder / (name + ".svml")), "style": digest(self.folder / "style.svs"),
+                      "picture": digest(selected_picture(self.v, self.folder, self.v.get("selected_jobs", {}).get(key, key)))}
+            if doc and doc.get("inputs") != inputs:
+                raise Pause("Rendered section inputs changed; preserve its existing build and prepare an intentional local revision")
             if doc.get("state") == "verified" and file.exists() and digest(file) == doc["sha256"]:
                 paths.append(file)
                 continue
-            name = author(self.folder, brief, self.v, take)
             if not doc:
                 checked = self.call("check", name + ".svrun")
                 plan = self.call("plan", name + ".svrun", "--runtime", "hypit.runtime.json")
                 if not checked.get("ok") or not plan.get("ok") or plan["providerRequestCount"] or plan["unresolvedRequestCount"]:
                     raise Pause("Hypit validation failed or would request an unapproved paid provider")
-                doc = {"state": "building", "source": name, "started_at": now()}
+                doc = {"state": "building", "source": name, "started_at": now(), "inputs": inputs}
                 write(receipt, doc)
                 build = self.call("build", name + ".svrun", "--runtime", "hypit.runtime.json")
                 doc["build_id"] = build["build"]["id"]

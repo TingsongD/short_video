@@ -291,3 +291,11 @@ ElevenLabs takes are fitted to exactly 169.7 seconds; local independent ASR
 similarity 97.28%, with recognized spelling/number differences retained as a
 review limitation. Refined native quotes are 1,166 credits plus 200 correction
 reserve. First reference generation accepted; final video acceptance pending.
+
+First clip continuation: independent local `small.en` ASR matches the complete
+reference/generated utterance. The base model's missing-word observation was a
+transcription discrepancy. A local monotonic picture fit corrects observed
+timing drift; 265 frames verified and 18 edited samples inspected. Original
+speech and native source retained; ASR anchor residual is at most 0.074 seconds,
+not a claim of perfect visual lip synchronization. Corrected-picture source,
+output and narration hashes gate review/render reuse. Full final QC remains pending.

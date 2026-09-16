@@ -10,6 +10,7 @@ from modules.assets.canvas_cli import CanvasError
 from .audio import Audio
 from .canvas import Canvas, image_prompt, video_prompt
 from .local import Drive, Local
+from .picture import selected_picture
 from .render import HYPIT, Render
 from .state import Pause, digest, now, read, write
 
@@ -56,6 +57,8 @@ def review_fingerprint(v, folder, key):
         return hashlib.sha256(json.dumps(products, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     if key not in v["jobs"] or v["jobs"][key]["stage"] != "downloaded":
         raise Pause("The requested review has no completed artifact")
+    if v["jobs"][key]["kind"] == "video":
+        return digest(selected_picture(v, folder, key))
     return digest(folder / v["jobs"][key]["file"])
 
 

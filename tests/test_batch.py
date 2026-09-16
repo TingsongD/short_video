@@ -9,6 +9,7 @@ from modules.batch.audio import word_times, compact_intervals, compact_time
 from modules.batch.canvas import Canvas
 from modules.batch.local import Drive, descendants, same_process
 from modules.batch.render import author
+from modules.batch.picture import selected_picture, timing_points, interpolate
 from modules.batch.runner import Runner, validate_brief
 from modules.batch.state import Batch, Pause, digest, exclusive, read, write
 
@@ -286,3 +287,42 @@ def test_readback_rejects_changed_native_prompt_before_spending(batch):
     with pytest.raises(Pause, match="prompt changed"):
         Canvas(batch, 1, None, Fake()).finish("clip-01")
     assert batch.spent() == 0
+
+
+def test_picture_timing_preserves_monotonic_speech_anchors():
+    pairs = [{"reference_start": i*.4, "reference_end": i*.4+.2,
+              "generated_start": i*.4+.1, "generated_end": i*.4+.3} for i in range(8)]
+    points = timing_points(pairs, 4., 4.2)
+    assert points[0] == pytest.approx([0., .1])
+    for pair in pairs:
+        t = (pair["reference_start"] + pair["reference_end"])/2
+        assert interpolate(points, t) == pytest.approx(t+.1)
+    pairs[3]["generated_start"] = 0.
+    pairs[3]["generated_end"] = .02
+    with pytest.raises(Pause, match="monotonic"):
+        timing_points(pairs, 4., 4.2)
+
+
+def test_picture_edit_rejects_stale_narration_or_source(tmp_path):
+    for name in ("source.mp4", "edit.mp4", "speech.wav"):
+        (tmp_path/name).write_bytes(name.encode())
+    v = {"jobs": {"clip-01": {"file": "source.mp4"}}, "picture_edits": {"clip-01": {
+        "file": "edit.mp4", "sha256": digest(tmp_path/"edit.mp4"), "source_sha256": digest(tmp_path/"source.mp4"),
+        "speech_file": "speech.wav", "speech_sha256": digest(tmp_path/"speech.wav")}}}
+    assert selected_picture(v, tmp_path, "clip-01") == tmp_path/"edit.mp4"
+    (tmp_path/"speech.wav").write_bytes(b"new performance")
+    with pytest.raises(Pause, match="stale"):
+        selected_picture(v, tmp_path, "clip-01")
+
+
+def test_render_uses_inspected_local_edit_instead_of_native_picture(tmp_path):
+    for name in ("native.mp4", "aligned.mp4", "voice.wav"):
+        (tmp_path/name).write_bytes(name.encode())
+    write(tmp_path / "audio/words.json", [])
+    take = {"id": "clip-01", "slot": 1, "start_frame": 0, "end_frame": 300}
+    v = {"jobs": {"clip-01": {"file": "native.mp4"}}, "picture_edits": {"clip-01": {
+        "file": "aligned.mp4", "sha256": digest(tmp_path/"aligned.mp4"), "source_sha256": digest(tmp_path/"native.mp4"),
+        "speech_file": "voice.wav", "speech_sha256": digest(tmp_path/"voice.wav")}}}
+    author(tmp_path, {"takes": [take], "products": [{"slot": 1, "label": "Skort"}]}, v, take)
+    markup = (tmp_path/"export-clip-01.svml").read_text()
+    assert 'src="./aligned.mp4"' in markup and 'src="./native.mp4"' not in markup
