@@ -193,3 +193,15 @@ shot set or G6/G8/G12. The original reference video was not used as a model
 input, and no full outfit-change edit, lip sync, automatic Shopify/M6 importer,
 new narration/music or publishing was tested. Latest offline suite remains
 300 passing; no production code or frozen contracts changed.
+
+### Hypit adaptation layout preview — 2026-09-15
+
+Prepared a 30s product try-on adaptation and saved the official Canvas image /
+video drafts. Its paid generation and transcription are pending a separate
+budget decision. A five-second Hypit layout preview completed locally using
+the previously generated product-motion footage. Export decoding and sampled
+typography checks passed at 1080 × 1920, 30fps, 5.0s; the source is 720p and the
+preview is silent. This verifies local composition and export, not the planned
+speaking performance or outfit changes. Full-production validation stops at
+missing future footage. G6/G8/G12 remain pending; no production code changed.
+Guide: `docs/hypit-reference-variation.md`.

@@ -344,3 +344,26 @@
 - Evidence: `data/production/v-product-variation-Db9SrsBsIUg/test-report.json`;
   guide: `docs/jimeng-product-reference-test.md`. No production code changes;
   latest full offline suite remains **300 passing**.
+
+### Hypit reference adaptation prepared (2026-09-15)
+
+- Studied the original try-on video's opening and later outfit changes. Prepared
+  a 30s, three-look MsDressly adaptation with a new presenter, original dialogue,
+  product references, motion conditioning and editable Hypit captions/titles.
+- Imported a ten-second source-motion excerpt into official Canvas. Saved one
+  presenter-image draft and two 15s Seedance 2.0 Fast VIP drafts with stable IDs.
+  Image quote is 8 credits; video quotes require their upstream generated
+  references and are not yet available.
+- Pending separate approval for at most 350 Jimeng credits + US$0.05 ElevenLabs.
+  No generation or transcription submitted for this new variation.
+- Completed a **five-second layout preview**, using the earlier product-motion
+  clip. Hypit build `bld_20260916T015830127Z_3EA1463EFD` completed with explicit
+  normalized-media reuse; no new paid-provider requests. Export is 1080 × 1920,
+  30fps, 5.0s, upscaled from 720p source. Full decoding passed; four sampled
+  frames show readable typography; output audio is silent.
+- Opened local Comments/Studio at http://localhost:5185/#comments. The preview
+  tests the typing title and caption treatment; speaking footage, outfit
+  changes, exact speech timing and full final review remain pending.
+- Guide: `docs/hypit-reference-variation.md`. Evidence and editable production:
+  `data/production/v-product-variation-Db9SrsBsIUg/hypit-variation-01/`.
+  No production code changes; latest offline suite remains 300 passing.
