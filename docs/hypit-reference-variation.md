@@ -26,6 +26,8 @@ Final file: `MsDressly_Full_Haul_2m49s.mp4`, **47,466,376 bytes**. It measures
 stereo AAC audio. Full decoding, frame count, duration, dimensions, blank-frame
 and audio-peak checks pass. Measured peak is −1.6 dBFS. Opening, outfit, close-up
 and final CTA frames were inspected. See `DELIVERY.md` and `final-qc/`.
+The MP4 container reports 169.721 seconds; both picture and audio streams
+measure 169.700 seconds. The source-duration match uses the picture frame clock.
 
 | Material | File |
 |---|---|
