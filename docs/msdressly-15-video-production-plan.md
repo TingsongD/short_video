@@ -1,6 +1,10 @@
 # MsDressly: sequential 15-video production plan
 
-Prepared 15 September 2026. **Plan only; generation has not started.**
+Prepared 15 September 2026; implementation accepted 16 September 2026.
+The reusable controller is now implemented in `modules/batch/`; live rollout
+is recorded in `PROGRESS.md` and the batch's durable state. See
+[operation and recovery](msdressly-batch-runner.md). Completion of the fifteen
+videos remains subject to available credits and each delivery/cleanup gate.
 
 ## Outcome and limits
 

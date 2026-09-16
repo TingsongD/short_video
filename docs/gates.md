@@ -266,3 +266,28 @@ are preserved; final technical checks pass. The artifact/hash above now identify
 the repaired export. Production `CAPTION-FIX.md` and `caption-fix-qc/` hold evidence.
 The earlier model report applies to the archived pre-fix export and is not
 caption signoff. Human acceptance and publishing remain separate. No extra spend.
+
+### Scoped evidence: sequential batch controller (2026-09-16)
+
+The accepted fifteen-haul plan now has a durable single-video controller under
+`modules/batch/`. Offline checks cover complete quote coverage, ceilings,
+exclusive locking, interrupted submissions, download recovery, TTS reservations,
+Drive duplicate/checksum handling, cleanup on failure, process identity and
+caption timing/escaping. These checks do not sign live video quality gates.
+
+A zero-generation dry run verified the preceding final's live Drive checksum,
+name, parent and bytes without a duplicate upload. A real local Hypit smoke
+render (existing footage, no generation) passed and was inspected: contractions
+and ampersands render correctly. Its workers were stopped and ports/memory/disk
+cleanup verified. Isolated local Faster Whisper transcription was also tested.
+
+The first new ten-product haul is quoted at 1,160 Jimeng credits plus a 200-credit
+repair reserve; narration rollout is in progress. Final video QC, verified
+Drive delivery, post-delivery cleanup and completion of the funded queue remain
+live acceptance requirements. Publishing remains outside this batch.
+
+Full offline suite after implementation: **321 passed**. Twenty accepted
+ElevenLabs takes are fitted to exactly 169.7 seconds; local independent ASR
+similarity 97.28%, with recognized spelling/number differences retained as a
+review limitation. Refined native quotes are 1,166 credits plus 200 correction
+reserve. First reference generation accepted; final video acceptance pending.
