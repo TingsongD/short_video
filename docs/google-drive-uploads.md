@@ -39,3 +39,12 @@ remote names and IDs were verified, without claiming remote checksum validation.
 
 These generated local receipts are gitignored. Do not add OAuth credentials
 or exported account archives to the project or delivery folder.
+
+## Corrected MsDressly full haul (2026-09-15)
+
+- [MsDressly_Full-Haul_Corrected-Captions_1080x1920_2m49s.mp4](https://drive.google.com/file/d/1zUxjyRIILGZ4UedvxS_u_e7rNcNZgAGZ/view)
+- Destination: the existing authorized folder above; sharing unchanged.
+- **47,366,136 bytes**, remote MD5 `d3f65067ded01419cdbe3a4e0b6f31dc` matches local.
+- SHA-256 `314b53f2c3d9e279584ec8ebd291afc9666b2e5501530cbe7c097bb56c41aaa0` identifies the caption-corrected final.
+- Receipt: `data/production/v-product-variation-Db9SrsBsIUg/hypit-full-length-01/drive-delivery/upload-receipt.json`.
+- Local Hypit preview services and workers stopped after verification; ports 5184–5188 are free.

@@ -453,3 +453,9 @@ All ten outfit references have now passed visual inspection; the red-pullover re
 - Re-exported eleven affected sections and replaced the final MP4. Local OCR found zero entity strings across 80 affected caption states; visually checked all 19 OCR discrepancies. The earlier broad model review had missed this bug.
 - Corrected final remains 169.700s / 5,091 frames at 30fps, 1080×1920. Encoded audio packets match the original. Full technical QC passes. New final: **47,366,136 bytes**, SHA-256 `314b53f2c3d9e279584ec8ebd291afc9666b2e5501530cbe7c097bb56c41aaa0`.
 - Review Run refreshed at port 5188; original delivery and section receipts retained in `caption-fix-archive/`. See production `CAPTION-FIX.md`. No paid calls, regeneration or publishing.
+
+### Corrected video delivered to Drive; services stopped (2026-09-15)
+
+- Uploaded `MsDressly_Full-Haul_Corrected-Captions_1080x1920_2m49s.mp4` to the previously authorized Drive folder. File ID `1zUxjyRIILGZ4UedvxS_u_e7rNcNZgAGZ`; remote size **47,366,136 bytes** and MD5 `d3f65067ded01419cdbe3a4e0b6f31dc` match the corrected local export.
+- Stopped five project Hypit Studio servers, four runtime workers and their child process: **10 processes**, graceful termination. Verified ports **5184–5188** are free. No project rendering or generation remains active.
+- Production receipts: `drive-delivery/upload-receipt.json`, `service-shutdown.json`. Preview URLs are offline; do not restart without a new request.
