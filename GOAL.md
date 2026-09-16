@@ -7,9 +7,9 @@ Build the short-form AI video system in this repo, one module at a time:
 STEP 0 — ORIENT (before writing any code)
 Read in this order: BUILD_PLAN.md (the spec — your source of truth),
 docs/gates.md (G0 already signed), PROGRESS.md, schemas/ and
-tests/fixtures/ (frozen contracts). AGENTS.md describes a swarm topology
-that is NOT in use — ignore it; you are a single builder working
-sequentially. Then run `make test` — it MUST be green (25 tests). If red,
+tests/fixtures/ (frozen contracts). AGENTS.md's legacy swarm topology is NOT
+in use; work as a single builder sequentially and follow its current video
+completion rule. Then run `make test` — it MUST be green (25 tests). If red,
 stop and report; never build on a red base.
 
 STEP 1 — BUILD in this exact order, one module at a time:
@@ -45,7 +45,8 @@ STEP 3 — LIVE GATES (only with explicit user approval, one at a time):
 
 HARD RULES (override everything else):
 - Secrets only in config/secrets.toml (gitignored); never print or commit.
-- No paid/external API call without explicit in-session approval.
+- No paid/external API call without explicit in-session approval, except the
+  standing Drive-delivery authorization in `docs/google-drive-uploads.md`.
 - Jimeng: build Lane B (manual drop folder) first; Lane A (WebBridge
   automation) is best-effort and never blocks progress.
 - Zero-spend work (M1–M5 implementation + tests) runs autonomously without

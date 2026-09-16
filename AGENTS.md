@@ -3,6 +3,15 @@
 Wave 0 is complete. Contracts in `schemas/` + fixtures in `tests/fixtures/` are **FROZEN**.
 Read `GOAL.md` (mission) and `BUILD_PLAN.md` (spec) before touching code.
 
+## Current video completion rule
+
+After every finished video or revised final export, follow
+[`docs/google-drive-uploads.md`](docs/google-drive-uploads.md#required-completion-workflow):
+upload and verify the final in the authorized Drive folder, stop the video's
+preview/render services, verify its ports are free, and return the Drive link.
+The user's standing authorization covers these completion steps; apply this rule
+also when using the single-builder workflow instead of the legacy swarm below.
+
 ## Ownership map (Wave 1 — parallel)
 
 | Agent | Modules | You own (write access) | Fixtures you consume |

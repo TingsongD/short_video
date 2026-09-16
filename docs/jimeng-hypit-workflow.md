@@ -7,6 +7,11 @@ official Jimeng Canvas CLI through M6 for generated footage and images. Import
 verified files into Hypit and render locally. This requires no HypiHub key,
 HypiHub generation balance, reverse API or custom generation Provider.
 
+After each final export or final revision, complete the mandatory
+[Drive delivery and service cleanup](google-drive-uploads.md#required-completion-workflow)
+before reporting completion. Return the Drive link after the upload is verified
+and the video's local services have released their ports.
+
 Skill installed globally for Codex with:
 
 ```bash

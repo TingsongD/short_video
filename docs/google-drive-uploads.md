@@ -10,7 +10,37 @@
 - Folder metadata and all 22 previously uploaded filenames verified through
   the CLI. No missing files, duplicate names, or additional uploads.
 
-## Future requested uploads
+## Required completion workflow
+
+The user's standing instruction (2026-09-15) authorizes these steps after every
+finished video, including corrected final exports, across Jimeng/Hypit and other
+production routes. Perform them within the video task without asking again.
+This applies to the finished deliverable, not each intermediate generated shot.
+
+1. Finish export and QC. Preserve the local video and give its delivery copy a
+   descriptive name that identifies the subject, version and duration.
+2. Upload the finished video to the authorized folder above using the existing
+   CLI connection. Check prior receipts and destination files first; reuse a
+   verified identical upload instead of creating a duplicate. Preserve distinct
+   revised finals with descriptive version names.
+3. Verify the remote parent, name, byte size and MD5 against the local file.
+   Save the Drive ID/link, local SHA-256 and verification result in an upload
+   receipt within the video's production folder. After an ambiguous upload
+   response, reconcile remote state before retrying.
+4. Stop the completed video's preview servers, render/runtime workers and child
+   processes. Identify ownership by workspace, command and process ancestry;
+   gracefully stop those services, then terminate any verified survivors.
+   Verify their ports have no listeners and save a shutdown receipt. Preserve
+   saved files and credentials, other projects' services and active work.
+5. Return the Drive link and confirm the freed ports. Mark local preview URLs
+   offline in the production handoff. Completion requires both a verified upload
+   and verified service cleanup.
+
+If upload or verification fails, retain the local deliverable and recovery
+receipt, still stop the completed video's idle services, and report the upload
+as pending. Never claim delivery succeeded without remote verification.
+
+## Upload commands
 
 Use the existing CLI connection. Keep source files in place and create copies
 with descriptive delivery names so pipeline references remain valid.
@@ -22,9 +52,8 @@ gdrive files upload --parent 1XQU20m_xk5030kAxbbIumeHYkrRPkPbs \
 ```
 
 Inspect the destination and prior upload receipt first to avoid duplicates.
-Upload only files covered by the user's request, then record returned file IDs
-and verify their presence. Folder sharing settings should remain as configured.
-No scheduled or automatic upload process has been enabled.
+The standing instruction covers each finished video; upload additional assets
+when requested. Folder sharing settings should remain as configured.
 
 ## Current delivery evidence
 
