@@ -82,3 +82,13 @@ render timestamps. No new generation was submitted for this investigation.
   are reproduced in this report.
 - `modules/batch/runner.py`: `require_review` and its per-artifact calls.
 - Existing automation inspected and updated through the Codex automation tool.
+
+## Follow-up: complete timing trace
+
+[The detailed timing analysis](haul-01-timing-analysis.md) traces every major
+phase, all 31 visual jobs, 20 narration requests and 20 rendered sections.
+Its full interval intersection also counts the gap after clip 01 downloaded
+during an active turn, which then ended before its review. Total post-download
+time without an active agent is **184.28 minutes**; the earlier **173.91-minute**
+figure covers the seventeen clips downloaded while the agent was already absent.
+These overlapping measures must not be added.
