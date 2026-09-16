@@ -102,7 +102,8 @@ def main():
         report = {"key": key, "inputs": inputs, "started_at": started, "verdict": "requires_agent_review", "paid_requests": 0}
         grid = output / (key + "-native.jpg")
         if job["kind"] == "video":
-            duration = float(job["probe"]["format"]["duration"])
+            video = next(s for s in job["probe"]["streams"] if s["codec_type"] == "video")
+            duration = float(video.get("duration", job["probe"]["format"]["duration"]))
             rows = max(1, math.ceil(duration * 2 / 6))
             run(["ffmpeg", "-v", "error", "-y", "-i", source, "-vf", f"fps=2,scale=240:426,tile=6x{rows}", "-frames:v", "1", grid])
             ref_words = transcribe(speech, output / (key + "-reference-asr.json"))

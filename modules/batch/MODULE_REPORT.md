@@ -67,3 +67,10 @@ gates remain mandatory. Native 169.7-second replay: 36.23 seconds including full
 technical QC; opening/middle/closing typography inspected. Editable Hypit retained.
 Full offline suite: 342 passed in 26.12 seconds; later native-render replay also passed technical QC.
 Live five-job acceptance and video-02 delivery are being measured separately.
+
+Live validation completed: five actual running video jobs, first five downloads
+in 4m49s; haul-02 images/clips/review/edit stage 36m50s. Full native export and
+technical QC 30.7s. Actual final review, verified Drive delivery and owned-process
+cleanup passed. Review-pack timing now uses video-stream duration instead of
+container duration. Full offline suite: 342 passed in 28.03s. See
+`docs/haul-02-speed-validation.md`; remaining batch items are not certified.

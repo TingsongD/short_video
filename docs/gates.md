@@ -367,3 +367,12 @@ Follow-up live evidence: five distinct video operations observed `running` toget
 (`haul-02/review/parallel-video-observation.json`), not merely accepted. Final
 video-02 QC/delivery remains separate. Native benchmark audio exactly matches the
 delivered soundtrack; full-sequence upper-picture SSIM is 0.983.
+
+Live follow-up complete: haul 02's first five concurrent video clips downloaded
+in 4m49s. All twenty selected clips passed review, the 169.7-second final rendered
+and technically validated in 30.7s, and all 478 caption states were audited.
+Final Drive name/parent/size/MD5 and owned-service cleanup passed. Ports 5184–5188
+are free. Full offline suite: **342 passed in 28.03s**. Details and honest
+measurement/review limits: [haul 02 validation](haul-02-speed-validation.md).
+Only the first two batch items are delivered; this does not certify the remaining
+thirteen or authorize social publishing.
