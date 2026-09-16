@@ -8,7 +8,7 @@ from modules.assets.canvas_cli import CanvasError
 from modules.batch.audio import word_times, compact_intervals, compact_time
 from modules.batch.canvas import Canvas
 from modules.batch.local import Drive, descendants, same_process
-from modules.batch.render import author
+from modules.batch.render import author, cues
 from modules.batch.picture import selected_picture, timing_points, interpolate
 from modules.batch.runner import Runner, validate_brief
 from modules.batch.state import Batch, Pause, digest, exclusive, read, write
@@ -251,6 +251,21 @@ def test_authored_caption_does_not_use_broken_numeric_entities(tmp_path):
     text = (tmp_path / "export-clip-01.svml").read_text()
     assert "I&apos;d" in text and "&#x27;" not in text and "Checks &amp; denim" in text
     assert 'end-frame-exclusive="300"' in text and 'src="./assets/clip.mp4"' in text
+
+
+def test_words_rounded_to_one_frame_display_only_the_complete_caption():
+    words = [
+        {"text": "Look", "start": 2., "end": 2.19},
+        {"text": "at", "start": 2.2, "end": 2.202},
+        {"text": "the", "start": 2.204, "end": 2.206},
+        {"text": "denim", "start": 2.208, "end": 2.55},
+        {"text": "trim.", "start": 2.6, "end": 2.9},
+    ]
+    captions = cues(words)
+    active = [c["text"] for c in captions if c["start"] <= 66 < c["end"]]
+    assert active == ["Look at the denim"]
+    assert captions[-1]["text"] == "Look at the denim trim."
+    assert all(a["end"] <= b["start"] for a, b in zip(captions, captions[1:]))
 
 
 def test_provisional_quote_references_replaced_without_extra_audio_or_paid_run(batch):

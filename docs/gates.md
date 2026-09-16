@@ -321,3 +321,12 @@ the original audio resource successful. No paid submission was replayed. Origina
 transcripts retain recognition discrepancies and likely hallucinated text rather
 than claiming verbatim ASR accuracy. Final render, whole-film inspection and
 verified Drive delivery remain pending.
+
+Batch continuation: eighteen clips and nine products now have artifact-specific
+reviews (4,538 frames). The last outfit reference needed one eight-credit
+framing repair; its complete shoes and product details were inspected before
+clip 19 submission. Caption preflight uncovered same-frame progressive-prefix
+overlap; a reproduced regression now passes, and the real timeline has 548
+nonoverlapping cues. Full offline suite: **325 passed in 22.81s**. The final
+render must still be inspected at the former collision frames 1070 and 4970,
+alongside the complete film, before delivery can pass.

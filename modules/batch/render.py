@@ -27,7 +27,9 @@ def cues(words):
             following = (group[wi + 1]["start"] if wi + 1 < len(group) else
                          groups[gi + 1][0]["start"] if gi + 1 < len(groups) else word["end"] + .12)
             start = max(43, round(word["start"] * 30))
-            end = min(5091, max(start + 1, round(following * 30)))
+            # Same-frame words share the later, complete progressive caption;
+            # forcing an earlier prefix to last a frame stacks text on itself.
+            end = min(5091, round(following * 30))
             if end > start and word["end"] > 43 / 30:
                 result.append({"start": start, "end": end,
                                "text": " ".join(w["text"] for w in group[:wi + 1])})
