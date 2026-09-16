@@ -175,3 +175,21 @@ User approved the prepared two-search Viral Outliers pilot. Execution with a
 for this batch, but credit availability blocks the live test. Receipt:
 `data/radar/viral-outliers/viral-pilot-20260915/last-attempt.json`. G1 remains
 pending; latest full offline suite is still 300 passing (no code changes).
+
+### Direct product-reference pilot — 2026-09-15
+
+Read-only Shopify Admin access verified for the user's selected checkerboard
+tank. Its one product image was imported into official Jimeng Canvas CLI 1.0.1;
+readback confirmed image-node reference, upstream connection and prompt binding.
+One five-second Seedance 2.0 Fast VIP `m2v` generation succeeded under a 30-credit
+ceiling. Native checksum/size checks, M6 intake and full media decoding passed
+at 720 × 1280. Six sampled frames show recognizable front garment details with
+subtle movement; user visual review is pending. A silent preview retains the
+original video stream and runs 5.017s. Evidence:
+`data/production/v-product-variation-Db9SrsBsIUg/test-report.json`.
+
+This supports the image-reference route for G6 but does not sign off a complete
+shot set or G6/G8/G12. The original reference video was not used as a model
+input, and no full outfit-change edit, lip sync, automatic Shopify/M6 importer,
+new narration/music or publishing was tested. Latest offline suite remains
+300 passing; no production code or frozen contracts changed.

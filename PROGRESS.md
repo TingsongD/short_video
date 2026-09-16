@@ -314,3 +314,33 @@
   outside the project. Guide: `docs/google-drive-uploads.md`.
 - Future requested uploads can use the CLI. No scheduled uploads, sharing
   changes or production code changes were made.
+
+### Shopify product intake and direct Canvas reference test (2026-09-15)
+
+- Verified the user's `.env` Shopify Admin credentials with a validated,
+  read-only product query. The selected checkerboard tank has one 1365 × 2048
+  image and a description; its complete attached-media list contains no video
+  or additional angle. Store content was not changed. Guide:
+  `docs/shopify-product-assets.md`.
+- Downloaded and visually sampled the supplied Instagram reference: 169.713s,
+  1080 × 1920, presenter-led clothing try-on. Prepared a proposed 25–30s
+  single-product styling adaptation; audio transcription and outlier-ratio
+  verification were not performed.
+- User selected direct official Canvas CLI use for the first test. Imported the
+  Shopify image, saved and verified its node reference/connection, quoted one
+  five-second `seedance_2.0_fast_vip` `m2v` clip, and submitted it once with a
+  hard 30-Jimeng-credit ceiling. The ceiling was limited to the live quote;
+  final billing was not independently verified.
+- Native local-file upload returned uncertain state. A read-only resource
+  check found no registration; official image-URL import succeeded with the
+  original resource ID. No duplicate image or generation was created.
+- Generation/download completed. Checksum, byte count, full decoding and M6
+  intake passed at 720 × 1280. Original runtime is about 5.09s with generated
+  audio; a 5.017s silent preview preserves the video stream without re-encoding.
+- Six sampled frames retain the recognizable tank design during subtle motion.
+  User review remains pending. This verifies product-image conditioning through
+  the direct CLI, not full outfit changes, presenter continuity, or automatic
+  Shopify/M6 reference integration. No publishing or regeneration.
+- Evidence: `data/production/v-product-variation-Db9SrsBsIUg/test-report.json`;
+  guide: `docs/jimeng-product-reference-test.md`. No production code changes;
+  latest full offline suite remains **300 passing**.
