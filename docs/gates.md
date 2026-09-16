@@ -299,3 +299,15 @@ timing drift; 265 frames verified and 18 edited samples inspected. Original
 speech and native source retained; ASR anchor residual is at most 0.074 seconds,
 not a claim of perfect visual lip synchronization. Corrected-picture source,
 output and narration hashes gate review/render reuse. Full final QC remains pending.
+
+Video 01 continuation: the first ten clips now have recorded artifact-specific
+reviews covering five products and 2,453 timeline frames. Native and locally
+edited picture samples were inspected; independent reference/generated speech
+evidence, selected edits and hashes remain in the production folder. Clip 02
+retains an explicit speech discrepancy and uses a face-free garment cutaway
+with the correct original narration. Pause corrections and detail cutaways do
+not constitute a whole-film viewing/listening signoff. Six outfit references
+have passed comparison with Shopify images. Clip 11 is generating within the
+original reservation; final render, QC, Drive delivery and completion cleanup
+are still required. No paid replacements or extra narration/analysis charges
+have been used in this video.
