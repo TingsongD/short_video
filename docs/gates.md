@@ -311,3 +311,13 @@ have passed comparison with Shopify images. Clip 11 is generating within the
 original reservation; final render, QC, Drive delivery and completion cleanup
 are still required. No paid replacements or extra narration/analysis charges
 have been used in this video.
+
+Continuation evidence now covers fourteen selected clips and seven products
+(3,485 frames), plus eight inspected outfit references. Clip 14 was recovered
+through its existing accepted submission after a connection failure. An uncertain
+free audio upload for clip 15 was reconciled using native resource queries and
+the documented same-resource-ID upload retry; the service subsequently confirmed
+the original audio resource successful. No paid submission was replayed. Original
+transcripts retain recognition discrepancies and likely hallucinated text rather
+than claiming verbatim ASR accuracy. Final render, whole-film inspection and
+verified Drive delivery remain pending.
