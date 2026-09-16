@@ -65,5 +65,5 @@ handoffs, cached batch review evidence and a one-pass native caption renderer.
 Quotes, reservations, stable IDs, real artifact reviews and verified Drive/cleanup
 gates remain mandatory. Native 169.7-second replay: 36.23 seconds including full
 technical QC; opening/middle/closing typography inspected. Editable Hypit retained.
-Full offline suite: 341 passed in 26.12 seconds; later native-render replay also passed technical QC.
+Full offline suite: 342 passed in 26.12 seconds; later native-render replay also passed technical QC.
 Live five-job acceptance and video-02 delivery are being measured separately.

@@ -167,6 +167,16 @@ def test_failed_review_prevents_additional_spend(batch):
     assert not any(c[0] == "submit" for c in calls)
 
 
+def test_reference_repair_gets_a_slot_before_unrelated_clips(batch):
+    scheduler, calls, _ = fake_scheduler(batch, [f"look-{i:02}" for i in range(2, 7)])
+    scheduler.v["selected_jobs"] = {"look-01": "look-01-repair-01"}
+    scheduler.v["jobs"]["look-01-repair-01"] = {"stage": "saved", "replacement_for": "look-01"}
+    scheduler.cycle()
+    admitted = [c[1] for c in calls if c[0] == "submit"]
+    assert admitted[0] == "look-01-repair-01"
+    assert len(admitted) == 5 and "clip-01" not in admitted
+
+
 def test_ass_timing_preserves_every_30fps_event_boundary():
     from fractions import Fraction
     for frame in range(5092):

@@ -40,6 +40,13 @@ class Scheduler:
         return doc
 
     def ready(self):
+        # Corrected references unlock their dependent clips; do not leave them
+        # behind every already-eligible clip and add a whole extra generation round.
+        for product in self.brief["products"]:
+            key = self.selected(f"look-{product['slot']:02}")
+            job = self.v["jobs"][key]
+            if job["stage"] == "saved" and job.get("replacement_for"):
+                yield key, None, None
         # Fill available capacity with clips whose exact outfit has passed review.
         for take in self.brief["takes"]:
             key = self.selected(take["id"])
@@ -48,7 +55,7 @@ class Scheduler:
                 yield key, take, look
         for product in self.brief["products"]:
             key = self.selected(f"look-{product['slot']:02}")
-            if self.v["jobs"][key]["stage"] == "saved":
+            if self.v["jobs"][key]["stage"] == "saved" and not self.v["jobs"][key].get("replacement_for"):
                 yield key, None, None
 
     def cycle(self):
