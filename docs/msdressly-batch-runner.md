@@ -31,6 +31,15 @@ artifact and records its verdict; this does **not** request another spending
 approval from the user. A detached shell process alone cannot perform those
 creative reviews or author the next video's original copy.
 
+The Codex heartbeat **Produce sequential MsDressly hauls** continues that agent
+work in this task every ten minutes (automation ID
+`produce-sequential-msdressly-hauls`). It respects the same controller lock and
+budgets, stays quiet for unchanged progress, and reports verified deliveries or
+actionable failures. It pauses when the funded batch finishes, the next complete
+video cannot be funded, or unresolved provider/quality/account issues require
+action. This is a finite approved production queue, not an open-ended spending
+authorization.
+
 ```bash
 .venv/bin/python -m modules.batch status
 .venv/bin/python -m modules.batch dry-run
