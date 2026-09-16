@@ -471,3 +471,10 @@ verified free ports. Upload failures retain the final locally and still clean
 up idle video services. This is the agent's production completion procedure;
 no background scheduler or new generation was started. The current video already
 meets it. Documentation-only change; the last code test run remains 301 passing.
+
+### Next 15 video products selected (2026-09-15)
+
+- Selected fifteen unique, currently available MsDressly products, one featured product per next video, excluding the completed haul's products and gift cards.
+- Ranked live Shopify analytics by 90-day net units sold, using 30-day and 365-day sales as tie-breakers. Validated the read-only GraphQL queries, checked current catalog identities, storefront purchase availability, prices and product images. Counts are store-relative and modest; this is not evidence of viral performance.
+- Plan, product URLs, suggested video angles, CSV/JSON, reference-image board and sales evidence: `data/production/next-15-video-plan-20260915/`. Start with `NEXT-15-VIDEOS.md`.
+- Verified 15 unique product IDs, zero prior-haul overlaps, positive recent net sales and available variants for every selection. No product changes, media generation, paid generation calls or preview servers.
