@@ -245,11 +245,24 @@ The local film is complete for owner review; this addendum does not sign the
 MoneyPrinterTurbo, human-approval or publishing requirements of G6/G8/G12.
 
 - **Artifact:** `data/production/v-product-variation-Db9SrsBsIUg/hypit-full-length-01/MsDressly_Full_Haul_2m49s.mp4`.
-- **Technical pass:** 169.700s picture/audio target, 5,091 frames at 30fps, 1080 × 1920, full decode, no black intervals, audio peak −1.6 dBFS. SHA-256 `c43c105ebb1a8039a213b54626f151726ee0121d8e1cee29a8d94420c0ac6e65`.
+- **Technical pass:** 169.700s picture/audio target, 5,091 frames at 30fps, 1080 × 1920, full decode, no black intervals, audio peak −1.6 dBFS. SHA-256 `314b53f2c3d9e279584ec8ebd291afc9666b2e5501530cbe7c097bb56c41aaa0`.
 - **Asset evidence:** eighteen selected edited clips, ten selected outfit references, eleven catalog products. Generated picture is 720p before upscale; tight local crops reduce effective detail further. Rejected attempts are retained and explicitly excluded.
 - **Timing:** exact source picture duration preserved. Independent ASR found drift missed by earlier broad model checks; sixteen clips were fitted to actual word times, with product close-ups where native generated speech omitted or repeated words. ASR alignment is approximate, not proof of perfect mouth timing.
 - **Assembly evidence:** eighteen completed local Hypit section builds; out-of-range pruning matched a full-source 115-frame comparison exactly (SSIM 1.0). Full soundtrack is mixed continuously during the final stream-copy picture join. `rendered-sections/`, `render-equivalence.json` and `delivery-manifest.json` record provenance.
-- **Review evidence:** final sampled opening/outfit/transition/CTA frames inspected; completed concise automated whole-film review reports no significant issues. The earlier truncated whole-film response is preserved as incomplete. Human viewing/listening signoff remains pending.
+- **Review evidence:** final sampled opening/outfit/transition/CTA frames inspected. The concise automated whole-film review missed a caption defect; the caption correction evidence below supersedes its caption assessment. The earlier truncated response is preserved as incomplete. Human viewing/listening signoff remains pending.
 - **Spending:** 1,348 Jimeng credits; 3,979 conservative TTS credits including one validation rejection; US$1.00 conservative other-API reservations. All remain within the accepted ceilings; settled billing unverified. The dollar allocation is exhausted.
-- **Handoff:** actual delivered film visible in Chrome's Hypit review at http://localhost:5188/#comments; full editable timeline at port 5187. Frozen contracts untouched; no core module changes; latest prior offline suite 300 passing.
+- **Handoff:** actual delivered film visible in Chrome's Hypit review at http://localhost:5188/#comments; full editable timeline at port 5187. Frozen contracts untouched. Caption serializer regression included; latest offline suite 301 passing.
 - **Still outside this evidence:** publishing, performance/virality outcomes, human acceptance and MoneyPrinterTurbo execution. No posting occurred.
+
+### Caption correction evidence (2026-09-15)
+
+The owner found a numeric apostrophe entity missed by the broad automated review.
+The structured-SVML serializer now emits named XML entities; an actual Hypit
+parser regression and the full **301-test offline suite** pass. All 568 cue
+strings match decoded text. Eleven sections were re-exported; local OCR checked
+80 affected final-video caption states, with zero encoded-entity flags, and all
+19 OCR discrepancies were visually checked. Audio packets and 5,091-frame timing
+are preserved; final technical checks pass. The artifact/hash above now identify
+the repaired export. Production `CAPTION-FIX.md` and `caption-fix-qc/` hold evidence.
+The earlier model report applies to the archived pre-fix export and is not
+caption signoff. Human acceptance and publishing remain separate. No extra spend.

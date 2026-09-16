@@ -15,13 +15,28 @@ that the broader model reviews had missed; picture timing was corrected locally.
 
 ## Production and review
 
+### Caption text serialization
+
+Use `modules.assemble.hypit_markup.escape_markup_text` for literal text inserted
+into structured SVML. Hypit 0.1.8 decodes the five named XML entities, including
+`&apos;`, but leaves Python `html.escape`'s numeric `&#x27;` apostrophe visible.
+The production author now uses this helper for captions and outfit labels.
+`tests/test_assemble_hypit.py` verifies copy through the installed Hypit parser,
+including contractions, quotes, ampersands, angle brackets and Unicode.
+
+The owner's screenshot exposed this defect after the broad automated video
+review had missed it. Caption validation must include the actual decoded text
+and rendered pixels; the model's earlier `captions_ok` result is insufficient.
+
+### Current delivery
+
 Project: `data/production/v-product-variation-Db9SrsBsIUg/hypit-full-length-01/`
 
 Finished-video review: http://localhost:5188/#comments while Hypit Studio runs.
 The complete editable timeline remains at http://localhost:5187/#comments;
 the lighter delivery player shows the actual finished MP4.
 
-Final file: `MsDressly_Full_Haul_2m49s.mp4`, **47,466,376 bytes**. It measures
+Final file: `MsDressly_Full_Haul_2m49s.mp4`, **47,366,136 bytes**. It measures
 **169.700 seconds, 5,091 frames, 1080 × 1920 at 30fps**, with H.264 picture and
 stereo AAC audio. Full decoding, frame count, duration, dimensions, blank-frame
 and audio-peak checks pass. Measured peak is −1.6 dBFS. Opening, outfit, close-up
@@ -119,7 +134,7 @@ that validation rejection, is 3,979 of the approved 4,000 credits.
 
 Gemini's initial audio and clip checks reported intelligible narration and usable
 visible speech timing, but missed drift detected by the word-time comparison.
-The corrected full-film review reports clear audio, readable captions, consistent
+The pre-caption-fix model review reported clear audio, readable captions, consistent
 identity and no significant problems. An initial whole-film response exhausted
 its output limit; it is preserved as incomplete. A separate concise Flash-Lite
 review completed with thinking disabled and a US$0.01 reservation, supported by

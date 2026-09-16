@@ -13,6 +13,35 @@ DIST = ROOT / "vendor/hypit-runtime/node_modules/@hypit/hypit"
 
 @pytest.mark.skipif(not (DIST / "package.json").exists() or not shutil.which("node"),
                     reason="optional pinned Hypit installation is absent")
+def test_caption_copy_round_trips_through_installed_markup_parser(tmp_path):
+    """Assert the visible text, using the same parser that feeds typography."""
+    from modules.assemble.hypit_markup import escape_markup_text
+
+    captions = [
+        "I'd keep the styling simple, then",
+        "They're separate pieces; you're building outfits.",
+        'She said "relaxed" — cotton & linen < $50 > $20.',
+        "A literal entity: &#x27; and &apos;",
+        "MsDressly’s looks\n夏日穿搭",
+    ]
+    documents = [f"<typo:Area>{escape_markup_text(text)}</typo:Area>" for text in captions]
+    parser = (DIST / "packages/markup/src/syntax.ts").as_uri()
+    code = f"""
+import {{parseStructuredElement}} from {json.dumps(parser)};
+const docs = JSON.parse(process.argv[1]);
+const actual = docs.map(text => parseStructuredElement({{name:'caption', text}}, 0)
+    .element.children.map(node => node.value ?? '').join(''));
+console.log(JSON.stringify(actual));
+"""
+    env = {**os.environ, "NODE_OPTIONS": "--import=" + (ROOT / "scripts/hypit-node-bootstrap.mjs").as_uri()}
+    result = subprocess.run([shutil.which("node"), "--input-type=module", "-e", code, json.dumps(documents)],
+                            cwd=tmp_path, env=env, capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == captions
+
+
+@pytest.mark.skipif(not (DIST / "package.json").exists() or not shutil.which("node"),
+                    reason="optional pinned Hypit installation is absent")
 def test_capture_child_inherits_distribution_resolution(tmp_path):
     """The real capture dependency tree must load outside a contributor checkout."""
     target = (DIST / "packages/provider-hyperframes-local/src/capture.ts").as_uri()

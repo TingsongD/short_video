@@ -445,3 +445,11 @@ All ten outfit references have now passed visual inspection; the red-pullover re
 - Final reservations: **1,348 / 2,000 Jimeng credits**, **3,979 / 4,000 TTS credits** (3,823 successfully submitted characters), **US$1.00 / US$1.00** other audio/review APIs. These are conservative reservations, not verified settled billing; no further dollar-spend calls remain covered.
 - Finished film opened in the user's Chrome profile at http://localhost:5188/#comments; editable full timeline remains at port 5187. `DELIVERY.md`, `production-report.json`, `final-qc/`, source selections, section build receipts and native job IDs preserve handoff and recovery evidence.
 - No publishing or core production-module changes. Latest offline suite remains the prior 300 passing run; not rerun for media and documentation. This verifies the local Hypit commission, not MoneyPrinterTurbo or the entire G6/G8/G12 publication loop.
+
+### Caption escaping repaired (2026-09-15)
+
+- Owner screenshot exposed literal `&#x27;` in contractions. The author used HTML numeric escaping, but Hypit 0.1.8 only decodes named XML entities. Added a shared named-entity serializer and wired the production author to it.
+- A real-parser regression failed before the fix and now passes; full `make test`: **301 passed**. All 568 production caption strings round-trip exactly.
+- Re-exported eleven affected sections and replaced the final MP4. Local OCR found zero entity strings across 80 affected caption states; visually checked all 19 OCR discrepancies. The earlier broad model review had missed this bug.
+- Corrected final remains 169.700s / 5,091 frames at 30fps, 1080×1920. Encoded audio packets match the original. Full technical QC passes. New final: **47,366,136 bytes**, SHA-256 `314b53f2c3d9e279584ec8ebd291afc9666b2e5501530cbe7c097bb56c41aaa0`.
+- Review Run refreshed at port 5188; original delivery and section receipts retained in `caption-fix-archive/`. See production `CAPTION-FIX.md`. No paid calls, regeneration or publishing.
