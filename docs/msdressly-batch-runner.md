@@ -31,9 +31,15 @@ artifact and records its verdict; this does **not** request another spending
 approval from the user. A detached shell process alone cannot perform those
 creative reviews or author the next video's original copy.
 
-The Codex heartbeat **Produce sequential MsDressly hauls** continues that agent
-work in this task every ten minutes (automation ID
-`produce-sequential-msdressly-hauls`). It respects the same controller lock and
+The Codex heartbeat **Produce sequential MsDressly hauls** is scheduled every
+ten minutes as a recovery mechanism (automation ID
+`produce-sequential-msdressly-hauls`). Once active, the producing agent stays
+with the current video through generation, reviews, render, QC, delivery and
+cleanup. It waits on existing background jobs and does not end its turn after
+each submission or status question. Review checkpoints require agent work,
+not another scheduled wake or renewed user approval. Ending turns between
+clips added approximately 174 minutes of avoidable wait to haul 01; see
+`docs/haul-01-delay-investigation.md`. The heartbeat respects the same controller lock and
 budgets, stays quiet for unchanged progress, and reports verified deliveries or
 actionable failures. It pauses when the funded batch finishes, the next complete
 video cannot be funded, or unresolved provider/quality/account issues require
