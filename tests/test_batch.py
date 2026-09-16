@@ -341,3 +341,39 @@ def test_render_uses_inspected_local_edit_instead_of_native_picture(tmp_path):
     author(tmp_path, {"takes": [take], "products": [{"slot": 1, "label": "Skort"}]}, v, take)
     markup = (tmp_path/"export-clip-01.svml").read_text()
     assert 'src="./aligned.mp4"' in markup and 'src="./native.mp4"' not in markup
+
+
+def test_section_join_preserves_frame_clock_despite_rounded_mp4_duration(tmp_path):
+    import shutil
+    import subprocess
+    from modules.batch.render import join_sections
+    if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
+        pytest.skip("Local FFmpeg required")
+
+    class Commands:
+        def run(self, argv, **kwargs):
+            subprocess.run(list(map(str, argv)), check=True, capture_output=True, timeout=30)
+
+    local = Commands()
+    paths, takes, cursor = [], [], 0
+    for i, frames in enumerate((13, 17)):
+        path = tmp_path / f"section-{i}.mp4"
+        # Hypit MP4s have silent AAC and millisecond-rounded container durations.
+        local.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=blue:s=96x160:r=30",
+                   "-f", "lavfi", "-i", "anullsrc=r=48000:cl=mono", "-t", f"{frames/30:.3f}",
+                   "-c:v", "libx264", "-c:a", "aac", path])
+        paths.append(path)
+        takes.append({"start_frame": cursor, "end_frame": cursor + frames})
+        cursor += frames
+    sound = tmp_path / "voice.wav"
+    local.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=400:duration=1", sound])
+    final = tmp_path / "final.mp4"
+    join_sections(local, paths, takes, sound, sound, final)
+    info = json.loads(subprocess.check_output(["ffprobe", "-v", "error", "-show_streams", "-of", "json", str(final)]))
+    video = next(s for s in info["streams"] if s["codec_type"] == "video")
+    assert video["avg_frame_rate"] == "30/1"
+    assert video["nb_frames"] == "30"
+    assert float(video["start_time"]) == 0
+    packets = json.loads(subprocess.check_output(["ffprobe", "-v", "error", "-select_streams", "v",
+        "-show_packets", "-show_entries", "packet=pts", "-of", "json", str(final)]))["packets"]
+    assert sorted(p["pts"] for p in packets) == [i * 512 for i in range(30)]

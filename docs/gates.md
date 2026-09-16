@@ -330,3 +330,21 @@ overlap; a reproduced regression now passes, and the real timeline has 548
 nonoverlapping cues. Full offline suite: **325 passed in 22.81s**. The final
 render must still be inspected at the former collision frames 1070 and 4970,
 alongside the complete film, before delivery can pass.
+
+Batch haul 01 delivery now passes (2026-09-16): all twenty sections are assembled
+into a 169.7-second, 5,091-frame, 30-fps final. The local join regression was
+reproduced and fixed: explicit frame-derived section durations prevent MP4
+rounding drift, and preserved timestamps avoid a 21-ms AAC-induced picture
+offset. Full offline suite: **326 passed in 27.65s**. Every decoded final frame
+matches the reviewed section sequence. All 548 caption cues were audited,
+including direct inspection of the 51 OCR disagreements and both collision
+frames. Final encoded audio matches the approved narration/music mix with
+0.999978 correlation; full local ASR similarity is 98.07%. Review evidence
+records sampled-picture and ASR limitations rather than claiming perfect
+lip synchronization or real-time listening.
+
+[Haul 01 Drive delivery](https://drive.google.com/file/d/1iV_A7HB-tbbWs7HGGqUYSr0tT5se7SFs/view)
+has verified remote filename, destination, byte count and MD5. Its cleanup
+receipt reports no surviving owned workers; ports 5184–5188 are free. Video 01
+is marked done. This is one completed batch item, not a pass for all fifteen
+videos or any social-publishing gate.

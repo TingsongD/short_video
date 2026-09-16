@@ -77,3 +77,13 @@ or exported account archives to the project or delivery folder.
 - SHA-256 `314b53f2c3d9e279584ec8ebd291afc9666b2e5501530cbe7c097bb56c41aaa0` identifies the caption-corrected final.
 - Receipt: `data/production/v-product-variation-Db9SrsBsIUg/hypit-full-length-01/drive-delivery/upload-receipt.json`.
 - Local Hypit preview services and workers stopped after verification; ports 5184–5188 are free.
+
+## Sequential batch: haul 01 (2026-09-16)
+
+- [MsDressly_Haul-01_Checks-Statement-Denim_10-Products_2m49s_v1.mp4](https://drive.google.com/file/d/1iV_A7HB-tbbWs7HGGqUYSr0tT5se7SFs/view)
+- Verified in the authorized folder above, with unchanged sharing.
+- **51,603,087 bytes**, remote MD5 `448575b8e268cf4627200df71abe3940` matches local.
+- SHA-256 `57c15bb9dc884d9ba6b122b1367316404a105ea1f35c6c9018705fad2be92b25`.
+- Receipts: `data/production/next-15-video-plan-20260915/productions/haul-01/upload-receipt.json` and `cleanup-receipt.json`.
+- QC: 169.7 seconds, 1080×1920, 30 fps, 5,091 frames; all twenty sections and ten products present. Review evidence and limitations are in the adjacent `review/final-review.json`.
+- No surviving owned video workers; ports 5184–5188 verified free. Local previews are offline.

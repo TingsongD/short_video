@@ -89,6 +89,21 @@ def author(folder, brief, v, selected=None):
     return name
 
 
+def join_sections(local, paths, takes, narration, music, final):
+    playlist = paths[0].parent / "concat.txt"
+    # MP4 container durations are rounded; use the accepted frame counts to
+    # place each section, and retain zero-based picture timestamps despite AAC priming.
+    playlist.write_text("".join(
+        f"file '{path.name}'\nduration {(take['end_frame'] - take['start_frame']) / 30:.12f}\n"
+        for path, take in zip(paths, takes, strict=True)))
+    duration = sum(t["end_frame"] - t["start_frame"] for t in takes) / 30
+    local.run(["ffmpeg", "-v", "error", "-y", "-copyts", "-f", "concat", "-safe", "0", "-i", playlist,
+        "-i", narration, "-i", music,
+        "-filter_complex", "[1:a]volume=1.25[voice];[voice][2:a]amix=inputs=2:duration=first:normalize=0,alimiter=limit=0.95:level=false[a]",
+        "-map", "0:v:0", "-map", "[a]", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-t", str(duration),
+        "-movflags", "+faststart", final], timeout=300)
+
+
 class Render:
     def __init__(self, batch, number, local, previous):
         self.batch, self.number, self.local, self.previous = batch, number, local, Path(previous)
@@ -156,15 +171,10 @@ class Render:
             doc.update(state="verified", sha256=digest(file))
             write(receipt, doc)
             paths.append(file)
-        playlist = sections / "concat.txt"
-        playlist.write_text("".join("file '" + path.name + "'\n" for path in paths))
         name = brief["delivery_name"]
         final = self.folder / name
-        self.local.run(["ffmpeg", "-v", "error", "-y", "-f", "concat", "-safe", "0", "-i", playlist,
-            "-i", self.folder / "audio/narration.wav", "-i", self.folder / "audio/music-bed.wav",
-            "-filter_complex", "[1:a]volume=1.25[voice];[voice][2:a]amix=inputs=2:duration=first:normalize=0,alimiter=limit=0.95:level=false[a]",
-            "-map", "0:v:0", "-map", "[a]", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-t", "169.7",
-            "-movflags", "+faststart", final], timeout=300)
+        join_sections(self.local, paths, brief["takes"], self.folder / "audio/narration.wav",
+                      self.folder / "audio/music-bed.wav", final)
         report = verify_media(self.local, final, "video", 169.7, final=True)
         self.v.update(state="rendered", final_path=str(final), technical_qc=report)
         write(self.folder / "technical-qc.json", report)
