@@ -12,7 +12,7 @@ from .canvas import Canvas, image_prompt, video_prompt
 from .local import Drive, Local
 from .picture import selected_picture
 from .render import HYPIT, Render
-from .state import Pause, digest, now, read, write
+from .state import Pause, ReviewReady, digest, now, read, write
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT = ROOT / "data/production/next-15-video-plan-20260915"
@@ -153,9 +153,16 @@ class Runner:
         if not check_review(self.v, key, fingerprint):
             self.v["review_required"] = key
             self.batch.save()
-            raise Pause(f"Inspect {key} and record its review before continuing")
+            if self.v.get("reviews", {}).get(key, {}).get("status") == "failed":
+                raise Pause(f"{key} failed review; inspect the required correction")
+            raise ReviewReady(f"Inspect {key} now, record its review, and continue this agent turn")
         self.v.pop("review_required", None)
         self.batch.save()
+
+    def reviewed(self, key):
+        if key not in self.v.get("reviews", {}):
+            return False
+        return check_review(self.v, key, review_fingerprint(self.v, self.folder, key))
 
     def run(self):
         if self.number != self.batch.active_number():
@@ -164,6 +171,10 @@ class Runner:
             self.batch.data.update(status="running", pause_reason=None)
             self.batch.save()
             self._run()
+        except ReviewReady as error:
+            self.batch.data.update(status="review_ready", pause_reason=str(error))
+            self.batch.save()
+            raise
         except (Pause, CanvasError) as error:
             self.batch.data.update(status="paused", pause_reason=str(error), paused_at=now())
             self.batch.save()
@@ -193,7 +204,10 @@ class Runner:
         if self.v.get("final_path"):
             self.require_review("final")
         else:
-            self.prepare(brief)
+            if self.v.get("prepared_brief_sha256") != fingerprint:
+                self.prepare(brief)
+            else:
+                self.canvas.preflight()  # A cached draft never substitutes for current account verification.
             audio = Audio(self.batch, self.number, self.local)
             narration = self.folder / "audio/narration.wav"
             audio_receipt = self.folder / "audio/audio-verification.json"
@@ -211,19 +225,11 @@ class Runner:
                 self.canvas.quote_all()
                 self.v["timing_quote_required"] = False
                 self.batch.save()
+            self.v["prepared_brief_sha256"] = digest(brief_path)
+            self.batch.save()
             self.require_review("narration")
-            for product in brief["products"]:
-                look = f"look-{product['slot']:02}"
-                selected_look = self.v.get("selected_jobs", {}).get(look, look)
-                self.canvas.finish(selected_look)
-                self.require_review(selected_look)
-                for take in [t for t in brief["takes"] if t["slot"] == product["slot"]]:
-                    key = self.v.get("selected_jobs", {}).get(take["id"], take["id"])
-                    self.canvas.bind_outfit(key, self.v["jobs"][selected_look]["node_id"])
-                    voice = self.canvas.import_file("voice-" + take["id"], "audio", self.folder / "audio" / (take["id"] + ".wav"))
-                    self.canvas.attach_audio(key, voice, take["text"])
-                    self.canvas.finish(key)
-                    self.require_review(key)
+            from .scheduler import Scheduler
+            Scheduler(self, brief).finish()
             self.v["state"] = "footage_ready"
             self.batch.save()
             Render(self.batch, self.number, self.local, PREVIOUS).finish(brief)

@@ -4,7 +4,7 @@ import json
 from modules.assets.canvas_cli import CanvasError
 from .local import Drive, Local
 from .runner import DEFAULT, PREVIOUS, Runner, record_review, repair
-from .state import Batch, Pause, digest, exclusive, read, write
+from .state import Batch, Pause, ReviewReady, digest, exclusive, read, write
 
 
 def main():
@@ -13,6 +13,11 @@ def main():
     sub = parser.add_subparsers(dest="command", required=True)
     for name in ("status", "run", "dry-run"):
         sub.add_parser(name)
+    configure = sub.add_parser("configure")
+    configure.add_argument("--jimeng-concurrency", type=int, required=True)
+    configure.add_argument("--render-backend", choices=("hypit", "ffmpeg"), required=True)
+    evidence = sub.add_parser("review-pack")
+    evidence.add_argument("keys", nargs="*")
     balance = sub.add_parser("balance")
     balance.add_argument("credits", type=int)
     balance.add_argument("--evidence", required=True)
@@ -27,16 +32,34 @@ def main():
     picture.add_argument("key")
     picture.add_argument("--comparison", required=True)
     args = parser.parse_args()
+    if args.command == "status":
+        # Atomic state files permit read-only status while a controller owns the lock.
+        batch = Batch(args.selection_dir)
+        n = batch.active_number()
+        print(json.dumps({"status": batch.data["status"], "active": n,
+            "jimeng_reserved_for_submissions": batch.spent(), "cap": batch.data["approval"]["jimeng"],
+            "execution": batch.data.get("execution", {}), "pause_reason": batch.data.get("pause_reason"),
+            "videos": [{"number": v["number"], "state": v["state"], "review_required": v.get("review_required"),
+                        "review_queue": v.get("review_queue", []), "delivery": v.get("delivery", {}).get("web_url")}
+                       for v in batch.data["videos"].values()]}, indent=2))
+        return 0
     try:
         with exclusive(__import__("pathlib").Path(args.selection_dir) / "batch-plan"):
             batch = Batch(args.selection_dir)
             n = batch.active_number()
-            if args.command == "status":
-                print(json.dumps({"status": batch.data["status"], "active": n, "jimeng_reserved_for_submissions": batch.spent(),
-                      "pause_reason": batch.data.get("pause_reason"),
-                      "cap": batch.data["approval"]["jimeng"], "videos": [{"number": v["number"], "state": v["state"],
-                      "review_required": v.get("review_required"), "delivery": v.get("delivery", {}).get("web_url")}
-                      for v in batch.data["videos"].values()]}, indent=2))
+            if args.command == "configure":
+                batch.configure(args.jimeng_concurrency, args.render_backend)
+                print("Execution settings saved; credit ceilings and one-video-at-a-time delivery are unchanged.")
+            elif args.command == "review-pack":
+                from .runner import ROOT
+                if n is None:
+                    raise Pause("All videos are complete; no active artifacts to review")
+                keys = args.keys or batch.video(n).get("review_queue", [])
+                if not keys:
+                    raise Pause("No ready artifacts to prepare")
+                local = Local(batch.directory(n))
+                print(local.run([ROOT / "vendor/speech-qc/.venv/bin/python", ROOT / "scripts/batch_review_pack.py",
+                                 batch.directory(n), *keys], timeout=600))
             elif args.command == "balance":
                 batch.record_balance(args.credits, args.evidence)
                 print("Observed balance recorded; the original batch cap remains unchanged.")
@@ -72,6 +95,9 @@ def main():
                 batch.data["status"] = "complete"
                 batch.save()
                 print("All selected videos delivered and cleaned.")
+    except ReviewReady as error:
+        print(json.dumps({"status": "review_ready", "reason": str(error), "resume_immediately_after_review": True}))
+        return 3
     except (Pause, CanvasError) as error:
         print(json.dumps({"status": "paused", "reason": str(error)}))
         return 2

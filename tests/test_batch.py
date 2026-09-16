@@ -145,6 +145,7 @@ def test_ambiguous_canvas_submission_resumes_saved_id_without_repeat(batch):
 
 
 def test_successful_operation_download_failure_keeps_resource_for_retry(batch, monkeypatch):
+    monkeypatch.setattr("modules.batch.canvas.time.sleep", lambda seconds: None)
     v = quoted(batch)
     v.update(project_id="p", canvas_stage="created")
     j = v["jobs"]["clip-01"]
@@ -164,7 +165,7 @@ def test_successful_operation_download_failure_keeps_resource_for_retry(batch, m
     for _ in range(2):
         with pytest.raises(CanvasError):
             Canvas(batch, 1, None, fake).finish("clip-01")
-    assert fake.waits == 1 and fake.downloads == 2 and j["output_resource_id"] == "existing"
+    assert fake.waits == 1 and fake.downloads == 6 and j["output_resource_id"] == "existing"
 
 
 class FakeDriveLocal:

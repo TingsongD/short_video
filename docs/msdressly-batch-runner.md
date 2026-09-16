@@ -3,8 +3,9 @@
 `python -m modules.batch run` continues the active video from saved state. It
 creates a separate Canvas project for each haul, obtains every visual quote,
 reserves the complete video plus 200 repair credits, produces ElevenLabs v3
-narration, generates references and footage one job at a time, renders with
-Hypit, uploads the final to Drive, and verifies cleanup before advancing.
+narration, runs up to five independent Jimeng jobs within the current video,
+renders the static haul typography with FFmpeg, uploads the final to Drive, and
+verifies cleanup before advancing. The editable Hypit project is also retained.
 
 The accepted batch plan sets **13,502 Jimeng credits**, **4,000 ElevenLabs
 credits per video / 60,000 total**, and **$0 for other audio/model APIs**.
@@ -25,8 +26,10 @@ image URLs, garment descriptions, styling directions, and original spoken takes.
 Takes cover exactly 5,091 frames at 30 fps; each is 4–15 seconds. Titles, prices,
 claims and image colors must be reconciled against the actual product images.
 
-The runner deliberately returns a review checkpoint after narration, each
-reference, each clip, and the final. The producing agent inspects the actual
+The runner returns immediate agent review checkpoints after narration, ready
+references/clips, and the final. `ReviewReady` is exit code 3, not a failure or
+a request to wait for the next heartbeat. Other accepted remote jobs can keep
+running while the agent inspects ready artifacts. The producing agent inspects the actual
 artifact and records its verdict; this does **not** request another spending
 approval from the user. A detached shell process alone cannot perform those
 creative reviews or author the next video's original copy.
@@ -48,6 +51,8 @@ authorization.
 
 ```bash
 .venv/bin/python -m modules.batch status
+.venv/bin/python -m modules.batch configure --jimeng-concurrency 5 --render-backend ffmpeg
+.venv/bin/python -m modules.batch review-pack
 .venv/bin/python -m modules.batch dry-run
 .venv/bin/python -m modules.batch balance 13502 --evidence 'Current logged-in Jimeng credit-details panel'
 .venv/bin/python -m modules.batch review products --verdict passed --notes 'Specific product/image/variant checks'
@@ -156,3 +161,37 @@ Offline tests cover budget caps, complete quote coverage, durable spending holds
 single-controller locking, unknown submissions, download recovery, narration
 limits, Drive ambiguity/checksum mismatches, cleanup on failure, PID reuse,
 caption escaping and transformed word timing. `make test` never calls paid APIs.
+
+## Five concurrent jobs and faster local work (16 September 2026)
+
+The user explicitly authorized five parallel video clips. The scheduler has one
+state writer and five remote slots shared by images and clips. Clips are eligible
+only after their exact outfit reference passes review. Every loop checks all
+active operations, downloads completed resources, fills free slots and hands
+ready evidence to the agent. A slow earlier job cannot hide later completions.
+Saved ambiguous submissions block additional spending; status and download retry
+only existing IDs. Service-side execution capacity can still queue accepted jobs.
+
+`review-pack` prepares reference comparisons, native two-frames-per-second grids
+and paired local Whisper word transcripts in one process. Results are cached by
+source, reference, voice, brief and tool hashes. No artifact is auto-approved.
+Transcript differences remain visible and timing candidates have
+`same_transcript: false` until genuine inspection. Keep the agent active and
+resume immediately after recording reviews. `progress.json` reports readiness
+and timestamps even while the controller holds its lock.
+
+The native FFmpeg/libass path renders all ordered pictures, progressive captions,
+product labels and the opening brand reveal in one pass with bounded CPU use.
+It retains Hypit's editable project, preserves 5,091 frames, uses the existing
+speech/music mix and applies full technical QC. Existing partial Hypit builds
+continue through their original backend to preserve recovery. Input changes
+invalidate cached render receipts. Browser text effects beyond this haul's
+static design still belong in Hypit; the two renderers use slightly different
+font rasterization/shadows.
+
+An isolated replay of haul 01, using approved existing media and no paid calls,
+finished the 169.7-second export and full technical checks in **36.23 seconds**,
+versus **31m14s** for its original twenty captioned sections (about 52 times
+faster for rendering). Sampled opening, caption and closing frames were reviewed.
+This does not measure cloud-generation acceleration or certify the next film.
+Evidence: `productions/haul-01/review/speed-benchmark-v2/`.

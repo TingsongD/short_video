@@ -165,14 +165,16 @@ The remainder stays queued when the stopping rule applies.
 - Finalize shot timing against measured narration and refresh any affected
   Jimeng quotes before submitting visual generation. Any larger reservation
   must still fit the batch limit.
-- Generate ten outfit references sequentially with Seedream 5.0 Pro at 2K.
+- Generate ten outfit references within the shared five-job limit using Seedream 5.0 Pro at 2K.
   Inspect garment identity, presenter consistency, framing and readable text
   before generating the associated footage. Reuse a valid result on resume.
 
-### 4. Generate footage one job at a time
+### 4. Generate footage with five concurrent jobs
 
 - Use official Canvas CLI, `seedance_2.0_fast_vip`, 720p, 9:16, one result per
-  shot. Keep **one video and one Jimeng generation active at a time**.
+  shot. Keep **one active video and up to five independent Jimeng jobs**. This
+  concurrency was explicitly authorized on 16 September; each clip still requires
+  its approved outfit reference and exact speech before submission.
 - Save node and submission IDs before each request. Wait for the same job,
   download through the CLI, verify media and preserve checksums/provenance.
 - Keep accepted, running, failed, unknown and downloaded states distinct.
@@ -186,8 +188,9 @@ The remainder stays queued when the stopping rule applies.
 
 ### 5. Assemble and inspect the actual final
 
-- Use the repaired Hypit launcher and local rendering. Keep one render worker
-  active; render sections sequentially and join with FFmpeg where appropriate.
+- Use the native FFmpeg renderer for this haul template, retaining the editable
+  Hypit project; continue already-started Hypit builds with their saved receipts. Keep one render worker
+  active; use the native single-pass export for this template.
   Start a preview server only when review needs it.
 - Preserve shot/product order and fitted timing. Use the accepted narration as
   the soundtrack, duck the reused music under speech, and discard unwanted

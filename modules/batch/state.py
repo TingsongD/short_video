@@ -13,6 +13,10 @@ class Pause(RuntimeError):
     """An actionable checkpoint; retrying the controller never means retrying a charge."""
 
 
+class ReviewReady(Pause):
+    """The producing agent should inspect ready artifacts immediately, then resume."""
+
+
 def now():
     return datetime.now(timezone.utc).isoformat()
 
@@ -122,6 +126,18 @@ class Batch:
     def spent(self):
         return sum(v["spent_hold"] for v in self.data["videos"].values())
 
+    def configure(self, concurrency, render_backend):
+        if type(concurrency) is not int or not 1 <= concurrency <= 6:
+            raise Pause("Choose one to six local in-flight Jimeng slots")
+        if render_backend not in ("hypit", "ffmpeg"):
+            raise Pause("Unknown render backend")
+        self.data["execution"] = {"jimeng_concurrency": concurrency, "render_backend": render_backend,
+                                  "configured_at": now()}
+        self.save()
+
+    def concurrency(self):
+        return self.data.get("execution", {}).get("jimeng_concurrency", 1)
+
     def reserve_video(self, number, quotes):
         if number != self.active_number():
             raise Pause("Finish delivery and cleanup of the active video first")
@@ -143,15 +159,20 @@ class Batch:
         self.save()
 
     def claim_visual(self, number, key, amount):
+        if number != self.active_number():
+            raise Pause("Finish delivery and cleanup of the active video first")
         v = self.video(number)
         j = v["jobs"][key]
         if j.get("authorized_credits") is not None:
             raise Pause("Submission already claimed; recover its saved ID without resubmitting")
         if not v["reservation"] or type(amount) is not int or amount < 0:
             raise Pause("A complete video reservation is required")
-        if any(x.get("stage") in ("submitting", "submitted", "accepted", "pending", "unknown", "running")
-               for x in v["jobs"].values()):
-            raise Pause("Recover the active Jimeng operation before another submission")
+        if any(x.get("stage") in ("submitting", "unknown") for x in v["jobs"].values()):
+            raise Pause("Recover the ambiguous active Jimeng operation before another submission")
+        active = sum(x.get("stage") in ("submitted", "accepted", "pending", "running")
+                     for x in v["jobs"].values())
+        if active >= self.concurrency():
+            raise Pause("The active Jimeng operation capacity is full")
         if v["spent_hold"] + amount > v["reservation"] or self.spent() + amount > self.data["approval"]["jimeng"]:
             raise Pause("Jimeng reservation exhausted")
         if amount > j["quoted_credits"]:

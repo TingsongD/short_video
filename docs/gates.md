@@ -348,3 +348,17 @@ has verified remote filename, destination, byte count and MD5. Its cleanup
 receipt reports no surviving owned workers; ports 5184–5188 are free. Video 01
 is marked done. This is one completed batch item, not a pass for all fifteen
 videos or any social-publishing gate.
+
+
+## Five-job speed revision (2026-09-16)
+
+Offline concurrency/recovery/budget tests and native 24-fps frame-allocation test
+pass; full suite **341 passed**. Isolated haul-01 replay with the native renderer
+completed its 169.7-second, 5,091-frame export and full decode in **31.77 seconds**.
+Sampled brand/caption/product-label frames were visually inspected. No paid calls
+or new delivery were needed for that benchmark. Evidence:
+`data/production/next-15-video-plan-20260915/productions/haul-01/review/speed-benchmark-v3/`.
+
+Video 02 rollout is underway within existing approvals. Five outfit images were
+observed running concurrently. This does not yet certify five concurrent video
+executions, finished video-02 quality, or completion of the funded batch.

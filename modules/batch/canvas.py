@@ -250,14 +250,9 @@ class Canvas:
             raise Pause("Canvas prompt changed; an intentional revision is required")
         return node
 
-    def finish(self, key):
+    def submit(self, key):
+        """Submit only a saved job; return while the remote operation runs."""
         j = self.v["jobs"][key]
-        if j["stage"] == "downloaded":
-            path = self.folder / j["file"]
-            if path.exists() and digest(path) == j["sha256"]:
-                return path
-            j["stage"] = "succeeded"  # re-download an existing paid resource
-            self.save()
         if j["stage"] == "saved":
             self.check_draft(key)
             q = self.cli.quote(self.project(), [j["node_id"]])
@@ -277,52 +272,99 @@ class Canvas:
                 self.save()
                 raise
             self.save()
-        if j["stage"] in ("submitting", "submitted", "accepted", "pending", "running", "unknown"):
-            # ALL restarts use read-only status/wait on the SAME saved submission.
-            while True:
-                op = self.cli.call("operation", "wait", j["submit_id"], "--project-id", self.project(),
-                                   "--timeout", "45s", "--interval", "10s", timeout=55, incomplete=True)
-                if not op:
-                    op = self.cli.call("operation", "status", j["submit_id"], "--project-id", self.project(), incomplete=True)
-                if op.get("operationRef") != j["submit_id"]:
-                    j["stage"] = "unknown"
-                    self.save()
-                    raise Pause("Operation response identity uncertain; recover the saved submission")
-                j["observed_state"] = op.get("state")
+        return j["stage"]
+
+    def _read_retry(self, call, key, event):
+        # These retries are only for read-only observation and free downloads.
+        # Never apply this wrapper to quote/confirm/run or an ambiguous upload.
+        for attempt in range(3):
+            try:
+                return call()
+            except CanvasError as error:
+                code = error.code.lower()
+                transient = code in {"transport_timeout", "network_error", "network_failed", "timeout",
+                                     "download_failed", "cli.download_transport_failed", "service_unavailable", "http_429", "http_500",
+                                     "http_502", "http_503", "http_504"}
+                self.v["jobs"][key][event + "_error"] = {"code": error.code, "at": now(), "attempt": attempt + 1}
                 self.save()
-                if op.get("state") in ("failed", "cancelled", "rejected"):
-                    j["stage"] = op["state"]
-                    self.save()
-                    raise Pause(f"{key} failed; a correction requires a recorded defect and new quote")
-                if op.get("state") == "succeeded":
-                    resources = [r["resourceId"] for r in op.get("resources", []) if r.get("state") == "succeeded"]
-                    if len(resources) != 1:
-                        raise Pause("Generation returned an unexpected result count")
-                    node = self.cli.node(self.project(), j["node_id"])
-                    if not any(r.get("resourceId") == resources[0] and r.get("submitId") == j["submit_id"]
-                               and r.get("type") == j["kind"] for r in node.get("resources", [])):
-                        raise Pause("Downloaded output provenance does not match the saved node and submission")
-                    j.update(stage="succeeded", output_resource_id=resources[0])
-                    self.save()
-                    break
-                print(f"{key}: {op.get('state', 'unknown')}", flush=True)
-                time.sleep(2)
+                if not transient or attempt == 2:
+                    raise
+                time.sleep((2, 5)[attempt])
+
+    def poll(self, key, wait=False):
+        """Observe the original operation once; never replay a paid submission."""
+        j = self.v["jobs"][key]
+        if j["stage"] not in ("submitting", "submitted", "accepted", "pending", "running", "unknown"):
+            return j["stage"]
+        def observe():
+            args = ["operation", "wait" if wait else "status", j["submit_id"], "--project-id", self.project()]
+            if wait:
+                args += ["--timeout", "45s", "--interval", "10s"]
+            return self.cli.call(*args, timeout=55 if wait else 20, incomplete=True)
+        op = self._read_retry(observe, key, "poll")
+        if op.get("operationRef") != j["submit_id"]:
+            j["stage"] = "unknown"
+            self.save()
+            raise Pause("Operation response identity uncertain; recover the saved submission")
+        state = op.get("state")
+        j.update(observed_state=state, last_polled_at=now())
+        if state in ("failed", "cancelled", "rejected"):
+            j.update(stage=state, terminal_at=now())
+            self.save()
+            raise Pause(f"{key} failed; a correction requires a recorded defect and new quote")
+        if state == "succeeded":
+            resources = [r["resourceId"] for r in op.get("resources", []) if r.get("state") == "succeeded"]
+            if len(resources) != 1:
+                self.save()
+                raise Pause("Generation returned an unexpected result count")
+            node = self._read_retry(lambda: self.cli.node(self.project(), j["node_id"]), key, "provenance")
+            if not any(r.get("resourceId") == resources[0] and r.get("submitId") == j["submit_id"]
+                       and r.get("type") == j["kind"] for r in node.get("resources", [])):
+                raise Pause("Downloaded output provenance does not match the saved node and submission")
+            j.update(stage="succeeded", output_resource_id=resources[0], succeeded_at=now())
+        elif state in ("accepted", "pending", "running", "submitted"):
+            j["stage"] = state
+        else:
+            j["stage"] = "unknown"
+            self.save()
+            raise Pause(f"{key} has an unresolved operation; recover its saved submission")
+        self.save()
+        return j["stage"]
+
+    def download(self, key):
+        j = self.v["jobs"][key]
+        if j["stage"] == "downloaded":
+            path = self.folder / j["file"]
+            if path.exists() and digest(path) == j["sha256"]:
+                return path
+            j["stage"] = "succeeded"
+            self.save()
         if j["stage"] != "succeeded":
             raise Pause(f"{key} needs recovery: {j['stage']}")
         ext = ".jpg" if j["kind"] == "image" else ".mp4"
         path = self.folder / "assets" / (key + ".jimeng" + ext)
         path.parent.mkdir(exist_ok=True)
-        # A crashed/partial download is free to retry; never re-run generation.
         temp = path.with_name(path.stem + ".download" + ext)
-        if temp.exists():
-            temp.unlink()
-        self.cli.call("resource", "download", j["output_resource_id"], "--project-id", self.project(),
-                      "--output", temp, timeout=240)
+        def collect():
+            if temp.exists():
+                temp.unlink()
+            j["download_started_at"] = now()
+            self.save()
+            return self.cli.call("resource", "download", j["output_resource_id"], "--project-id", self.project(),
+                                 "--output", temp, timeout=90)
+        self._read_retry(collect, key, "download")
         verification = verify_media(self.local, temp, j["kind"], j.get("timeline_seconds", 0))
         temp.replace(path)
-        j.update(stage="downloaded", file=str(path.relative_to(self.folder)), **verification)
+        j.update(stage="downloaded", file=str(path.relative_to(self.folder)), downloaded_at=now(), **verification)
         self.save()
         return path
+
+    def finish(self, key):
+        """Compatibility path for a single job; the scheduler uses split operations."""
+        self.submit(key)
+        while self.v["jobs"][key]["stage"] in ("submitting", "submitted", "accepted", "pending", "running", "unknown"):
+            self.poll(key, wait=True)
+        return self.download(key)
 
 
 def image_prompt(avatar, product, description, styling):

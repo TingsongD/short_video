@@ -75,10 +75,10 @@ def author(folder, brief, v, selected=None):
             lines.append(f'<typo:Area id="brand-{index}" placement={{headline-frame}} style={{headline-style}} start="{a}f" end="{b}f">{text}</typo:Area>')
     lines.append('</typo:Track>')
     if selected is None:
-        for name in ("narration", "music-bed"):
-            lines += [f'<asset:Audio id="{name}-file" src="./audio/{name}.wav"/>',
-                f'<pipeline:Normalize id="{name}" source={{{name}-file}} clock={{clock}} video="none" audio="default" span-authority="audio"/>',
-                f'<audio:Track id="{name}-track" timeline={{program.timeline}}><audio:Item id="{name}-sound" source={{{name}.media}} start="0f" end="5091f" gain="{1.25 if name == "narration" else 1}"/></audio:Track>']
+        for audio_name in ("narration", "music-bed"):
+            lines += [f'<asset:Audio id="{audio_name}-file" src="./audio/{audio_name}.wav"/>',
+                f'<pipeline:Normalize id="{audio_name}" source={{{audio_name}-file}} clock={{clock}} video="none" audio="default" span-authority="audio"/>',
+                f'<audio:Track id="{audio_name}-track" timeline={{program.timeline}}><audio:Item id="{audio_name}-sound" source={{{audio_name}.media}} start="0f" end="5091f" gain="{1.25 if audio_name == "narration" else 1}"/></audio:Track>']
     lines += ['<film:Film id="main" canvas={canvas} timeline={program.timeline} appearance={look.film.main}>',
               '<film:Track source={footage.visual}/><film:Track source={titles.track}/>']
     if selected is None:
@@ -126,6 +126,10 @@ class Render:
         self.call("runtime", "up", "--runtime", "hypit.runtime.json", "--endpoint", "media.local", "--endpoint", "hyperframes.local")
 
     def finish(self, brief):
+        if (self.batch.data.get("execution", {}).get("render_backend") == "ffmpeg"
+                and not list((self.folder / "rendered-sections").glob("clip-*.json"))):
+            from .fast_render import FastRender
+            return FastRender(self.batch, self.number, self.local, self.previous).finish(brief)
         self.setup()
         sections = self.folder / "rendered-sections"
         sections.mkdir(exist_ok=True)
