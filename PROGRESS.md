@@ -367,3 +367,81 @@
 - Guide: `docs/hypit-reference-variation.md`. Evidence and editable production:
   `data/production/v-product-variation-Db9SrsBsIUg/hypit-variation-01/`.
   No production code changes; latest offline suite remains 300 passing.
+
+### Full-length MsDressly haul prepared (2026-09-15)
+
+- User replaced the 30-second single-product scope with the source's full
+  duration, a new voice with similar delivery, ElevenLabs v3 and several
+  MsDressly products including the tank. The earlier 350-credit proposal was
+  not accepted and is now marked superseded in the old production state.
+- Verified exact picture length: **169.700s / 5,091 frames at 30fps**; audio
+  container is 169.712993s. Local OCR of 339 sampled frames and scene-cut
+  candidates support a provisional thirteen-section visual map, not an audio
+  transcript or verified music analysis.
+- Selected eleven actual catalog products, saved their references and drafted
+  522 original words. Selected Jessica on `eleven_v3` from the live voice
+  catalog; read-only account/model checks succeeded. Audition remains pending.
+- Created `hypit-full-length-01/` with script, Brief, analysis, treatment,
+  timeline, voice settings, product evidence and an eighteen-clip / ten-outfit
+  plan. A full-duration product storyboard passes Hypit check and local
+  render-plan preflight (three local requests, zero paid-provider requests).
+  Opened http://localhost:5186/#comments in Chrome; opening and final frames
+  inspected, final caption readable and within the canvas.
+- Requested a new commission ceiling of **2,000 Jimeng credits + 4,000
+  ElevenLabs TTS credits + US$1 combined audio analysis/music spending** on
+  existing accounts. These are planning limits, not a resolved full-film
+  quote. Dependent live quotes require actual generated references; each must
+  fit the remaining accepted cap before submission. No new paid calls made.
+- Full narration, new outfit images/footage, lip-sync validation, soundtrack
+  matching and final export remain pending. Guide updated in
+  `docs/hypit-reference-variation.md`. No production code changes; latest full
+  offline suite remains the prior 300 passing run, not rerun for artifacts.
+
+### Approved full-length narration and first speaking test (2026-09-15)
+
+- User explicitly approved 2,000 Jimeng credits, 4,000 ElevenLabs TTS credits
+  and US$1 combined reference-analysis/music spending on existing accounts.
+  Approval is persisted in `hypit-full-length-01/budget-approval.json`.
+- Source Scribe transcription returned 699 words. Thirteen Jessica / ElevenLabs
+  v3 takes generated successfully (3,823 submitted characters). Removed v3's
+  unsupported context fields after one validation rejection. Edited optional
+  sentences and pauses locally, preserving all raw takes; final copy is 566
+  words over exact 169.700s. Final automated audio review reports natural,
+  intelligible delivery. Most tempo adjustments are 1.00–1.16, intro 1.28.
+- Rendered the full narrated product storyboard in Hypit: build
+  `bld_20260916T025522799Z_0692BF6AA1`, 1080 × 1920 / 30fps target. Export:
+  `MsDressly_Full_Haul_Narrated_Storyboard_2m49s.mp4`. It remains visibly labeled
+  as a voice preview with try-on footage pending, not the final commissioned film.
+- Official Canvas generated one consistent presenter/tank/jeans image (eight
+  credit quote) and one ten-second speaking clip (114-credit quote). The clip
+  failed visual QC: original performer retained in its opening, misspelled
+  title/garbled captions, unrelated source brand text. Remaining jobs paused.
+- Prepared a clean replacement using the new presenter, product and ElevenLabs
+  audio without source-video conditioning. Live quote **60 credits**, within
+  the existing cap. Requested replacement approval under the accepted rule
+  against automatic regeneration; no replacement submitted yet.
+- Nine remaining outfit images are prepared and quote at eight credits each,
+  72 total, not submitted. Current Jimeng reservation is 122 credits; TTS
+  conservative reservation is 3,979 including the rejected request; audio API
+  reservations are US$0.53. Settled billing has not been independently verified.
+- Lyria 3 Pro music request returned `content_blocked` with an unspecified
+  policy reason; no music output and no automatic retry. Narration/visual
+  preparation continued independently. No publishing or production-code changes.
+
+### Automated continuation approved — 2026-09-15
+
+The user approved the 60-credit corrected opening and then automated video generation within the existing commission ceilings. The replacement completed under the same saved submission ID and passed sampled visual inspection plus automated audiovisual review; no copied presenter or text was seen. Its review remains automated rather than a human listening signoff. Nine remaining outfit images are generating sequentially at their recorded eight-credit quotes. A fresh concise instrumental brief on Lyria 3 Clip returned 27.742 seconds of original stereo music; the earlier Pro rejection remains recorded. Final music fitting, remaining footage and the completed film are still in progress.
+
+All ten outfit references have now passed visual inspection; the red-pullover reference required one eight-credit correction from an incorrect open cardigan. Native quotes for the remaining 17 speaking clips total 1,008 credits; with 262 already reserved, the planned total is 1,270 of the approved 2,000. Sequential generation has started. Opening review v2 is locally rendered and inspected, with larger typography; build `bld_20260916T032440396Z_8D72922EED`, 275 frames at 30fps. Original music is fitted beneath the preserved ElevenLabs narration. Full film is still in progress.
+
+### Full-length MsDressly haul completed for review (2026-09-15)
+
+- Delivered `data/production/v-product-variation-Db9SrsBsIUg/hypit-full-length-01/MsDressly_Full_Haul_2m49s.mp4`: **169.700 seconds, 5,091 frames at 30fps, 1080 × 1920**, H.264 / stereo AAC, 47,466,376 bytes.
+- Eighteen edited clips cover eleven real catalog products. Official Canvas used Seedance 2.0 Fast VIP at 720p and Seedream 5.0 Pro for outfit references. Rejected opening, red cardigan image and duplicated/wrong-sleeve denim take remain excluded and preserved.
+- Final soundtrack is the original 566-word Jessica / ElevenLabs v3 recording plus newly generated Lyria instrumental, fitted to the full duration. Raw generated-video audio is excluded.
+- Separate word-time analysis found drift missed by broad model checks. Fitted sixteen picture clips locally; used product close-ups for missing native words and wardrobe drift. Full voice track and duration are unchanged.
+- Hypit renders exact frame intervals with only relevant media/typography layers. A 115-frame comparison against the unpruned composition yielded SSIM 1.0. FFmpeg joins the verified picture sections without another picture encode and adds continuous audio.
+- Full-file checks pass: exact frame count, runtime, dimensions, complete decode, no black intervals, peak −1.6 dBFS. Sampled final frames and captions inspected. A first whole-film model response was truncated; a separate concise review completed and reported no significant issues. Human review remains pending.
+- Final reservations: **1,348 / 2,000 Jimeng credits**, **3,979 / 4,000 TTS credits** (3,823 successfully submitted characters), **US$1.00 / US$1.00** other audio/review APIs. These are conservative reservations, not verified settled billing; no further dollar-spend calls remain covered.
+- Finished film opened in the user's Chrome profile at http://localhost:5188/#comments; editable full timeline remains at port 5187. `DELIVERY.md`, `production-report.json`, `final-qc/`, source selections, section build receipts and native job IDs preserve handoff and recovery evidence.
+- No publishing or core production-module changes. Latest offline suite remains the prior 300 passing run; not rerun for media and documentation. This verifies the local Hypit commission, not MoneyPrinterTurbo or the entire G6/G8/G12 publication loop.

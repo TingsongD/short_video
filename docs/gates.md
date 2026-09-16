@@ -205,3 +205,51 @@ preview is silent. This verifies local composition and export, not the planned
 speaking performance or outfit changes. Full-production validation stops at
 missing future footage. G6/G8/G12 remain pending; no production code changed.
 Guide: `docs/hypit-reference-variation.md`.
+
+### Full-length multi-product preparation — 2026-09-15
+
+The user superseded the 30-second adaptation with an exact 169.700-second /
+5,091-frame multi-product haul, original copy and ElevenLabs v3. Eleven actual
+MsDressly product references and a full-duration storyboard are prepared.
+Hypit check and render-plan preflight pass with no paid-provider requests;
+Studio opening/final frames were inspected. Selected Jessica from the live
+catalog, without generation. A new commission ceiling is pending approval;
+no dependent full-film quote, new narration, footage or music is complete.
+This is preparation evidence, not G6/G7/G8/G12 sign-off. Frozen contracts and
+production code are unchanged. See `docs/hypit-reference-variation.md`.
+
+### Approved narration and failed first speaking clip — 2026-09-15
+
+ElevenLabs v3 / Jessica generated thirteen original speech sections, edited to
+169.700s. Scribe supplied actual final word times; automated audio review
+reports natural delivery. Hypit rendered the complete narrated catalog-still
+storyboard, build `bld_20260916T025522799Z_0692BF6AA1`. This provides M7/M8
+production evidence but does not complete the requested try-on film.
+
+A new Canvas presenter still was inspected. The first ten-second speaking clip
+failed visual QC because source identity and text leaked into the output.
+Remaining paid jobs are paused; a corrected 60-credit replacement is prepared
+for approval within the already accepted 2,000-credit cap. Vertex music was
+rejected without an output. G6/G8/G12 remain unsigned for this production.
+
+### Automated continuation approved — 2026-09-15
+
+The user approved the 60-credit corrected opening and then automated video generation within the existing commission ceilings. The replacement completed under the same saved submission ID and passed sampled visual inspection plus automated audiovisual review; no copied presenter or text was seen. Its review remains automated rather than a human listening signoff. Nine remaining outfit images are generating sequentially at their recorded eight-credit quotes. A fresh concise instrumental brief on Lyria 3 Clip returned 27.742 seconds of original stereo music; the earlier Pro rejection remains recorded. Final music fitting, remaining footage and the completed film are still in progress.
+
+All ten outfit references have now passed visual inspection; the red-pullover reference required one eight-credit correction from an incorrect open cardigan. Native quotes for the remaining 17 speaking clips total 1,008 credits; with 262 already reserved, the planned total is 1,270 of the approved 2,000. Sequential generation has started. Opening review v2 is locally rendered and inspected, with larger typography; build `bld_20260916T032440396Z_8D72922EED`, 275 frames at 30fps. Original music is fitted beneath the preserved ElevenLabs narration. Full film is still in progress.
+
+### Scoped evidence: approved full-length Hypit commission (2026-09-15)
+
+The user approved the full commission, corrected opening and automated generation.
+The local film is complete for owner review; this addendum does not sign the
+MoneyPrinterTurbo, human-approval or publishing requirements of G6/G8/G12.
+
+- **Artifact:** `data/production/v-product-variation-Db9SrsBsIUg/hypit-full-length-01/MsDressly_Full_Haul_2m49s.mp4`.
+- **Technical pass:** 169.700s picture/audio target, 5,091 frames at 30fps, 1080 × 1920, full decode, no black intervals, audio peak −1.6 dBFS. SHA-256 `c43c105ebb1a8039a213b54626f151726ee0121d8e1cee29a8d94420c0ac6e65`.
+- **Asset evidence:** eighteen selected edited clips, ten selected outfit references, eleven catalog products. Generated picture is 720p before upscale; tight local crops reduce effective detail further. Rejected attempts are retained and explicitly excluded.
+- **Timing:** exact source picture duration preserved. Independent ASR found drift missed by earlier broad model checks; sixteen clips were fitted to actual word times, with product close-ups where native generated speech omitted or repeated words. ASR alignment is approximate, not proof of perfect mouth timing.
+- **Assembly evidence:** eighteen completed local Hypit section builds; out-of-range pruning matched a full-source 115-frame comparison exactly (SSIM 1.0). Full soundtrack is mixed continuously during the final stream-copy picture join. `rendered-sections/`, `render-equivalence.json` and `delivery-manifest.json` record provenance.
+- **Review evidence:** final sampled opening/outfit/transition/CTA frames inspected; completed concise automated whole-film review reports no significant issues. The earlier truncated whole-film response is preserved as incomplete. Human viewing/listening signoff remains pending.
+- **Spending:** 1,348 Jimeng credits; 3,979 conservative TTS credits including one validation rejection; US$1.00 conservative other-API reservations. All remain within the accepted ceilings; settled billing unverified. The dollar allocation is exhausted.
+- **Handoff:** actual delivered film visible in Chrome's Hypit review at http://localhost:5188/#comments; full editable timeline at port 5187. Frozen contracts untouched; no core module changes; latest prior offline suite 300 passing.
+- **Still outside this evidence:** publishing, performance/virality outcomes, human acceptance and MoneyPrinterTurbo execution. No posting occurred.
