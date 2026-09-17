@@ -637,3 +637,77 @@ class FakeAnalyzer(FakeProvider):
                  "confidence": "uncertain"}],
             "transcript": [], "music": {"role": "unknown"},
             "uncertainty": ["default_script"]}
+
+
+class FakeGenerationAdapter:
+    """Scriptable generation adapter (F15): capability catalog +
+    price table in front of a persistent FakeProvider."""
+
+    def __init__(self, name, provider, models, unit, pricing_kind,
+                 price_table=None):
+        self.name = name
+        self.provider = provider
+        self.models = models           # {model: capabilities dict}
+        self.unit = unit
+        self.pricing_kind = pricing_kind
+        # {model: {duration_s: amount}} — default flat 1 per request
+        self.price_table = price_table or {}
+
+    def readiness(self):
+        ok = self.provider.state.doc.get("authenticated", True)
+        return {"ready": bool(ok),
+                "reason": "ok" if ok else "auth_expired"}
+
+    def capabilities(self, model):
+        if model not in self.models:
+            raise ProviderError("unknown_model")
+        return self.models[model]
+
+    def validate(self, request, capabilities):
+        from ..providers.base import GenerationAdapter
+        return GenerationAdapter.validate(self, request, capabilities)
+
+    def price(self, request, duration_s, model=None):
+        from ..domain.money import Money
+        m = model or getattr(request, "model", "") or \
+            (request.get("model") if isinstance(request, dict) else "")
+        table = self.price_table.get(m, {})
+        amount = table.get(duration_s, table.get("*", 1))
+        return Money(self.unit, amount)
+
+    def prepare(self, request):
+        return {"prepared": True, "node": f"node-{self.name}"}
+
+    def submit(self, request, price=None):
+        wire = {"prompt": request.get("prompt")
+                if isinstance(request, dict) else request.prompt,
+                "duration_s": (request.get("duration_s") if isinstance(
+                    request, dict) else request.requested_duration_s)}
+        return self.provider.submit(
+            wire, price=({"unit": price.unit, "amount": price.amount}
+                         if price else None))
+
+    def observe(self, operation_id):
+        return self.provider.poll(operation_id)
+
+    def download(self, operation_id, destination=None):
+        return self.provider.download(operation_id, destination)
+
+    def reconcile(self, operation_id=None, request_hash=None):
+        return self.provider.reconcile(operation_id=operation_id,
+                                       request_hash=request_hash)
+
+    def cancel(self, operation_id):
+        return self.provider.cancel(operation_id)
+
+
+JIMENG_MODELS = {
+    "seedance_2.0_fast_vip": {
+        "durations_s": [4, 8], "aspects": ["9:16"],
+        "resolutions": ["720x1280", "1080x1920"],
+        "references": {"image": 3, "video": 0}, "audio": False}}
+VERTEX_MODELS = {
+    "omni-1": {
+        "durations_s": [4, 6, 8], "aspects": ["9:16"],
+        "resolutions": ["720x1280", "1080x1920"],
+        "references": {"image": 2, "video": 1}, "audio": True}}
