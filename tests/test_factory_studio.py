@@ -78,3 +78,21 @@ def test_proposed_changes_scoped_to_variant(env):
     svc.import_comment("c6", "expA-B", 2.0, "y", 0)
     got = svc.proposed_changes("expA-C")
     assert len(got) == 1 and got[0]["id"] == "c5"
+
+
+def test_missing_studio_launcher_blocks(env):
+    db,reg,_=env
+    with pytest.raises(ContractError,match='studio_unavailable'):
+        StudioService(db,registry=reg).open_session('absent','/tmp/comp','video')
+
+
+def test_closed_session_can_open_a_new_revision(tmp_path):
+    from modules.factory.store import Database
+    from modules.factory.studio.service import StudioService
+    db=Database(tmp_path/'studio.db')
+    s=StudioService(db,launcher=lambda ws:{'pid':0,'birth':'fixture','command':'fixture','port':None})
+    s.open_session('reopen','/fixture','variant-a')
+    s._set('studio_session:reopen',state='closed')
+    s.open_session('reopen','/fixture','variant-a')
+    assert len(db.uow().records.revisions('studio_session','reopen'))==2
+    assert s._get('studio_session:reopen')['state']=='open'

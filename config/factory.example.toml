@@ -2,8 +2,8 @@
 # Secrets stay in config/secrets.toml (gitignored) or the environment;
 # they are never read from this file and never reach frontend builds.
 
-api_port = 8100
-worker_port = 8101
+api_port = 5184
+factory_execution_mode = "offline"
 data_root = "data/factory"
 drive_folder_id = "1XQU20m_xk5030kAxbbIumeHYkrRPkPbs"
 log_level = "info"

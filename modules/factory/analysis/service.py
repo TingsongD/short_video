@@ -60,6 +60,28 @@ class AnalysisService:
 
     # --------------------------------------------------------- run
 
+    def import_observations(self, seed_id, observations, reviewer, target_rate=FPS_30):
+        """Operator observations use the same parser and real media evidence."""
+        if not reviewer.strip():
+            raise ContractError("reviewer_required", "reviewer")
+        seed = self.registry.get(seed_id)
+        if seed.evidence_status != "media_ready":
+            raise ContractError("source_not_ready", "seed_id")
+        src = self.artifacts.verified_path(seed.source_asset_id)
+        info = probe(src)
+        analysis = parse_analysis(observations)
+        if any(b["end_s"] > info.duration_s + .05 for b in analysis["beats"]):
+            raise ContractError("beat_outside_source", "beats")
+        sha = self.db.uow().artifacts.get(seed.source_asset_id)["sha256"]
+        bp = self._build(seed, seed.source_asset_id, sha, info,
+                         audio_characteristics(src), detect_scenes(src), analysis,
+                         target_rate, utcnow(), src)
+        bp.provenance.update(analyzer="manual_observations", model="", reviewer=reviewer)
+        bp.content_hash = self._hash(bp)
+        bp.validate_or_raise()
+        self._persist(bp, "manual_observations")
+        return bp
+
     def analyze(self, seed_id, target_rate=FPS_30, job_id=None,
                 observed_at=None):
         """→ draft ReferenceBlueprint. Source must be verified video."""

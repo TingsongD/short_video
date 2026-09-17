@@ -92,3 +92,27 @@ describe("api client contract", () => {
     expect((err as ApiError).code).toBe("stale_revision");
   });
 });
+
+it("reuses one durable logical action across module reload and keeps revisions separate", async()=>{
+  const first=await import('../api/client');
+  const a=await first.actionKey('POST','/run',{x:1,y:2},1);
+  vi.resetModules();
+  const second=await import('../api/client');
+  expect(await second.actionKey('POST','/run',{y:2,x:1},1)).toBe(a);
+  expect(await second.actionKey('POST','/run',{x:1,y:2},2)).not.toBe(a);
+});
+
+
+it("retains uncertain retries but advances an acknowledged action",async()=>{
+  const client=await import('../api/client');let count=0;const keys:string[]=[];
+  globalThis.fetch=vi.fn(async(url:any,init:any)=>{
+    if(url==='/api/session')return new Response(JSON.stringify({session_token:'fixture'}));
+    keys.push(init.headers['idempotency-key']);count++;
+    if(count===1)throw new Error('lost response');
+    return new Response('{}');
+  }) as any;
+  await client.call('POST','/pause-recovery',{body:{}}).catch(()=>{});
+  await client.call('POST','/pause-recovery',{body:{}});
+  await client.call('POST','/pause-recovery',{body:{}});
+  expect(keys[0]).toBe(keys[1]);expect(keys[2]).not.toBe(keys[1]);
+});

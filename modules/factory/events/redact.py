@@ -6,7 +6,7 @@ import re
 SECRET_PATTERNS = [
     re.compile(r"AIza[0-9A-Za-z_-]{20,}"),                    # Google API key
     re.compile(r"sk[-_][0-9A-Za-z_-]{20,}"),                 # API keys
-    re.compile(r"4/[0-9A-Za-z_-]{20,}"),                    # OAuth code
+    re.compile(r"(?<![A-Za-z0-9_/])4/[0-9A-Za-z_-]{20,}"),                    # OAuth code
     re.compile(r"ya29\.[0-9A-Za-z_-]{10,}"),                  # Google OAuth token
     re.compile(r"Bearer\s+[A-Za-z0-9._~+/-]{10,}", re.I),
     re.compile(r"access_token[\"']?\s*[:=]\s*[\"'][^\"'\s]+", re.I),

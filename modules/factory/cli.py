@@ -26,10 +26,12 @@ def main(argv=None):
     p = argparse.ArgumentParser(prog="factory")
     p.add_argument("--root", default=".")
     sub = p.add_subparsers(dest="cmd", required=True)
+    serve=sub.add_parser("serve"); serve.add_argument("--port",type=int,default=5184)
+    worker=sub.add_parser("worker"); worker.add_argument("--once",action="store_true")
     sub.add_parser("doctor")
     sub.add_parser("config")
     st = sub.add_parser("start"); st.add_argument("service")
-    st.add_argument("--port", type=int, required=True)
+    st.add_argument("--port", type=int)
     st.add_argument("--alt", type=int, action="append", default=[])
     st.add_argument("argv", nargs=argparse.REMAINDER)
     sub.add_parser("status")
@@ -43,6 +45,17 @@ def main(argv=None):
     args = p.parse_args(argv)
     root = Path(args.root)
 
+    if args.cmd in ("serve","worker"):
+        from .bootstrap import bootstrap
+        services=bootstrap(root)
+        if args.cmd=="serve":
+            from .api import create_app
+            import uvicorn
+            uvicorn.run(create_app(services),host="127.0.0.1",port=args.port,timeout_graceful_shutdown=5)
+        else:
+            from .services.worker import ApplicationWorker
+            ApplicationWorker(services).run(once=args.once)
+        return 0
     if args.cmd == "doctor":
         out = doctor(root)
         print(json.dumps(out, indent=1))
@@ -61,7 +74,8 @@ def main(argv=None):
         if not args.argv:
             print("error: start requires an argv", file=sys.stderr)
             return 2
-        out = mgr.start(args.service, args.argv, str(root),
+        argv=args.argv[1:] if args.argv[0]=='--' else args.argv
+        out = mgr.start(args.service, argv, str(root),
                         args.port, args.alt)
         print(json.dumps(out, indent=1))
         return 0

@@ -182,3 +182,32 @@ def test_inspect_reports_live_vs_stale(env):
     assert v["live"] == ["r-live"]
     assert "r-dead" in v["stale"]
     assert v["ports_listening"] == [8000]
+
+
+def test_cleanup_owns_descendants_before_parent_exits(env):
+    _,reg,os_,svc=env
+    _own(reg,'parent',100,os_,'video',ports=(8123,))
+    os_.spawn(101,'render child',ppid=100); os_.listeners[8123]=101
+    out=svc.cleanup('video')
+    assert out['state']=='verified'
+    assert 100 not in os_.table and 101 not in os_.table
+    assert any(x['pid']==101 for x in out['stopped'])
+
+
+def test_failed_cleanup_preserves_child_identity_for_retry(env):
+    _,reg,os_,svc=env
+    _own(reg,'parent',100,os_,'video')
+    os_.spawn(101,'stubborn child',ppid=100);os_.stubborn.add(101)
+    out=svc.cleanup('video')
+    assert out['state']=='blocked' and 101 in out['survivors']
+    os_.table[101]['ppid']=1;os_.stubborn.clear()
+    assert svc.cleanup('video')['state']=='verified'
+    assert 101 not in os_.table
+
+
+def test_last_holder_cleanup_does_not_lose_resource(env):
+    _,reg,os_,svc=env
+    _own(reg,'shared',100,os_,'video-a',cls='shared',holders=('video-b',))
+    reg.release_holder('shared','video-b')
+    assert svc.cleanup('video-b')['state']=='verified'
+    assert 100 not in os_.table

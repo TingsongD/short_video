@@ -158,7 +158,9 @@ class CanvasAdapter(GenerationAdapter):
         video_id = request.get("video_id") or request.get("experiment_id")
         if self.live:
             cap = self.capabilities(request["model"])
-            if not cap.get("live_qualified"):
+            roles=set((request.get('reference_roles') or {}).values())
+            mode='video_ref' if 'video' in roles else 'image_ref' if request.get('reference_artifact_ids') else 'text'
+            if not cap.get("live_qualified") or ('qualified_modes' in cap and mode not in cap['qualified_modes']):
                 raise ProviderError("input_mode_not_qualified")
             if (request.get("duration_s") or request.get("requested_duration_s")) not in cap.get("durations_s", []):
                 raise ProviderError("unsupported_duration")

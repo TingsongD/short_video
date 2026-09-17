@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React from "react";
 import type { ProviderReadiness } from "../../api/client";
 import { Blocked, Empty, Loading } from "../../components/States";
 
@@ -7,7 +7,6 @@ import { Blocked, Empty, Loading } from "../../components/States";
 export function ProvidersScreen(
   { providers }: { providers: Record<string, ProviderReadiness> | undefined },
 ) {
-  const [fallback, setFallback] = useState<Record<string, string>>({});
   if (providers === undefined) return <Loading what="providers" />;
   const names = Object.keys(providers);
   if (names.length === 0)
@@ -41,17 +40,8 @@ export function ProvidersScreen(
                            action={name === "vertex"
                              ? "Set Google budget to enable Vertex."
                              : "Re-run connection check."} />
-                : <span>Ready{fallback[name]
-                    ? ` — fallback: ${fallback[name]}` : ""}</span>}
-              <label htmlFor={`${name}-fallback`}>fallback</label>
-              <select id={`${name}-fallback`} value={fallback[name] ?? ""}
-                      onChange={(e) =>
-                        setFallback((f) => ({ ...f,
-                          [name]: e.target.value }))}>
-                <option value="">none</option>
-                {names.filter((n) => n !== name)
-                  .map((n) => <option key={n} value={n}>{n}</option>)}
-              </select>
+                : <span>Ready</span>}
+              <p>Provider changes require a revised plan and a new quote.</p>
             </li>
           );
         })}

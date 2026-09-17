@@ -135,6 +135,8 @@ class VertexAdapter(GenerationAdapter):
             raise ProviderError("input_mode_not_qualified")
         duration = request.get("requested_duration_s") or request.get("duration_s")
         cap = self.capabilities(model)
+        if isinstance(self.transport,LiveVertexTransport) and 'qualified_modes' in cap and mode not in cap['qualified_modes']:
+            raise ProviderError('input_mode_not_qualified')
         if duration not in cap.get("durations_s", []):
             raise ProviderError("unsupported_duration")
         aspect, resolution = request.get("aspect") or "9:16", request.get("resolution") or "720p"

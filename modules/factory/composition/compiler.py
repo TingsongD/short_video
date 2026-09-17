@@ -211,7 +211,9 @@ class CompositionService:
     # --------------------------------------------------------- emit --
 
     def _emit_svml(self, segments, captions, clock, total_frames):
+        from fractions import Fraction
         fps, w, h = clock["fps"], clock["width"], clock["height"]
+        native_rate=str(Fraction(fps).limit_denominator(100000))
         end_s = _sec(total_frames, fps)
         pics = sorted((s for s in segments if s["kind"] == "picture"),
                       key=lambda s: s["in_frame"])
@@ -231,7 +233,7 @@ class CompositionService:
                  '  <import as="render" '
                  'from="@hypit/render-hyperframes@1"/>',
                  '  <import as="look" source="./style.svs"/>', '',
-                 f'  <time:Clock id="clock" frame-rate="{fps}"/>',
+                 f'  <time:Clock id="clock" frame-rate="{native_rate}"/>',
                  f'  <time:Timeline id="program" clock={{clock}} '
                  f'end="{end_s}"/>',
                  f'  <space:Canvas id="canvas" width="{w}" '

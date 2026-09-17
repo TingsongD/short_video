@@ -50,6 +50,15 @@ class ProductionService:
         for n in g["nodes"].values():
             if n["kind"] != "picture" or n["status"] == "needs_manual":
                 continue
+            imported = n["request"].get("artifact_id")
+            if imported:
+                self.artifacts.verified_path(imported)
+                artifact = self.db.uow().artifacts.get(imported)
+                needed = max(t["duration_s"]+t.get("handle_s",0) for t in n["takes"])+n["request"].get("source_in_s",0)
+                if artifact["kind"] not in ("video","image") or artifact["kind"]=="video" and json.loads(artifact["probe"])["duration_s"]+.0001 < needed:
+                    raise ContractError("insufficient_coverage","artifact_id",imported)
+                n.update(status="manual",artifact_ids=[imported],price={})
+                continue
             amount = 0
             unit = ""
             if self.adapter is not None:
@@ -99,6 +108,7 @@ class ProductionService:
                         request=n.get("request", {}),
                         price=n.get("price", {}),
                         status=n.get("status", "planned"),
+                        artifact_ids=n.get("artifact_ids", []),
                         depends=n.get("depends", []),
                         problem=n.get("problem", ""))
 
@@ -109,7 +119,7 @@ class ProductionService:
         from ..store.uow import utcnow
         ops = []
         for key, node in self._nodes(plan_id).items():
-            if node["kind"] != "picture" or node["status"] == "needs_manual":
+            if node["kind"] != "picture" or node["status"] in ("needs_manual", "manual"):
                 continue
             for i, allocation in enumerate(node["allocations"]):
                 req = dict(node["request"], duration_s=allocation["duration_s"], model=node["model"])
@@ -158,7 +168,14 @@ class ProductionService:
                 status="waiting_dependencies",
                 retry_class="bounded_paid" if n["kind"] == "picture"
                 else "transfer" if n["kind"] == "download" else "none"))
-        return self.scheduler.submit_plan(jobs)
+        # A is the comparison reference; branch QC depends on its final.
+        ids = {j.id for j in jobs}
+        for job in jobs:
+            if ':cmp:' in job.id and not job.id.endswith(':cmp:A') and f'{plan_id}:cmp:A' in ids:
+                job.depends_on.append(f'{plan_id}:cmp:A')
+            job.revision = self._plan(plan_id)["experiment_revision"]
+        new = [j for j in jobs if self.db.uow().jobs.get(j.id) is None]
+        return self.scheduler.submit_plan(new) if new else [j.id for j in jobs]
 
     # -------------------------------------------------------- execute
 
@@ -220,7 +237,8 @@ class ProductionService:
         if kind == "download":
             pic_key = node["depends"][0]
             pic = self._node(plan_id, pic_key)
-            if pic["status"] == "manual":
+            if pic.get("artifact_ids") and pic["status"] in ("manual","accepted","downloaded","uncertain"):
+                for aid in pic["artifact_ids"]: self.artifacts.verified_path(aid)
                 self._set(plan_id, node["node_key"],
                           status="downloaded",
                           artifact_ids=pic["artifact_ids"])

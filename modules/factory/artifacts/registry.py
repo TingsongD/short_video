@@ -180,6 +180,17 @@ class ArtifactStore:
             raise ContractError("referenced_missing", "local_path", rel)
         return real
 
+    def verified_path(self, artifact_id):
+        path = self.path_for(artifact_id)
+        row = self.db.uow().artifacts.get(artifact_id)
+        digest = hashlib.sha256()
+        with path.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(CHUNK), b""):
+                digest.update(chunk)
+        if path.stat().st_size != row["byte_count"] or digest.hexdigest() != row["sha256"]:
+            raise ContractError("artifact_changed", "artifact_id", artifact_id)
+        return path
+
     # -------------------------------------------------------- recovery
 
     def recover_staging(self):

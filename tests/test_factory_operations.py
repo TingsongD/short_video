@@ -69,7 +69,8 @@ def _mgr(db, listeners, spawn=None):
     reg = ResourceRegistry(db)
     spawn = spawn or FakeSpawn()
     return reg, ServiceManager(reg, spawn_fn=spawn,
-                               port_fn=lambda: listeners), spawn
+                               port_fn=lambda: listeners,health_fn=lambda *a:True,
+                               table_fn=lambda:{spawn.pid:{'pid':spawn.pid,'ppid':1,'birth':'fixture','command':'fixture service'}}), spawn
 
 
 def test_port_conflict_fails_clearly(db):

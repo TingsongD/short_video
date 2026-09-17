@@ -107,6 +107,7 @@ class Scheduler:
             self._verify_lease(u, job_id, fencing)
             expires = (self.clock() + timedelta(seconds=self.lease_s)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
             u.conn.execute("UPDATE jobs SET lease_expires=? WHERE id=?", (expires, job_id))
+            u.conn.execute("INSERT OR REPLACE INTO meta(key,value) VALUES('worker_heartbeat',?)",(json.dumps({'at':self.now(),'worker':self.worker_id}),))
             u.conn.execute("UPDATE capacity_holds SET expires_at=? WHERE job_id=?", (expires, job_id))
             return expires
 
@@ -228,7 +229,7 @@ class Scheduler:
     def _capacity_used(self, conn, capacity):
         remote = conn.execute("SELECT count(*) FROM remote_holds WHERE capacity=?", (capacity,)).fetchone()[0]
         local = conn.execute("""SELECT count(*) FROM capacity_holds h WHERE capacity=?
-            AND (expires_at>? OR retained_reason='unfinished_remote_op')
+            AND (expires_at>? OR retained_reason IN ('unfinished_remote_op','unfinished_local_work'))
             AND NOT EXISTS (SELECT 1 FROM remote_holds r WHERE r.job_id=h.job_id AND r.capacity=h.capacity)""", (capacity, self.now())).fetchone()[0]
         return remote + local
 
@@ -241,6 +242,10 @@ class Scheduler:
 
     def _release_holds(self, u, job_id, keep_unfinished=True):
         if keep_unfinished:
+            local = u.conn.execute("SELECT 1 FROM meta WHERE key=?", ('local_work:'+job_id,)).fetchone()
+            if local:
+                u.conn.execute("UPDATE capacity_holds SET retained_reason='unfinished_local_work' WHERE job_id=? AND capacity='local_render'", (job_id,))
+                return
             has_unfinished = u.conn.execute(
                 "SELECT COUNT(*) FROM attempts WHERE job_id=? AND status "
                 "IN ('dispatching','accepted','running','unknown','cancel_requested')",
@@ -406,10 +411,10 @@ class Scheduler:
 
     def status_snapshot(self):
         jobs = [dict(r) for r in self.db.conn.execute(
-            "SELECT id,phase,status,lease_owner,fencing_token,"
+            "SELECT id,experiment_id,revision,phase,status,lease_owner,fencing_token,"
             "blocked_reason FROM jobs ORDER BY created_at").fetchall()]
         holds = [dict(r) for r in self.db.conn.execute(
-            "SELECT * FROM capacity_holds WHERE expires_at>? OR retained_reason='unfinished_remote_op'",
+            "SELECT * FROM capacity_holds WHERE expires_at>? OR retained_reason IN ('unfinished_remote_op','unfinished_local_work')",
             (self.now(),)).fetchall()]
         caps = {r["name"]: r["limit_n"] for r in self.db.conn.execute(
             "SELECT * FROM capacities").fetchall()}

@@ -1,0 +1,381 @@
+{
+  "experiment_id": "fixture-f52aa2314b",
+  "frames": 900,
+  "stages": [
+    {
+      "stage": "analyzed",
+      "at": "2026-09-17T17:43:10.604572+00:00"
+    },
+    {
+      "stage": "quoted",
+      "at": "2026-09-17T17:43:11.095616+00:00",
+      "plan_hash": "fc9c26ff65f12e5f42893e05a1f54a89088f87d9f2b2f46b240aa53b30958815"
+    },
+    {
+      "stage": "queued",
+      "at": "2026-09-17T17:43:11.307261+00:00"
+    },
+    {
+      "stage": "four_exports",
+      "at": "2026-09-17T17:43:29.600267+00:00",
+      "finals": [
+        {
+          "variant": "A",
+          "artifact_id": "art:20d796a1340c5b15",
+          "sha256": "20d796a1340c5b15bb595bb07ba75600afd858ec1ce52f8f9a6c6c5b2017d359",
+          "composition_id": "comp-5fec4abc9769a010b2c2b60a",
+          "build_id": "build-06b42b908d8082d728ba4e3a",
+          "check_ids": [
+            "technical-build-06b42b908d8082d728ba4e3a"
+          ],
+          "binding": {
+            "composition_id": "comp-5fec4abc9769a010b2c2b60a",
+            "composition_revision": 1,
+            "composition_hash": "a487bcf0bb0397a1f6bbc1742a2f9f78a1dee48c5b1c3b3cbf73253c0d50aa6f",
+            "plan_hash": "fc9c26ff65f12e5f42893e05a1f54a89088f87d9f2b2f46b240aa53b30958815",
+            "artifact_id": "art:20d796a1340c5b15",
+            "artifact_sha256": "20d796a1340c5b15bb595bb07ba75600afd858ec1ce52f8f9a6c6c5b2017d359",
+            "variant_key": "A"
+          }
+        },
+        {
+          "variant": "B",
+          "artifact_id": "art:05dd77fde932bdc8",
+          "sha256": "05dd77fde932bdc82522748707d72c7dfa9be57d604914b2771b61bab932bf0f",
+          "composition_id": "comp-5c46ff4e447034b9d31bd7f4",
+          "build_id": "build-d0eaa13f3bb692687d26b5ad",
+          "check_ids": [
+            "technical-build-d0eaa13f3bb692687d26b5ad",
+            "regions-build-d0eaa13f3bb692687d26b5ad"
+          ],
+          "binding": {
+            "composition_id": "comp-5c46ff4e447034b9d31bd7f4",
+            "composition_revision": 1,
+            "composition_hash": "fbba7d0b197f7596acc31e96e0e5fd4ec55bfc013af0455672e05e17d9a2a99b",
+            "plan_hash": "fc9c26ff65f12e5f42893e05a1f54a89088f87d9f2b2f46b240aa53b30958815",
+            "artifact_id": "art:05dd77fde932bdc8",
+            "artifact_sha256": "05dd77fde932bdc82522748707d72c7dfa9be57d604914b2771b61bab932bf0f",
+            "variant_key": "B"
+          }
+        },
+        {
+          "variant": "C",
+          "artifact_id": "art:64530fc68473ead3",
+          "sha256": "64530fc68473ead3d08934dcb8b553be4962a3b71057f23c5571947025015c9c",
+          "composition_id": "comp-737ef4133034b969f6fe6bc6",
+          "build_id": "build-ef9312f2c4f8bfb7c6ff77ba",
+          "check_ids": [
+            "technical-build-ef9312f2c4f8bfb7c6ff77ba",
+            "regions-build-ef9312f2c4f8bfb7c6ff77ba"
+          ],
+          "binding": {
+            "composition_id": "comp-737ef4133034b969f6fe6bc6",
+            "composition_revision": 1,
+            "composition_hash": "bccdc7911a372b9d1127b999c4987440e35950ab544d02528c9c0653da37ee79",
+            "plan_hash": "fc9c26ff65f12e5f42893e05a1f54a89088f87d9f2b2f46b240aa53b30958815",
+            "artifact_id": "art:64530fc68473ead3",
+            "artifact_sha256": "64530fc68473ead3d08934dcb8b553be4962a3b71057f23c5571947025015c9c",
+            "variant_key": "C"
+          }
+        },
+        {
+          "variant": "D",
+          "artifact_id": "art:e742d856b97f2094",
+          "sha256": "e742d856b97f20947b618d1b8b0797dd57e3844146fab582538191f6599b4fd0",
+          "composition_id": "comp-d9d7b5666029428de68c7649",
+          "build_id": "build-eb50a897a612fb52457eb8c2",
+          "check_ids": [
+            "technical-build-eb50a897a612fb52457eb8c2",
+            "regions-build-eb50a897a612fb52457eb8c2"
+          ],
+          "binding": {
+            "composition_id": "comp-d9d7b5666029428de68c7649",
+            "composition_revision": 1,
+            "composition_hash": "b35b00b7c049ec4611cf62bfc73e2d2a28218e1d78eb4378a39d737a1518439c",
+            "plan_hash": "fc9c26ff65f12e5f42893e05a1f54a89088f87d9f2b2f46b240aa53b30958815",
+            "artifact_id": "art:e742d856b97f2094",
+            "artifact_sha256": "e742d856b97f20947b618d1b8b0797dd57e3844146fab582538191f6599b4fd0",
+            "variant_key": "D"
+          }
+        }
+      ]
+    },
+    {
+      "stage": "delivery_cleanup",
+      "at": "2026-09-17T17:43:31.906898+00:00",
+      "receipts": [
+        {
+          "status": "verified",
+          "file_id": "752d0719d2134237a787b94594ab3dfb",
+          "link": "https://drive.invalid/file/752d0719d2134237a787b94594ab3dfb",
+          "reused": false,
+          "cleanup": {
+            "owner": "fixture-f52aa2314b:a",
+            "at": "2026-09-17T17:43:29.692034+00:00",
+            "before": {
+              "resources": 0,
+              "listeners": {
+                "54541": 957,
+                "7000": 1062,
+                "5000": 1062,
+                "6379": 1671,
+                "5432": 1681,
+                "18088": 1688,
+                "44950": 1841,
+                "44960": 1841,
+                "48765": 29471,
+                "20241": 29521,
+                "19789": 32873,
+                "56803": 33418,
+                "56812": 33935,
+                "56816": 33935,
+                "45358": 34675,
+                "60389": 34675,
+                "35602": 40647,
+                "61898": 40647,
+                "10086": 42598,
+                "39845": 49977,
+                "57824": 49977,
+                "59000": 63924,
+                "56389": 63924,
+                "55439": 63924,
+                "8080": 63924,
+                "5433": 63924,
+                "64017": 66206,
+                "18099": 72339,
+                "5198": 77491,
+                "18679": 85707,
+                "18681": 85707
+              }
+            },
+            "stopped": [],
+            "retained": [],
+            "pid_reuse_untouched": [],
+            "survivors": [],
+            "ports_checked": [],
+            "port_conflicts": [],
+            "state": "verified"
+          }
+        },
+        {
+          "status": "verified",
+          "file_id": "9e37b19ee8364e269f0bdf994a3582e4",
+          "link": "https://drive.invalid/file/9e37b19ee8364e269f0bdf994a3582e4",
+          "reused": false,
+          "cleanup": {
+            "owner": "fixture-f52aa2314b:b",
+            "at": "2026-09-17T17:43:30.279243+00:00",
+            "before": {
+              "resources": 0,
+              "listeners": {
+                "54541": 957,
+                "7000": 1062,
+                "5000": 1062,
+                "6379": 1671,
+                "5432": 1681,
+                "18088": 1688,
+                "44950": 1841,
+                "44960": 1841,
+                "48765": 29471,
+                "20241": 29521,
+                "19789": 32873,
+                "56803": 33418,
+                "56812": 33935,
+                "56816": 33935,
+                "45358": 34675,
+                "60389": 34675,
+                "35602": 40647,
+                "61898": 40647,
+                "10086": 42598,
+                "39845": 49977,
+                "57824": 49977,
+                "59000": 63924,
+                "56389": 63924,
+                "55439": 63924,
+                "8080": 63924,
+                "5433": 63924,
+                "64017": 66206,
+                "18099": 72339,
+                "5198": 77491,
+                "18679": 85707,
+                "18681": 85707
+              }
+            },
+            "stopped": [],
+            "retained": [],
+            "pid_reuse_untouched": [],
+            "survivors": [],
+            "ports_checked": [],
+            "port_conflicts": [],
+            "state": "verified"
+          }
+        },
+        {
+          "status": "verified",
+          "file_id": "f3e63e99fe064a90b2b5ff7f1d864b82",
+          "link": "https://drive.invalid/file/f3e63e99fe064a90b2b5ff7f1d864b82",
+          "reused": false,
+          "cleanup": {
+            "owner": "fixture-f52aa2314b:c",
+            "at": "2026-09-17T17:43:30.858312+00:00",
+            "before": {
+              "resources": 0,
+              "listeners": {
+                "54541": 957,
+                "7000": 1062,
+                "5000": 1062,
+                "6379": 1671,
+                "5432": 1681,
+                "18088": 1688,
+                "44950": 1841,
+                "44960": 1841,
+                "48765": 29471,
+                "20241": 29521,
+                "19789": 32873,
+                "56803": 33418,
+                "56812": 33935,
+                "56816": 33935,
+                "45358": 34675,
+                "60389": 34675,
+                "35602": 40647,
+                "61898": 40647,
+                "10086": 42598,
+                "39845": 49977,
+                "57824": 49977,
+                "59000": 63924,
+                "56389": 63924,
+                "55439": 63924,
+                "8080": 63924,
+                "5433": 63924,
+                "64017": 66206,
+                "18099": 72339,
+                "5198": 77491,
+                "18679": 85707,
+                "18681": 85707
+              }
+            },
+            "stopped": [],
+            "retained": [],
+            "pid_reuse_untouched": [],
+            "survivors": [],
+            "ports_checked": [],
+            "port_conflicts": [],
+            "state": "verified"
+          }
+        },
+        {
+          "status": "verified",
+          "file_id": "811d134719f54da581a4a010e6821d69",
+          "link": "https://drive.invalid/file/811d134719f54da581a4a010e6821d69",
+          "reused": false,
+          "cleanup": {
+            "owner": "fixture-f52aa2314b:d",
+            "at": "2026-09-17T17:43:31.436911+00:00",
+            "before": {
+              "resources": 0,
+              "listeners": {
+                "54541": 957,
+                "7000": 1062,
+                "5000": 1062,
+                "6379": 1671,
+                "5432": 1681,
+                "18088": 1688,
+                "44950": 1841,
+                "44960": 1841,
+                "48765": 29471,
+                "20241": 29521,
+                "19789": 32873,
+                "56803": 33418,
+                "56812": 33935,
+                "56816": 33935,
+                "45358": 34675,
+                "60389": 34675,
+                "35602": 40647,
+                "61898": 40647,
+                "10086": 42598,
+                "39845": 49977,
+                "57824": 49977,
+                "59000": 63924,
+                "56389": 63924,
+                "55439": 63924,
+                "8080": 63924,
+                "5433": 63924,
+                "64017": 66206,
+                "18099": 72339,
+                "5198": 77491,
+                "18679": 85707,
+                "18681": 85707
+              }
+            },
+            "stopped": [],
+            "retained": [],
+            "pid_reuse_untouched": [],
+            "survivors": [],
+            "ports_checked": [],
+            "port_conflicts": [],
+            "state": "verified"
+          }
+        }
+      ]
+    }
+  ],
+  "package": "S5",
+  "parent_revision": "fc7fb75",
+  "mode": "offline",
+  "external_paid_calls": 0,
+  "full_suite": {
+    "passed": 916,
+    "seconds": 149.84,
+    "warnings": 2
+  },
+  "frontend": {
+    "tests": 25,
+    "build": "passed"
+  },
+  "browser": {
+    "same_origin": true,
+    "actual_playback_seconds": [
+      30,
+      30,
+      30,
+      30,
+      30
+    ],
+    "distinct_final_hashes": true,
+    "declared_ranges_seconds": [
+      [
+        0,
+        10
+      ],
+      [
+        10,
+        20
+      ],
+      [
+        20,
+        30
+      ]
+    ],
+    "two_tabs_preserve_selection": true,
+    "refresh_preserves_selection": true,
+    "native_studio_preview": "http://localhost:5189/#comments",
+    "studio_closed_and_port_free": true,
+    "studio_reopen_recovered": true
+  },
+  "regressions": [
+    "invalid fractional ASS timestamp and missing ASS style field reproduced; actual variant output hashes required",
+    "local render holds survive expired worker",
+    "real tool supervisor survives caller death without rerun",
+    "typed malformed API bodies rejected",
+    "imports and range responses bounded",
+    "lost-response browser action survives reload; acknowledged actions advance",
+    "copied runtime workspace receipts included in backup"
+  ],
+  "limitations": [
+    "Live provider/account routes remain separately qualified",
+    "Publishing and discovery application commands follow in S6/S7",
+    "Long fixture, full fault matrix, generated audio application integration and release acceptance remain S8",
+    "Pre-existing dashboard build cache was regenerated by required frontend build and remains unstaged"
+  ],
+  "additional_targeted": "9 Studio tests pass, including reopen/history regression added after full collection"
+}

@@ -14,7 +14,7 @@ import subprocess
 import time
 from datetime import datetime, timezone
 
-from ...batch.local import process_table, same_process
+from ...batch.local import process_table, same_process, descendants
 
 
 def _now():
@@ -75,8 +75,7 @@ class ResourceRegistry:
         out = []
         for rid, body in rows:
             b = json.loads(body)
-            if owner in b.get("holders", [b["owner"]]) \
-                    and b["status"] == status:
+            if (owner in b.get("holders", [b["owner"]]) or not b.get("holders") and b["owner"]==owner) and (b["status"]==status or status=="active" and b["status"]=="orphaned"):
                 out.append({"id": rid, **b})
         return out
 
@@ -85,12 +84,12 @@ class ResourceRegistry:
             "SELECT id,body FROM records WHERE kind='resource'"
         ).fetchall()
         return [{"id": rid, **json.loads(b)}
-                for rid, b in rows if json.loads(b)["status"] == "active"]
+                for rid, b in rows if json.loads(b)["status"] in ("active","orphaned")]
 
     def release_holder(self, resource_id, holder):
         b = self.get(resource_id)
         holders = sorted(set(b["holders"]) - {holder})
-        self._set(resource_id, holders=holders,
+        self._set(resource_id, holders=holders, owner=b["owner"] if holders else holder,
                   status="active" if holders else "orphaned")
 
     def set_status(self, resource_id, status):
@@ -119,99 +118,69 @@ class CleanupService:
 
     # ----------------------------------------------------- cleanup --
 
-    def cleanup(self, owner, now=""):
-        """Stop owner's idle resources; never touch shared (other
-        holders), application services, or unrelated processes."""
-        now = now or _now()
-        table = self.table()
-        mine = self.reg.for_owner(owner)
-        before = {"resources": len(mine),
-                  "listeners": dict(self.ports())}
-        stopped, retained, unrelated = [], [], []
-        killable, ports = [], set()
+    def cleanup(self, owner, now="", resource_ids=None, include_application=False):
+        """Capture descendants before stopping parents; retain identities until exit is verified."""
+        import hashlib
+        now=now or _now(); table=self.table(); listeners_before=self.ports()
+        mine=[r for r in self.reg.for_owner(owner) if resource_ids is None or r["id"] in resource_ids]
+        before={"resources":len(mine),"listeners":listeners_before}
+        stopped,retained,unrelated,killable=[],[],[],[]
+        ports=set()
+        protected={r["pid"] for r in self.reg.active() if
+                   (r["cls"]=="application" and not include_application) or
+                   r["cls"]=="shared" and set(r["holders"])-{owner}}
         for r in mine:
+            if r["pid"] in protected:
+                retained.append({"id":r["id"],"why":"application" if r["cls"]=="application" else "shared_active","holders":r["holders"]})
+                if r["cls"]=="shared": self.reg.release_holder(r["id"],owner)
+                continue
             ports.update(r["ports"])
-            live = same_process(r, table.get(r["pid"]))
-            if r["cls"] == "application":
-                retained.append({"id": r["id"], "why": "application"})
-            elif r["cls"] == "shared" \
-                    and (set(r["holders"]) - {owner}):
-                retained.append({"id": r["id"], "why": "shared_active",
-                                 "holders": r["holders"]})
-                self.reg.release_holder(r["id"], owner)
-            elif not live:
-                # dead already, or PID reused by another process —
-                # identity mismatch means it is NOT ours
-                self.reg.set_status(r["id"], "reaped")
+            if not same_process(r,table.get(r["pid"])):
+                self.reg.set_status(r["id"],"reaped")
                 if r["pid"] in table:
-                    unrelated.append({"pid": r["pid"],
-                                      "why": "pid_reused"})
-            else:
-                killable.append(r)
-        # graceful then escalate — only against same verified process
-        survivors = []
-        for sig in (signal.SIGTERM, signal.SIGKILL):
-            table = self.table()
-            pending = [r for r in killable
-                       if same_process(r, table.get(r["pid"]))]
+                    unrelated.append({"pid":r["pid"],"why":"pid_reused","command":table[r["pid"]]["command"]})
+                continue
+            for pid in descendants(table,{r["pid"]}):
+                # Registered shared/application subtrees keep their ownership.
+                if any(pid in descendants(table,{p}) for p in protected): continue
+                if any(k["pid"]==pid for k in killable): continue
+                if pid==r["pid"]:
+                    item=r
+                else:
+                    child=table[pid]
+                    rid="child-"+hashlib.sha256(f"{r['id']}:{pid}:{child['birth']}".encode()).hexdigest()[:24]
+                    if self.reg.get(rid) is None:
+                        self.reg.register(rid,pid,child["birth"],child["command"],owner,
+                                          workspace=r.get("workspace",""),ports=[p for p,holder in listeners_before.items() if holder==pid])
+                    item={"id":rid,**self.reg.get(rid)}
+                killable.append(item)
+                ports.update(item["ports"])
+        # Children first, then roots. Recheck each identity immediately before signalling.
+        killable.sort(key=lambda r:r["id"] not in {m["id"] for m in mine},reverse=True)
+        for sig in (signal.SIGTERM,signal.SIGKILL):
+            pending=[r for r in killable if same_process(r,self.table().get(r["pid"]))]
             for r in pending:
-                self.kill(r["pid"], sig)
-            if pending:
-                self.sleep(0.05)
-            survivors = pending
-        table = self.table()
-        survivors = [r["pid"] for r in killable
-                     if same_process(r, table.get(r["pid"]))]
+                if same_process(r,self.table().get(r["pid"])): self.kill(r["pid"],sig)
+            for _ in range(5):
+                if not any(same_process(r,self.table().get(r["pid"])) for r in pending): break
+                self.sleep(.05)
+        table=self.table()
+        survivors=[r["pid"] for r in killable if same_process(r,table.get(r["pid"]))]
         for r in killable:
             if r["pid"] not in survivors:
-                stopped.append({"id": r["id"], "pid": r["pid"]})
-                self.reg.set_status(r["id"], "stopped")
-        # port recheck — an unrelated listener is reported, never killed
-        listeners = self.ports()
-        conflicts = sorted(p for p in ports
-                           if p in listeners
-                           and listeners[p] not in
-                           {r["pid"] for r in mine})
-        receipt = {"owner": owner, "at": now, "before": before,
-                   "stopped": stopped, "retained": retained,
-                   "pid_reuse_untouched": unrelated,
-                   "survivors": survivors,
-                   "ports_checked": sorted(ports),
-                   "port_conflicts": conflicts,
-                   "state": "verified" if not survivors and not conflicts
-                   else "blocked"}
-        self._receipt(owner, receipt)
+                stopped.append({"id":r["id"],"pid":r["pid"]}); self.reg.set_status(r["id"],"stopped")
+        conflicts=sorted(p for p in ports if p in self.ports())
+        receipt={"owner":owner,"at":now,"before":before,"stopped":stopped,"retained":retained,
+                 "pid_reuse_untouched":unrelated,"survivors":survivors,"ports_checked":sorted(ports),
+                 "port_conflicts":conflicts,"state":"verified" if not survivors and not conflicts else "blocked"}
+        self._receipt(owner,receipt)
         return receipt
 
     def reap_stale(self, owner, now=""):
-        """Post-crash sweep: identity-verified owned processes still
-        alive are stale — stop them; mismatched PIDs are left alone."""
-        now = now or _now()
-        table = self.table()
-        reaped, foreign = [], []
-        for r in self.reg.for_owner(owner):
-            cur = table.get(r["pid"])
-            if same_process(r, cur):
-                self.kill(r["pid"], signal.SIGTERM)
-                self.sleep(0.01)
-                table = self.table()
-                if not same_process(r, table.get(r["pid"])):
-                    self.reg.set_status(r["id"], "stopped")
-                    reaped.append(r["id"])
-                else:
-                    self.kill(r["pid"], signal.SIGKILL)
-                    self.sleep(0.01)
-                    if not same_process(r, self.table().get(r["pid"])):
-                        self.reg.set_status(r["id"], "stopped")
-                        reaped.append(r["id"])
-            elif cur is not None:
-                foreign.append({"pid": r["pid"],
-                                "command": cur["command"]})
-                self.reg.set_status(r["id"], "reaped")
-            else:
-                self.reg.set_status(r["id"], "reaped")
-        return {"owner": owner, "at": now, "reaped": reaped,
-                "foreign_untouched": foreign}
+        result=self.cleanup(owner,now)
+        return {"owner":owner,"at":result["at"],"reaped":[r["id"] for r in result["stopped"]],
+                "foreign_untouched":[{"pid":r["pid"],"command":r["command"]} for r in result["pid_reuse_untouched"]],
+                "state":result["state"]}
 
     def inspect(self):
         """Current view: active owned resources, live ones by identity,

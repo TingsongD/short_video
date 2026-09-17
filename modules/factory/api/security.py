@@ -9,7 +9,12 @@ LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "testserver"}
 
 
 def host_ok(host):
-    return (host or "").split(":")[0].lower() in LOCAL_HOSTS
+    from urllib.parse import urlsplit
+    try:
+        parsed=urlsplit('//'+(host or ''))
+        return parsed.hostname in LOCAL_HOSTS and not parsed.username and not parsed.password and not parsed.path
+    except ValueError:
+        return False
 
 
 class LocalSecurityMiddleware:
@@ -31,16 +36,16 @@ class LocalSecurityMiddleware:
         if not host_ok(headers.get("host", "")):
             return await _deny(send, 403, "bad_host",
                              "loopback hosts only")
-        if method in SAFE_METHODS or path == "/api/session":
+        if method in SAFE_METHODS:
             return await self.app(scope, receive, send)
 
         origin = headers.get("origin")
         if origin:
             ohost = origin.split("://", 1)[-1].split("/")[0]
-            if not host_ok(ohost):
+            if not host_ok(ohost) or ohost.lower() != headers.get("host", "").lower():
                 return await _deny(send, 403, "bad_origin",
                                    "mutation origin not allowed")
-        if headers.get("x-csrf-token") != self.token:
+        if path != "/api/session" and headers.get("x-csrf-token") != self.token:
             return await _deny(send, 403, "csrf",
                                "missing or invalid CSRF token")
         return await self.app(scope, receive, send)

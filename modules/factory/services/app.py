@@ -1,337 +1,339 @@
-"""Application service facade (F27): route handlers call these —
-never generation CLIs, never another scheduler/ledger. Each method is
-thin transport over the real domain services.
-"""
+"""Application commands over authoritative domain records and durable worker jobs."""
+import copy
 import hashlib
 import json
-import mimetypes
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
 from ..domain.errors import ContractError
-from ..domain.records import Delivery, Review
+from ..domain.records import Authorization, ProductSnapshot, ProviderPolicy, content_hash
+from ..events.redact import redact
+from ..store.uow import utcnow
+from .commands import CommandQueue
 
 MAX_UPLOAD_BYTES = 200 * 1024 * 1024
-ALLOWED_UPLOAD_TYPES = {"mp4", "mov", "webm", "png", "jpg", "jpeg",
-                        "mp3", "wav", "m4a"}
-
-
-def _now():
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _sha(b):
-    return hashlib.sha256(b).hexdigest()
+ALLOWED_UPLOAD_TYPES = {"mp4", "mov", "webm", "png", "jpg", "jpeg", "mp3", "wav", "m4a"}
+COLLECTIONS = {"seeds":"seed", "blueprints":"referenceblueprint", "templates":"formattemplate",
+    "products":"productsnapshot", "experiments":"experimentrevision", "variants":"variantplan",
+    "plans":"productionplan", "compositions":"composition", "reviews":"review", "deliveries":"delivery",
+    "publications":"publication", "decisions":"experimentdecision"}
 
 
 class FactoryServices:
-    def __init__(self, db, seeds=None, experiments=None, scheduler=None,
-                 artifacts=None, quality=None, delivery=None,
-                 executor=None, providers=None, artifact_root=""):
-        self.db = db
-        self.seeds = seeds
-        self.experiments = experiments
-        self.scheduler = scheduler
-        self.artifacts = artifacts
-        self.quality = quality
-        self.delivery = delivery
-        self.executor = executor
-        self.providers = providers or {}
-        self.artifact_root = Path(artifact_root).resolve() \
-            if artifact_root else None
+    def __init__(self, db, seeds=None, experiments=None, scheduler=None, artifacts=None,
+                 quality=None, delivery=None, executor=None, providers=None, artifact_root="",
+                 analysis=None, blueprints=None, templates=None, production=None, composition=None,
+                 rendering=None, resources=None, cleanup=None, studio=None, config=None):
+        self.db, self.seeds, self.experiments = db, seeds, experiments
+        self.scheduler, self.artifacts, self.quality = scheduler, artifacts, quality
+        self.delivery, self.executor, self.providers = delivery, executor, providers or {}
+        self.analysis, self.blueprints, self.templates = analysis, blueprints, templates
+        self.production, self.composition, self.rendering = production, composition, rendering
+        self.resources, self.cleanup, self.studio = resources, cleanup, studio
+        self.config = config or {}
+        self.commands = CommandQueue(db, scheduler) if scheduler else None
 
-    # --------------------------------------------------- read paths --
+    def require(self, name):
+        svc = getattr(self, name, None)
+        if svc is None:
+            raise ContractError("unavailable", name, "service is not configured; see readiness")
+        return svc
 
     def health(self):
-        worker = {"paused": False, "draining": False}
-        if self.scheduler:
-            worker = {"paused": bool(self.scheduler.paused()),
-                      "draining": bool(self.scheduler._flag("draining"))}
-        return {"api": "ok", "storage": "ok", "worker": worker,
-                "at": _now()}
+        self.db.conn.execute("SELECT 1").fetchone()
+        row = self.db.conn.execute("SELECT value FROM meta WHERE key='worker_heartbeat'").fetchone()
+        beat = json.loads(row[0]) if row else None
+        age = (datetime.now(timezone.utc)-datetime.fromisoformat(beat['at'].replace('Z','+00:00'))).total_seconds() if beat else None
+        return {"api":"ok", "storage":"ok", "worker":{"available": age is not None and age < 150,
+            "heartbeat":beat, "paused":bool(self.scheduler and self.scheduler.paused),
+            "draining":bool(self.scheduler and self.scheduler._flag('draining'))}, "mode":self.config.get('mode','offline')}
 
     def providers_readiness(self):
-        """Granular truth: installed/authed/catalog/tested/qualified —
-        never one green flag."""
         out = {}
-        for name, ad in self.providers.items():
-            ready = {}
+        for name, adapter in self.providers.items():
             try:
-                ready = ad.readiness() if hasattr(ad, "readiness") else {}
-            except Exception as e:
-                ready = {"error": type(e).__name__}
-            out[name] = {
-                "installed": ready.get("installed", bool(ready)),
-                "authenticated": ready.get("authenticated",
-                                           ready.get("ok", False)),
-                "catalog_visible": ready.get("catalog_visible",
-                                             "models" in ready),
-                "tested": ready.get("tested", False),
-                "qualified": ready.get("qualified", False),
-                "detail": {k: v for k, v in ready.items()
-                           if k not in ("token", "key", "secret")},
-            }
+                ready = adapter.readiness()
+            except Exception as error:
+                ready = {"error":type(error).__name__}
+            out[name] = {k: ready.get(k) is True for k in ('installed','authenticated','catalog_visible','contract_tested','live_qualified')}
+            out[name]['tested'] = out[name]['contract_tested']
+            out[name]['qualified'] = out[name]['live_qualified']
+            out[name]['detail'] = redact(ready)
         return out
 
-    def get_seed(self, seed_id):
-        if not self.seeds:
-            raise ContractError("not_found", "seed_id", seed_id)
-        return self.seeds.get(seed_id).to_dict()
+    def collection(self, name):
+        if name == 'queue':
+            return self.require('scheduler').status_snapshot()
+        if name == 'assets':
+            return [json.loads(r['body']) for r in self.db.conn.execute('SELECT body FROM artifacts ORDER BY created_at DESC')]
+        kind = COLLECTIONS.get(name)
+        if not kind:
+            raise ContractError('not_found','collection',name)
+        return [json.loads(r['body']) for r in self.db.conn.execute(
+            "SELECT r.body FROM records r WHERE kind=? AND revision=(SELECT MAX(revision) FROM records x WHERE x.kind=r.kind AND x.id=r.id) ORDER BY created_at DESC", (kind,))]
 
-    # ------------------------------------------------- seed intake --
-
-    def create_seed(self, url, via="api"):
-        if not self.seeds:
-            raise ContractError("unavailable", "seeds",
-                                "seed registry not wired")
-        seed, created = self.seeds.submit_url(url, via=via)
-        return {"seed": seed.to_dict(), "created": created}
-
-    def import_file(self, filename, data):
-        ext = filename.rsplit(".", 1)[-1].lower() if "." in filename \
-            else ""
-        if ext not in ALLOWED_UPLOAD_TYPES:
-            raise ContractError("bad_type", "filename",
-                                f".{ext} not importable")
-        if len(data) > MAX_UPLOAD_BYTES:
-            raise ContractError("too_large", "size",
-                                f"{len(data)} > {MAX_UPLOAD_BYTES}")
-        if not self.artifacts:
-            raise ContractError("unavailable", "artifacts",
-                                "artifact registry not wired")
-        return self.artifacts.intake_bytes(
-            data, provenance="api_import",
-            source_key=f"import:{_sha(data)[:16]}",
-            source_detail=filename).to_dict()
-
-    # ------------------------------------------------ experiments --
-
-    def _record(self, kind, rid):
-        """→ (logical_rev, body, row_version) or (None, None, None)."""
+    def detail(self, kind, rid):
         row = self.db.uow().records.get(kind, rid)
-        if row is None:
-            return None, None, None
-        body = json.loads(row["body"])
-        return body.get("_rev", 0), body, row["version"]
+        if not row:
+            raise ContractError('not_found','id',rid)
+        return json.loads(row['body'])
 
-    def _put_draft(self, kind, rid, body, expected_version=None):
-        """Insert (expected_version=None) or CAS-update on row version.
-        body['_rev'] is the user-facing logical revision."""
-        with self.db.uow() as u:
-            if expected_version is None:
-                u.conn.execute(
-                    "INSERT INTO records(kind,id,revision,schema_version,"
-                    "status,body,created_at,updated_at,version)"
-                    " VALUES(?,?,0,?,?,?,?,?,1)",
-                    (kind, rid, f"{kind}.v1", body.get("status", "draft"),
-                     json.dumps(body), _now(), _now()))
-            else:
-                cur = u.conn.execute(
-                    "UPDATE records SET body=?,status=?,updated_at=?,"
-                    "version=version+1 WHERE kind=? AND id=? AND "
-                    "revision=0 AND version=?",
-                    (json.dumps(body), body.get("status", "draft"),
-                     _now(), kind, rid, expected_version))
-                if cur.rowcount == 0:
-                    raise ContractError("stale_revision", "revision",
-                                        "draft changed concurrently")
-        return body
+    def get_seed(self, seed_id):
+        return self.require('seeds').get(seed_id).to_dict()
+
+    def create_seed(self, url, via='api'):
+        seed, created = self.require('seeds').submit_url(url, via=via)
+        return {'seed':seed.to_dict(),'created':created}
+
+    def attach_media(self, seed_id, artifact_id):
+        self.require('artifacts').verified_path(artifact_id)
+        return self.require('seeds').attach_media(seed_id, artifact_id)[0].to_dict()
+
+    def import_file(self, filename, data=None, path=None):
+        ext = filename.rsplit('.',1)[-1].lower() if '.' in filename else ''
+        if ext not in ALLOWED_UPLOAD_TYPES:
+            raise ContractError('bad_type','filename',f'.{ext} not importable')
+        size = Path(path).stat().st_size if path else len(data)
+        if size > MAX_UPLOAD_BYTES:
+            raise ContractError('too_large','size')
+        store = self.require('artifacts')
+        if path:
+            return store.intake_file(path, provenance='manual', source_key='import:'+filename, source_detail=filename).to_dict()
+        return store.intake_bytes(data, provenance='manual', source_key='import:'+hashlib.sha256(data).hexdigest(), source_detail=filename).to_dict()
+
+    def analyze_seed(self, seed_id, body):
+        self.get_seed(seed_id)
+        if 'observations' not in body:
+            raise ContractError('analysis_route_unqualified','observations','Import reviewed observations, or qualify and authorize an analysis adapter')
+        if not body.get('reviewer'):
+            raise ContractError('reviewer_required','reviewer')
+        return self.require('commands').enqueue('analyze',{'seed_id':seed_id, **body},phase='analyze')
+
+    def review_blueprint(self, blueprint_id, body):
+        if not body.get('reviewer'):
+            raise ContractError('reviewer_required','reviewer')
+        bp = self.require('blueprints').accept(blueprint_id,body['content_hash'],body['reviewer'])
+        return bp.to_dict()
+
+    def author_template(self, body):
+        bp = self.require('analysis').get(body['blueprint_id'])
+        if bp.status != 'accepted':
+            raise ContractError('blueprint_not_accepted','blueprint_id')
+        return self.require('templates').author(bp,body.get('id') or 'tpl-'+uuid.uuid4().hex).to_dict()
+
+    def _current(self, eid, expected=None, required=False):
+        exp = self.require('experiments')._latest(eid)
+        if required and expected is None:
+            raise ContractError('expected_revision_required','revision')
+        if expected is not None and expected != exp.revision:
+            raise ContractError('stale_revision','revision',f'current {exp.revision}')
+        return exp
 
     def create_experiment_draft(self, experiment_id, body):
-        body = {**body, "status": "draft", "_rev": 0}
-        self._put_draft("experiment_draft", experiment_id, body)
-        return {"id": experiment_id, "revision": 0, "status": "draft"}
+        required = {'blueprint_id','template_id','segments','variants'}
+        if not required <= body.keys():
+            raise ContractError('incomplete_experiment','input',','.join(sorted(required-body.keys())))
+        bp = self.require('analysis').get(body['blueprint_id'])
+        template = self.require('templates').get(body['template_id'])
+        if template.derived_from_blueprint != bp.content_hash:
+            raise ContractError('template_blueprint_mismatch','template_id')
+        products = [ProductSnapshot(**self.detail('productsnapshot', pid)) for pid in body.get('product_ids',[])]
+        self._validate_segments(body['segments'],bp.target_frames)
+        branches = body['variants']
+        if {v.get('key') for v in branches} != {'B','C','D'} or len(branches)!=3:
+            raise ContractError('four_variants_required','variants','A is implicit; supply B, C and D')
+        with self.db.uow():
+            self.require('experiments').create(experiment_id,bp.seed_id,bp,template,products,body['segments'],
+                voice=body.get('voice'),music=body.get('music'), provider_policy=ProviderPolicy(**body.get('provider_policy',{})))
+            for branch in branches:
+                self._branch(experiment_id,branch)
+        return self.experiment_results(experiment_id)
 
-    def patch_experiment_draft(self, experiment_id, patch,
-                               expected_revision):
-        rev, body, ver = self._record("experiment_draft", experiment_id)
-        if body is None:
-            raise ContractError("not_found", "experiment_id",
-                                experiment_id)
-        if expected_revision is not None \
-                and expected_revision != rev:
-            raise ContractError("stale_revision", "revision",
-                                f"expected {expected_revision}, "
-                                f"current {rev}")
-        locked = {"provider", "model", "fallback"}
-        if body.get("status") != "draft" and locked & set(patch):
-            raise ContractError("locked_field", "patch",
-                                "submitted plans need a new revision")
-        if expected_revision is None:
-            raise ContractError("expected_revision_required", "revision")
-        if set(patch) & {"authorization", "last_quote", "status", "_rev"}:
-            raise ContractError("reserved_field", "patch")
-        body.update(patch)
-        body.pop("authorization", None)
-        body.pop("last_quote", None)
-        body["status"] = "draft"
-        body["_rev"] = rev + 1
-        self._put_draft("experiment_draft", experiment_id, body,
-                        expected_version=ver)
-        return {"id": experiment_id, "revision": rev + 1}
+    def _branch(self,eid,branch):
+        segments = branch['segments']
+        self._validate_segments(segments,self._current(eid).packaging['target_frames'])
+        return self.experiments.branch(eid,branch['key'],branch['factor'],branch['regions'],
+            lambda b:{**b,'segments':copy.deepcopy(segments)},branch['hypothesis'],branch['primary_metric'],
+            branch['allowed_fields'],branch.get('dependent_fields',[]))
 
-    def quote_experiment(self, experiment_id):
-        rev, body, ver = self._record("experiment_draft", experiment_id)
-        if body is None:
-            raise ContractError("not_found", "experiment_id",
-                                experiment_id)
-        items = body.get("unique_work", [])
-        quote = {"experiment_id": experiment_id, "revision": rev,
-                 "units": {"credits": sum(i.get("credits", 0)
-                                          for i in items),
-                           "usd_micros": sum(i.get("usd_micros", 0)
-                                             for i in items)},
-                 "unknown_charges": body.get("unknown_charges", []),
-                 "line_items": items, "quoted_at": _now()}
-        self._put_draft("experiment_draft", experiment_id,
-                        {**body, "last_quote": quote},
-                        expected_version=ver)
-        return quote
+    def _validate_segments(self,segments,total):
+        from ..domain.clocks import FrameInterval, check_partition
+        intervals=[]
+        if not segments or len({s['id'] for s in segments})!=len(segments):
+            raise ContractError('invalid_segments','segments')
+        for segment in segments:
+            target=segment['target']; intervals.append(FrameInterval(target['start_frame'],target['end_frame']))
+            for field in ('picture','speech'):
+                aid=(segment.get(field) or {}).get('artifact_id')
+                if aid: self.artifacts.verified_path(aid)
+        if check_partition(intervals,total):
+            raise ContractError('invalid_partition','segments')
 
-    def authorize_experiment(self, experiment_id, expected_revision):
-        rev, body, ver = self._record("experiment_draft",
-                                      experiment_id)
-        if body is None:
-            raise ContractError("not_found", "experiment_id",
-                                experiment_id)
-        if expected_revision != rev:
-            raise ContractError("stale_revision", "revision",
-                                f"expected {expected_revision}, "
-                                f"current {rev} — approvals bind the "
-                                "exact reviewed revision")
-        if "last_quote" not in body or body["last_quote"].get("revision") != rev:
-            raise ContractError("no_quote", "experiment_id",
-                                "quote the exact revision first")
-        body["status"] = "authorized"
-        body["authorization"] = {"revision": rev, "at": _now()}
-        self._put_draft("experiment_draft", experiment_id, body,
-                        expected_version=ver)
-        return {"id": experiment_id, "status": "authorized",
-                "revision": rev}
+    def patch_experiment_draft(self,eid,patch,expected_revision):
+        self._current(eid,expected_revision,True)
+        if set(patch)-{'segments','variants','reason','voice','music'}:
+            raise ContractError('reserved_field','patch')
+        def edit(body):
+            for field in ('segments','voice','music'):
+                if field in patch:
+                    body[field]=copy.deepcopy(patch[field]); body['packaging'][field]=copy.deepcopy(patch[field])
+            self._validate_segments(body['segments'],body['packaging']['target_frames'])
+            return body
+        with self.db.uow():
+            result=self.experiments.revise_control(eid,edit,patch.get('reason','operator edit'))
+            for branch in patch.get('variants',[]): self._branch(eid,branch)
+        return {'id':eid,'revision':result['revision'].revision,'status':'draft'}
 
-    # -------------------------------------------------- run/pause --
+    def quote_experiment(self,eid,expected_revision=None):
+        exp=self._current(eid,expected_revision,True)
+        for key in 'ABCD':
+            if self.experiments._variant(eid,key).stale_reason:
+                raise ContractError('stale_variant','variant',key)
+        return self.require('commands').enqueue('quote',{'experiment_id':eid,'revision':exp.revision},
+            experiment_id=eid,revision=exp.revision,identity=f'quote-{eid}-r{exp.revision}')
 
-    def run_experiment(self, experiment_id, expected_revision=None):
-        rev, body, ver = self._record("experiment_draft",
-                                      experiment_id)
-        if body is None:
-            raise ContractError("not_found", "experiment_id",
-                                experiment_id)
-        if body.get("status") != "authorized" or body.get("authorization", {}).get("revision") != rev:
-            raise ContractError("not_authorized", "experiment_id",
-                                "authorize the quoted revision first")
-        if expected_revision is not None \
-                and expected_revision != rev:
-            raise ContractError("stale_revision", "revision",
-                                "plan changed since authorization — "
-                                "re-quote and re-authorize")
-        job_id = f"job-{experiment_id}"
-        if self.scheduler:
-            from ..domain.records import Job
-            job = Job(schema_version="job.v1", id=job_id,
-                      created_at=_now(),
-                      logical_key=f"run:{experiment_id}",
-                      phase="dispatch", experiment_id=experiment_id,
-                      revision=rev, status="queued")
-            self.scheduler.submit_plan([job])
-        else:
-            self._put_draft("job", job_id,
-                            {"kind": "experiment_run", "_rev": 0,
-                             "status": "queued",
-                             "experiment_id": experiment_id})
-        return {"job_id": job_id, "accepted": True}
+    def plan_for(self,eid):
+        exp=self._current(eid)
+        row=self.db.conn.execute("SELECT body FROM records WHERE kind='productionplan' AND json_extract(body,'$.experiment_id')=? AND json_extract(body,'$.experiment_revision')=? ORDER BY created_at DESC LIMIT 1",(eid,exp.revision)).fetchone()
+        if not row: raise ContractError('no_quote','experiment_id',eid)
+        return json.loads(row[0])
 
-    def pause_experiment(self, experiment_id):
-        if self.scheduler:
-            self.scheduler.pause(experiment_id)
-        return {"id": experiment_id, "paused": True}
-
-    def resume_experiment(self, experiment_id):
-        if self.scheduler:
-            self.scheduler.resume(experiment_id)
-        return {"id": experiment_id, "resumed": True}
-
-    def reconcile_job(self, job_id):
-        if self.executor:
-            return self.executor.reconcile(job_id)
-        return {"job_id": job_id, "reconciled": "no_executor"}
-
-    # --------------------------------------------------- variants --
-
-    def record_review(self, variant_id, check_type, verdict,
-                      target_hash, reviewer="operator", evidence_ids=(),
-                      now=""):
-        if not self.quality:
-            raise ContractError("unavailable", "quality",
-                                "quality service not wired")
-        rev = Review(schema_version="review.v1",
-                     id=f"rv-{variant_id}-{check_type}",
-                     created_at=now or _now(), target_hash=target_hash,
-                     check_type=check_type, reviewer_type="human",
-                     verdict=verdict, evidence_ids=list(evidence_ids))
-        rev.validate_or_raise()
+    def authorize_experiment(self,eid,expected_revision,body=None):
+        body=body or {}; exp=self._current(eid,expected_revision,True); plan=self.plan_for(eid)
+        if body.get('plan_hash') != plan['plan_hash'] or not body.get('reviewer'):
+            raise ContractError('approval_binding_required','plan_hash/reviewer')
+        bp=next((x for x in self.collection('blueprints') if x['content_hash']==exp.blueprint_hash),None)
+        if not bp: raise ContractError('blueprint_missing','experiment')
+        report=self.experiments.acceptance_report(eid,self.analysis.get(bp['id']),self.templates.get(exp.packaging['template_ref']['id'],exp.packaging['template_ref']['revision']),
+             [ProductSnapshot(**self.detail('productsnapshot',pid)) for pid in exp.product_snapshot_ids])
+        if report['problems']: raise ContractError('acceptance_blocked','experiment',json.dumps(report['problems']))
         with self.db.uow() as u:
-            u.records.put(rev)
-        return {"id": rev.id, "verdict": verdict,
-                "bound_hash": target_hash}
+            self.experiments.accept(eid,exp.content_hash)
+            if plan['total_price']:
+                auth=Authorization(schema_version='authorization.v1',id='auth-'+uuid.uuid4().hex,created_at=utcnow(),
+                    status='authorized',scope_hash=plan['plan_hash'],caps=body.get('ceilings',{}),
+                    allowed_providers=body.get('allowed_providers',[]),allowed_models=body.get('allowed_models',{}),
+                    valid_until=body.get('valid_until',''),authorizing_action='operator '+body['reviewer'])
+                self.production.authorize(plan['id'],auth,body.get('account',''),body.get('budget_ids',[]),auth.valid_until)
+            approval={'plan_hash':plan['plan_hash'],'revision':exp.revision,'reviewer':body['reviewer']}
+            u.conn.execute("INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)",('local-run:'+plan['id'],json.dumps(approval)))
+        return {'id':eid,'revision':exp.revision,'plan_hash':plan['plan_hash'],'status':'authorized'}
 
-    def create_variant_revision(self, variant_id, reason, patch):
-        rev, body, ver = self._record("variant", variant_id)
-        if body is None:
-            body = {"variant_id": variant_id, "status": "draft",
-                    "_rev": -1}
-            rev, ver = -1, None
-        body.update(patch)
-        body["revision_reason"] = reason
-        body["_rev"] = rev + 1
-        self._put_draft("variant", variant_id, body,
-                        expected_version=ver)
-        return {"id": variant_id, "revision": rev + 1}
+    def run_experiment(self,eid,expected_revision=None):
+        exp=self._current(eid,expected_revision,True); plan=self.plan_for(eid)
+        row=self.db.conn.execute("SELECT value FROM meta WHERE key=?",('local-run:'+plan['id'],)).fetchone()
+        if not row or json.loads(row[0])['plan_hash']!=plan['plan_hash'] or exp.status!='accepted':
+            raise ContractError('not_authorized','experiment_id')
+        return self.require('commands').enqueue('run',{'plan_id':plan['id']},experiment_id=eid,
+            revision=exp.revision,identity=f'run-{eid}-r{exp.revision}')
 
-    def deliver_variant(self, variant_id, final_path, name, folder_id,
-                        now=""):
-        if not self.delivery:
-            raise ContractError("unavailable", "delivery",
-                                "delivery service not wired")
-        return self.delivery.deliver(f"dlv-{variant_id}", final_path,
-                                     name, folder_id, now=now or _now())
+    def pause_experiment(self,eid):
+        self._current(eid); self.require('scheduler').pause(eid)
+        return {'id':eid,'paused':True}
 
-    def record_publication(self, variant_id, platform, account_id):
-        body = {"variant_id": variant_id, "platform": platform,
-                "account_id": account_id,
-                "status": "authorized_intent", "at": _now()}
-        rid = f"pub-{variant_id}-{platform}"
-        rev, _, _ = self._record("publication", rid)
-        if rev is None:
-            body["_rev"] = 0
-            self._put_draft("publication", rid, body)
-        return {"id": rid, "status": "authorized_intent"}
+    def resume_experiment(self,eid):
+        self._current(eid); self.require('scheduler').resume(eid)
+        return {'id':eid,'resumed':True}
 
-    def experiment_results(self, experiment_id):
-        rev, body, _ = self._record("experiment_draft", experiment_id)
-        if body is None:
-            raise ContractError("not_found", "experiment_id",
-                                experiment_id)
-        return {"experiment_id": experiment_id, "revision": rev,
-                "status": body.get("status"),
-                "coverage": body.get("coverage", "unknown"),
-                "results": body.get("results", [])}
+    def reconcile_job(self,jid):
+        self.require('commands').get(jid)
+        return self.commands.enqueue('reconcile',{'job_id':jid},phase='collect')
 
-    # ----------------------------------------------------- media ----
+    def _final(self,variant_id):
+        variant=self.detail('variantplan',variant_id)
+        self._current(variant['experiment_id'],variant['experiment_revision'])
+        row=self.db.conn.execute("SELECT value FROM meta WHERE key=?",('final:'+variant_id,)).fetchone()
+        if not row: raise ContractError('final_not_ready','variant_id')
+        final=json.loads(row[0]); path=self.artifacts.verified_path(final['artifact_id'])
+        binding=self.require('quality').binding(path,final['composition_id'],final['artifact_id'])
+        return variant,final,path,binding
 
-    def media_path(self, asset_id):
-        """Resolve a registered artifact id to a contained local path;
-        arbitrary paths/URLs are rejected by construction."""
-        if not self.artifacts:
-            raise ContractError("unavailable", "artifacts",
-                                "artifact registry not wired")
-        try:
-            return Path(self.artifacts.path_for(asset_id))
-        except ContractError as e:
-            raise ContractError("not_found", "asset_id",
-                                f"{asset_id}: {e.detail}")
+    def record_review(self,variant_id,check_type,verdict,target_hash,reviewer='',evidence_ids=(),now='', notes=''):
+        if not reviewer: raise ContractError('reviewer_required','reviewer')
+        if check_type!='creative': raise ContractError('automated_check_required','check_type')
+        variant,final,path,binding=self._final(variant_id)
+        if binding['artifact_sha256']!=target_hash: raise ContractError('stale_revision','target_hash')
+        return self.quality.record_verdict('review-'+uuid.uuid4().hex,target_hash,check_type,verdict,
+            evidence=evidence_ids,now=now,binding=binding,reviewer=reviewer,limitations=[notes] if notes else [])
 
-    # ----------------------------------------------------- events ---
+    def review_assets(self,eid,body,expected_revision):
+        self._current(eid,expected_revision,True); plan=self.plan_for(eid)
+        if not body.get('reviewer') or body.get('plan_hash')!=plan['plan_hash']:
+            raise ContractError('approval_binding_required','plan_hash/reviewer')
+        accepted=[]
+        for aid in body.get('artifact_ids',[]):
+            self.artifacts.verified_path(aid); art=self.db.uow().artifacts.get(aid)
+            self.quality.record_verdict('asset-review-'+uuid.uuid4().hex,art['sha256'],'asset',body['verdict'],
+                 binding={'plan_hash':plan['plan_hash'],'artifact_id':aid},reviewer=body['reviewer'])
+            accepted.append(aid)
+        with self.db.uow() as u:
+            u.conn.execute("UPDATE jobs SET status='ready',lease_owner=NULL,lease_expires=NULL WHERE experiment_id=? AND revision=? AND phase='review' AND status='awaiting_review'",(eid,expected_revision))
+        return {'reviewed':accepted}
 
-    def events_since(self, stream, seq=0, limit=500):
-        return self.db.uow().events.since(stream, seq=seq)[:limit]
+    def create_variant_revision(self,variant_id,reason,patch):
+        raise ContractError('revise_experiment_required','variant_id','Edit the experiment with its current expected revision and rebranch treatments')
+
+    def deliver_variant(self,variant_id,body,expected_revision):
+        variant,final,path,binding=self._final(variant_id)
+        self._current(variant['experiment_id'],expected_revision,True)
+        if set(body)-{'folder_id','reviewer','valid_until','account','check_ids','artifact_id','target_hash'}:
+            raise ContractError('reserved_field','delivery','Delivery accepts registered artifact identities only')
+        if body.get('artifact_id')!=final['artifact_id'] or body.get('target_hash')!=binding['artifact_sha256']:
+            raise ContractError('stale_revision','artifact_id/target_hash')
+        if not body.get('reviewer') or not body.get('valid_until') or not body.get('account'):
+            raise ContractError('approval_binding_required','delivery')
+        folder=self.config.get('drive_folder_id')
+        if not folder or body.get('folder_id')!=folder:
+            raise ContractError('destination_not_authorized','folder_id')
+        self.require('delivery'); accepted=self.quality.accept(path,body.get('check_ids',[]),binding)
+        from ..delivery.service import delivery_name
+        from ..execution.effects import EffectService
+        name=delivery_name(variant['experiment_id'],variant['variant_key'],variant.get('changed_factor') or 'control',variant['experiment_revision'],variant['target_frames']/self._current(variant['experiment_id']).output_clock['num'])
+        did='delivery-'+content_hash([binding,folder,name])[:24]
+        existing=self.delivery._get(did)
+        if existing and existing['status']=='verified':
+            try: cleaned=json.loads(existing.get('cleanup_receipt','{}')).get('state')=='verified'
+            except ValueError: cleaned=False
+            if cleaned:return {'status':'verified','delivery_id':did,'link':existing['drive_link']}
+            return self.commands.enqueue('cleanup',{'delivery_id':did,'variant_id':variant_id},phase='collect',identity='cleanup-'+did)
+        prior=self.db.uow().records.get('appcommand',did)
+        if prior:
+            return {'job_id':did,'accepted':True}
+        req={'artifact_sha256':binding['artifact_sha256'],'folder_id':folder,'name':name,
+             'size':path.stat().st_size,'md5':hashlib.md5(path.read_bytes()).hexdigest()}
+        command={'delivery_id':did,'variant_id':variant_id,'artifact_id':final['artifact_id'],
+             'binding':binding,'check_ids':accepted['check_ids'],'folder_id':folder,'name':name}
+        aid='auth-'+uuid.uuid4().hex
+        auth=Authorization(schema_version='authorization.v1',id=aid,created_at=utcnow(),status='authorized',
+             scope_hash=binding['composition_hash'],allowed_providers=['drive'],allowed_models={'drive':['files']},
+             valid_until=body['valid_until'],authorizing_action='operator '+body['reviewer'])
+        EffectService(self.db,self.executor).approve(auth,'composition',binding['composition_id'],[
+             {'key':'delivery','kind':'delivery','provider':'drive','model':'files','account':body['account'],'request':req}],[])
+        command['authorization_id']=aid
+        return self.commands.enqueue('delivery',command,experiment_id=variant['experiment_id'],revision=expected_revision,
+             phase='deliver',identity=did)
+
+    def record_publication(self,variant_id,platform,account_id):
+        raise ContractError('publication_route_unqualified','publication','Complete the publishing qualification gate')
+
+    def experiment_results(self,eid):
+        exp=self._current(eid); variants=[]
+        for key in 'ABCD':
+            try:
+                v=self.experiments._variant(eid,key).to_dict()
+                row=self.db.conn.execute("SELECT value FROM meta WHERE key=?",('final:'+v['id'],)).fetchone()
+                if row: v['final']=json.loads(row[0])
+                variants.append(v)
+            except ContractError: pass
+        return {'id':eid,'experiment_id':eid,'revision':exp.revision,'status':exp.status,
+            'experiment':exp.to_dict(),'variants':variants,'results':[], 'coverage':'unavailable'}
+
+    def media_path(self,asset_id):
+        return self.require('artifacts').verified_path(asset_id)
+
+    def events_since(self,stream,seq=0,limit=500):
+        if stream=='factory':
+            rows=self.db.conn.execute('SELECT * FROM events WHERE seq>? ORDER BY seq LIMIT ?', (seq,limit)).fetchall()
+            return [{**dict(r),'body':json.dumps(redact(json.loads(r['body'])))} for r in rows]
+        return self.db.uow().events.since(stream,seq=seq)[:limit]

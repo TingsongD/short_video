@@ -51,7 +51,7 @@ class RenderService:
             return [{**item,"sha256":hashlib.sha256(Path(item["src"]).read_bytes()).hexdigest()} for item in items]
         inputs_hash = content_hash({"segments":bound_media(segments), "audio":bound_media(audio),
                                    "captions":captions,"clock":clock,"extra":inputs,
-                                   "composition":b["composition_hash"],"renderer":b["renderer"],"version":"render.v2"})
+                                   "composition":b["composition_hash"],"renderer":b["renderer"],"version":"render.v3"})
         if b.get("inputs_hash") and b["inputs_hash"] != inputs_hash:
             raise ContractError("render_input_revision_mismatch", "build_id")
         if b["status"] in ("succeeded","collected"):
@@ -140,7 +140,11 @@ class RenderService:
         row = self.db.uow().records.get("renderbuild", build_id)
         if row is None:
             raise ContractError("unknown_build", "build_id", build_id)
-        return json.loads(row["body"])
+        body=json.loads(row["body"])
+        from ..operations.paths import restored_path
+        for key in ('workspace','hypit_workspace'):
+            if body.get(key):body[key]=str(restored_path(self.db,body[key]))
+        return body
 
     def _set(self, build_id, **fields):
         row = self.db.uow().records.get("renderbuild", build_id)

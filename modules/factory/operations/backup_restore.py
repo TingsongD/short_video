@@ -55,6 +55,31 @@ def create_backup(db, workspace, dest_dir, ledger_paths=()):
             shutil.copy2(src, target)
             arts.append({k: row[k] for k in ('id','sha256','status','local_path')})
         (dest / 'artifacts-manifest.json').write_text(json.dumps(arts, indent=2))
+        saved_roots=snapshot.execute("SELECT value FROM meta WHERE key='recovery_roots'").fetchone()
+        recovery=json.loads(saved_roots[0]) if saved_roots else {}
+        required_workspaces=[]
+        for row in snapshot.execute("SELECT body FROM records WHERE kind='renderbuild'"):
+            body=json.loads(row[0]); required_workspaces.append(body.get("workspace"))
+            if body.get("hypit_workspace"): required_workspaces.append(body["hypit_workspace"])
+        for name, original in recovery.items():
+            if not name.isidentifier(): raise ContractError('invalid_recovery_root','name',name)
+            source=Path(original)
+            for workspace_path in required_workspaces:
+                if workspace_path and Path(workspace_path).is_relative_to(source) and not Path(workspace_path).is_dir():
+                    raise ContractError('backup_missing_workspace','workspace',workspace_path)
+            if not source.exists():
+                if any(w and Path(w).is_relative_to(source) for w in required_workspaces):
+                    raise ContractError('backup_missing_workspace','root',name)
+                continue
+            for item in source.rglob('*'):
+                if not item.is_file(): continue
+                if item.is_symlink(): raise ContractError('backup_symlink','root',name)
+                target=_inside(dest,'recovery/'+name+'/'+str(item.relative_to(source)))
+                target.parent.mkdir(parents=True,exist_ok=True)
+                before=_sha(item); shutil.copy2(item,target)
+                if _sha(item)!=before or _sha(target)!=before:
+                    raise ContractError('backup_state_changed','root',name)
+        (dest/'recovery-roots.json').write_text(json.dumps(recovery,indent=2))
         financial = {table: [dict(r) for r in snapshot.execute(f'SELECT * FROM {table}')]
                      for table in ('budgets','reservations','reservation_lines','ledger_imports')}
         financial['unresolved_intents'] = [dict(r) for r in snapshot.execute('SELECT * FROM intents')]
@@ -99,6 +124,8 @@ def restore_into(backup_dir, new_root):
     for name in manifest['files']:
         if name == 'factory.db':
             target = target_db
+        elif name.startswith('recovery/'):
+            target = _inside(new_root / 'data/factory', name[len('recovery/'):])
         elif name.startswith('media/'):
             target = _inside(new_root / 'data/factory/artifacts', name[6:])
         elif name in manifest.get('ledgers', {}):
@@ -113,6 +140,12 @@ def restore_into(backup_dir, new_root):
                        (str((new_root / 'data/factory/artifacts').resolve()),))
         u.conn.execute("INSERT OR REPLACE INTO meta(key,value) VALUES('restore_pending',?)",
                        (manifest['created_at'],))
+        roots_file=backup_dir/'recovery-roots.json'
+        if roots_file.exists():
+            old=json.loads(roots_file.read_text())
+            new={name:str((new_root/'data/factory'/name).resolve()) for name in old}
+            u.conn.execute("INSERT OR REPLACE INTO meta(key,value) VALUES('recovery_roots',?)",(json.dumps(new),))
+            u.conn.execute("INSERT OR REPLACE INTO meta(key,value) VALUES('restore_path_mapping',?)",(json.dumps({old[k]:new[k] for k in old}),))
         u.events.append('factory:restore', 'restored_blocked', {'backup_at': manifest['created_at']})
     db.close()
     return {'restored': str(new_root), 'database': str(target_db),

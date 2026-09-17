@@ -144,7 +144,7 @@ describe("planner revision flow", () => {
     await waitFor(() => expect(screen.getByText("Run")).toBeEnabled());
     fireEvent.click(screen.getByText("Run"));
     await screen.findByText("Started job-e1");
-    const revs = calls.map((c) =>
+    const revs = calls.filter(c=>c.url!=="/api/session").map((c) =>
       (c.init.headers as any)["x-expected-revision"]);
     expect(revs).toEqual([undefined, "2", "2"]);
   });

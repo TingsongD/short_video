@@ -48,7 +48,7 @@ def doctor(root=".", providers=None):
     for name, ad in (providers or {}).items():
         try:
             r = ad.readiness() if hasattr(ad, "readiness") else {}
-            ok = bool(r.get("installed", r))
+            ok = r.get("installed") is True
             detail = "installed" if ok else "not installed"
         except Exception as e:
             ok, detail = False, type(e).__name__

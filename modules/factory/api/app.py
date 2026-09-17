@@ -6,6 +6,10 @@ media serves registered artifacts with bounded ranges; events stream
 ordered SSE with cursor replay.
 """
 import json
+import hashlib
+import tempfile
+import mimetypes
+from ..events.redact import redact
 from pathlib import Path
 
 from fastapi import FastAPI, Header, Request, Response
@@ -16,6 +20,8 @@ from ..domain.errors import ContractError
 from .idempotency import IdempotencyStore
 from .security import LocalSecurityMiddleware, new_session_token
 from .sse import event_stream
+from .inputs import json_command
+from starlette.concurrency import run_in_threadpool
 
 API_VERSION = "factory-api.v1"
 
@@ -34,12 +40,12 @@ def create_app(services, session_token=None):
     async def contract_error(request, exc):
         status = 409 if exc.code in (
             "stale_revision", "idempotency_conflict", "not_authorized",
-            "locked_field", "no_quote") else \
+            "locked_field", "no_quote", "idempotency_unresolved") else \
             404 if exc.code in ("not_found", "unknown_seed",
-                                "unknown_artifact") else \
+                                "unknown_artifact", "unknown_experiment", "unknown_variant") else \
             413 if exc.code == "too_large" else 400
-        return JSONResponse({"error": exc.code, "field": exc.field,
-                             "detail": exc.detail},
+        return JSONResponse(redact({"error": exc.code, "field": exc.field,
+                             "detail": exc.detail}),
                             status_code=status)
 
     @app.exception_handler(Exception)
@@ -82,63 +88,95 @@ def create_app(services, session_token=None):
         if not key:
             raise ContractError("missing_idempotency_key",
                                 "Idempotency-Key", "required")
-        return idem.run(key, request.method, request.url.path, {"payload": body, "expected_revision": request.headers.get("x-expected-revision")}, fn)
+        return idem.run_local(key, request.method, request.url.path, {"payload": body, "expected_revision": request.headers.get("x-expected-revision")}, fn)
 
     def expected_rev(request: Request):
         raw = request.headers.get("x-expected-revision")
-        return int(raw) if raw is not None else None
+        try:
+            return int(raw) if raw is not None else None
+        except ValueError:
+            raise ContractError("invalid_revision", "X-Expected-Revision")
 
     @app.post("/api/seeds", status_code=201)
     async def create_seed(request: Request):
-        body = await request.json()
+        body = await json_command(request)
         status, resp = mutation(request, body, lambda: (201, {
             "seed": services.create_seed(body["url"])}))
         return JSONResponse(resp, status_code=status)
 
     @app.post("/api/imports", status_code=201)
     async def import_file(request: Request):
-        raw = await request.body()
+        from ..services.app import MAX_UPLOAD_BYTES
         name = request.headers.get("x-filename", "upload.bin")
-        status, resp = mutation(
-            request, {"filename": name, "bytes": len(raw), "sha256": __import__("hashlib").sha256(raw).hexdigest()},
-            lambda: (201, {"artifact":
-                           services.import_file(name, raw)}))
-        return JSONResponse(resp, status_code=status)
+        size = 0; digest = hashlib.sha256()
+        with tempfile.NamedTemporaryFile(suffix=".part") as temp:
+            async for chunk in request.stream():
+                size += len(chunk)
+                if size > MAX_UPLOAD_BYTES:
+                    raise ContractError("too_large", "size")
+                digest.update(chunk); temp.write(chunk)
+            temp.flush()
+            status, resp = await run_in_threadpool(mutation, request, {"filename":name,"bytes":size,"sha256":digest.hexdigest()},
+                lambda:(201,{"artifact":services.import_file(name,path=temp.name)}))
+        return JSONResponse(resp,status_code=status)
 
-    @app.post("/api/research/plans", status_code=202)
+    @app.post("/api/research/plans")
     async def research_plan(request: Request):
-        body = await request.json()
-        status, resp = mutation(request, body, lambda: (202, {
-            "plan_id": f"rp-{body.get('seed_id', 'x')}",
-            "estimated_cost": body.get("estimated_cost", {}),
-            "status": "prepared"}))
-        return JSONResponse(resp, status_code=status)
+        raise ContractError("research_unavailable", "research", "Research commands require a configured qualified adapter and budget")
 
-    @app.post("/api/research/plans/{plan_id}/run", status_code=202)
+    @app.post("/api/research/plans/{plan_id}/run")
     async def research_run(plan_id: str, request: Request):
-        body = await request.json()
-        status, resp = mutation(request, body, lambda: (202, {
-            "plan_id": plan_id, "accepted": True}))
-        return JSONResponse(resp, status_code=status)
+        raise ContractError("research_unavailable", "research")
 
     @app.post("/api/seeds/{seed_id}/analyze", status_code=202)
     async def analyze(seed_id: str, request: Request):
-        body = await request.json()
-        status, resp = mutation(request, body, lambda: (202, {
-            "job_id": f"analyze-{seed_id}", "accepted": True}))
-        return JSONResponse(resp, status_code=status)
+        body=await json_command(request)
+        status,resp=mutation(request,body,lambda:(202,services.analyze_seed(seed_id,body)))
+        return JSONResponse(resp,status_code=status)
+
+    @app.post("/api/seeds/{seed_id}/media")
+    async def attach(seed_id: str,request: Request):
+        body=await json_command(request)
+        status,resp=mutation(request,body,lambda:(200,{"seed":services.attach_media(seed_id,body['artifact_id'])}))
+        return JSONResponse(resp,status_code=status)
+
+    @app.post("/api/blueprints/{blueprint_id}/review")
+    async def review_blueprint(blueprint_id: str,request: Request):
+        body=await json_command(request)
+        status,resp=mutation(request,body,lambda:(200,{"blueprint":services.review_blueprint(blueprint_id,body)}))
+        return JSONResponse(resp,status_code=status)
+
+    @app.post("/api/templates",status_code=201)
+    async def template(request: Request):
+        body=await json_command(request)
+        status,resp=mutation(request,body,lambda:(201,{"template":services.author_template(body)}))
+        return JSONResponse(resp,status_code=status)
+
+    @app.post("/api/experiments/{experiment_id}/assets/review")
+    async def asset_review(experiment_id: str,request: Request):
+        body=await json_command(request)
+        status,resp=mutation(request,body,lambda:(200,services.review_assets(experiment_id,body,expected_rev(request))))
+        return JSONResponse(resp,status_code=status)
+
+    @app.get("/api/jobs/{job_id}")
+    async def job(job_id: str):
+        return services.require('commands').get(job_id)
+
+    @app.get("/api/collections/{name}")
+    async def collection(name: str):
+        return {"items":services.collection(name)}
 
     @app.post("/api/experiments", status_code=201)
     async def create_experiment(request: Request):
-        body = await request.json()
-        eid = body.get("id") or f"exp-{len(body.get('variants', []))}"
+        body = await json_command(request)
+        eid = body.get("id") or "exp-"+__import__("uuid").uuid4().hex
         status, resp = mutation(request, body, lambda: (201, {
             "experiment": services.create_experiment_draft(eid, body)}))
         return JSONResponse(resp, status_code=status)
 
     @app.patch("/api/experiments/{experiment_id}/draft")
     async def patch_draft(experiment_id: str, request: Request):
-        body = await request.json()
+        body = await json_command(request)
         rev = expected_rev(request)
         status, resp = mutation(request, body, lambda: (200, {
             "draft": services.patch_experiment_draft(
@@ -147,23 +185,23 @@ def create_app(services, session_token=None):
 
     @app.post("/api/experiments/{experiment_id}/quote")
     async def quote(experiment_id: str, request: Request):
-        body = await request.json()
-        status, resp = mutation(request, body, lambda: (200, {
-            "quote": services.quote_experiment(experiment_id)}))
+        body = await json_command(request)
+        status, resp = mutation(request, body, lambda: (202, {
+            "quote": services.quote_experiment(experiment_id, expected_rev(request))}))
         return JSONResponse(resp, status_code=status)
 
     @app.post("/api/experiments/{experiment_id}/authorize")
     async def authorize(experiment_id: str, request: Request):
-        body = await request.json()
+        body = await json_command(request)
         rev = expected_rev(request)
         status, resp = mutation(request, body, lambda: (200, {
             "authorization": services.authorize_experiment(
-                experiment_id, rev)}))
+                experiment_id, rev, body)}))
         return JSONResponse(resp, status_code=status)
 
     @app.post("/api/experiments/{experiment_id}/run", status_code=202)
     async def run(experiment_id: str, request: Request):
-        body = await request.json()
+        body = await json_command(request)
         rev = expected_rev(request)
         status, resp = mutation(request, body, lambda: (202, {
             "run": services.run_experiment(experiment_id, rev)}))
@@ -171,38 +209,38 @@ def create_app(services, session_token=None):
 
     @app.post("/api/experiments/{experiment_id}/pause")
     async def pause(experiment_id: str, request: Request):
-        body = await request.json()
+        body = await json_command(request)
         status, resp = mutation(request, body, lambda: (200, {
             "state": services.pause_experiment(experiment_id)}))
         return JSONResponse(resp, status_code=status)
 
     @app.post("/api/experiments/{experiment_id}/resume")
     async def resume(experiment_id: str, request: Request):
-        body = await request.json()
+        body = await json_command(request)
         status, resp = mutation(request, body, lambda: (200, {
             "state": services.resume_experiment(experiment_id)}))
         return JSONResponse(resp, status_code=status)
 
     @app.post("/api/jobs/{job_id}/reconcile")
     async def reconcile(job_id: str, request: Request):
-        body = await request.json()
+        body = await json_command(request)
         status, resp = mutation(request, body, lambda: (200, {
             "reconciliation": services.reconcile_job(job_id)}))
         return JSONResponse(resp, status_code=status)
 
     @app.post("/api/variants/{variant_id}/reviews", status_code=201)
     async def review(variant_id: str, request: Request):
-        body = await request.json()
+        body = await json_command(request)
         status, resp = mutation(request, body, lambda: (201, {
             "review": services.record_review(
                 variant_id, body["check_type"], body["verdict"],
                 body["target_hash"],
-                evidence_ids=body.get("evidence_ids", []))}))
+                reviewer=body.get("reviewer", ""), notes=body.get("notes", ""), evidence_ids=body.get("evidence_ids", []))}))
         return JSONResponse(resp, status_code=status)
 
     @app.post("/api/variants/{variant_id}/revisions", status_code=201)
     async def revision(variant_id: str, request: Request):
-        body = await request.json()
+        body = await json_command(request)
         status, resp = mutation(request, body, lambda: (201, {
             "revision": services.create_variant_revision(
                 variant_id, body.get("reason", ""),
@@ -211,49 +249,94 @@ def create_app(services, session_token=None):
 
     @app.post("/api/variants/{variant_id}/deliver", status_code=202)
     async def deliver(variant_id: str, request: Request):
-        body = await request.json()
+        body = await json_command(request)
         status, resp = mutation(request, body, lambda: (202, {
             "delivery": services.deliver_variant(
-                variant_id, body["final_path"], body["name"],
-                body["folder_id"])}))
+                variant_id, body, expected_rev(request))}))
         return JSONResponse(resp, status_code=status)
 
     @app.post("/api/variants/{variant_id}/publications",
               status_code=201)
     async def publish(variant_id: str, request: Request):
-        body = await request.json()
+        body = await json_command(request)
         status, resp = mutation(request, body, lambda: (201, {
             "publication": services.record_publication(
                 variant_id, body["platform"], body["account_id"])}))
         return JSONResponse(resp, status_code=status)
 
+    @app.post("/api/variants/{variant_id}/studio",status_code=202)
+    async def studio_open(variant_id:str,request:Request):
+        body=await json_command(request)
+        def command():
+            variant,final,path,binding=services._final(variant_id)
+            services._current(variant['experiment_id'],expected_rev(request),True)
+            from ..domain.records import content_hash
+            return 202,services.commands.enqueue('studio_open',{'variant_id':variant_id,'binding':binding,
+                'session_id':'studio-'+content_hash(binding)[:20]},experiment_id=variant['experiment_id'],revision=variant['experiment_revision'])
+        status,resp=mutation(request,body,command)
+        return JSONResponse(resp,status_code=status)
+
+    @app.post("/api/studio/{session_id}/close",status_code=202)
+    async def studio_close(session_id:str,request:Request):
+        body=await json_command(request)
+        status,resp=mutation(request,body,lambda:(202,services.commands.enqueue('studio_close',{'session_id':session_id},phase='collect')))
+        return JSONResponse(resp,status_code=status)
+
+    @app.get("/api/studio/sessions")
+    async def studio_sessions():
+        rows=services.db.conn.execute("SELECT body FROM records WHERE kind='studio_session'").fetchall()
+        return {'items':[json.loads(r[0]) for r in rows]}
+
+    @app.post("/api/variants/{variant_id}/comments",status_code=201)
+    async def studio_comment(variant_id:str,request:Request):
+        body=await json_command(request)
+        def comment():
+            v=services.detail('variantplan',variant_id);exp=services._current(v['experiment_id'],expected_rev(request),True)
+            at=body.get('at_s');fps=exp.output_clock['num']/exp.output_clock['den']
+            if type(at) not in (int,float) or not 0<=at<v['target_frames']/fps or not body.get('text','').strip():
+                raise ContractError('invalid_comment','at_s/text')
+            import uuid
+            return 201,services.studio.import_comment(uuid.uuid4().hex,variant_id,at,body['text'],exp.revision)
+        status,resp=mutation(request,body,comment)
+        return JSONResponse(resp,status_code=status)
+
     # -------------------------------------------------------- media --
 
     @app.get("/api/assets/{asset_id}/media")
     async def media(asset_id: str, request: Request):
-        p = services.media_path(asset_id)
-        data = Path(p).read_bytes()
-        rng = request.headers.get("range")
-        headers = {"accept-ranges": "bytes",
-                   "content-type": "application/octet-stream"}
+        p = await run_in_threadpool(services.media_path,asset_id)
+        size=Path(p).stat().st_size; start,end=0,size-1; status=200
+        headers={"accept-ranges":"bytes","content-type":"application/octet-stream"}
+        row=services.db.uow().artifacts.get(asset_id)
+        probe=json.loads(row['probe']); fmt=probe.get('format_name','')
+        codec=next((x.get('codec_name','') for x in probe.get('streams',[]) if x.get('codec_type')=='video'),'')
+        if row['kind']=='video': headers['content-type']='video/webm' if 'webm' in fmt else 'video/mp4' if 'mp4' in fmt else 'video/quicktime'
+        elif row['kind']=='audio': headers['content-type']='audio/wav' if 'wav' in fmt else 'audio/mpeg' if 'mp3' in fmt else 'audio/mp4'
+        elif row['kind']=='image': headers['content-type']='image/'+{'mjpeg':'jpeg'}.get(codec,codec or 'png')
+        rng=request.headers.get('range')
         if rng:
             try:
-                unit, spec = rng.split("=")
-                start_s, end_s = spec.split("-")
-                start = int(start_s)
-                end = int(end_s) if end_s else len(data) - 1
+                unit,spec=rng.split('='); first,last=spec.split('-')
+                if unit!='bytes' or ',' in spec: raise ValueError()
+                if first:
+                    start=int(first); end=min(int(last),size-1) if last else size-1
+                else:
+                    count=int(last)
+                    if count<=0: raise ValueError()
+                    start=max(0,size-count)
+                if start<0 or start>=size or end<start: raise ValueError()
             except ValueError:
-                return JSONResponse({"error": "bad_range"},
-                                    status_code=416)
-            if unit != "bytes" or start > end or end >= len(data):
-                return JSONResponse({"error": "bad_range",
-                                     "detail": "range unsatisfiable"},
-                                    status_code=416)
-            headers["content-range"] = \
-                f"bytes {start}-{end}/{len(data)}"
-            return Response(data[start:end + 1], status_code=206,
-                            headers=headers)
-        return Response(data, headers=headers)
+                return JSONResponse({'error':'bad_range'},status_code=416,headers={'content-range':f'bytes */{size}'})
+            status=206; headers['content-range']=f'bytes {start}-{end}/{size}'
+        headers['content-length']=str(end-start+1)
+        def chunks():
+            with Path(p).open('rb') as stream:
+                stream.seek(start); remaining=end-start+1
+                while remaining>0:
+                    chunk=stream.read(min(65536,remaining))
+                    if not chunk: break
+                    remaining-=len(chunk); yield chunk
+        return StreamingResponse(chunks(),status_code=status,headers=headers)
 
     # ------------------------------------------------------- events --
 
@@ -261,11 +344,19 @@ def create_app(services, session_token=None):
     async def events(request: Request, stream: str = "factory",
                      follow: bool = False):
         last = request.headers.get("last-event-id")
-        after = int(last) if last else int(
-            request.query_params.get("after", 0))
+        try:
+            after = int(last) if last else int(request.query_params.get("after", 0))
+            if after<0:raise ValueError()
+        except ValueError:
+            raise ContractError("invalid_cursor","after")
         return StreamingResponse(
             event_stream(services, stream, after, follow=follow),
             media_type="text/event-stream",
             headers={"cache-control": "no-cache"})
 
+    # API and production frontend use a single loopback origin.
+    dashboard = Path(__file__).resolve().parents[3] / 'apps/factory-dashboard/dist'
+    if dashboard.is_dir():
+        from fastapi.staticfiles import StaticFiles
+        app.mount('/',StaticFiles(directory=dashboard,html=True),name='dashboard')
     return app

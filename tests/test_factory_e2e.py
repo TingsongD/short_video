@@ -455,10 +455,10 @@ def test_owned_cleanup_leaves_shared_and_unrelated(tmp_path):
                  cls="shared", holders=["video-1", "video-2"],
                  ports=[8200])
     killed = []
-    table = {777: {"pid": 777, "birth": "b1",
+    table = {777: {"pid": 777, "ppid": 0, "birth": "b1",
                    "command": ["preview", "--port", "9"]},
-             778: {"pid": 778, "birth": "b2", "command": ["cache"]},
-             999: {"pid": 999, "birth": "x", "command": ["other"]}}
+             778: {"pid": 778, "ppid": 0, "birth": "b2", "command": ["cache"]},
+             999: {"pid": 999, "ppid": 0, "birth": "x", "command": ["other"]}}
     cleaner = CleanupService(
         reg, table_fn=lambda: table,
         kill_fn=lambda pid, sig: killed.append((pid, sig)),

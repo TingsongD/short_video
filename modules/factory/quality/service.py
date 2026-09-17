@@ -65,6 +65,9 @@ class QualityService:
         now = now or datetime.now(timezone.utc).isoformat()
         out = self.gate.compare_finals(a_path, b_path,
                                        unchanged_regions, fps)
+        if _sha(a_path)==_sha(b_path):
+            out['ok']=False
+            out['missing_treatment']='Treatment and control have identical final bytes'
         from ..audio import pcm
         try:
             a_audio=pcm.decode(a_path,audio_rate); b_audio=pcm.decode(b_path,audio_rate)
@@ -111,6 +114,11 @@ class QualityService:
                 problems.append(f"missing_review:{cid}")
                 continue
             kinds.add(rev["check_type"])
+            if rev['check_type']=='creative':
+                newer=self.db.conn.execute("SELECT body FROM records WHERE kind='review' AND json_extract(body,'$.check_type')='creative' AND json_extract(body,'$.target_hash')=? ORDER BY created_at DESC,rowid DESC",(current,)).fetchall()
+                latest=next((json.loads(r[0]) for r in newer if json.loads(r[0]).get('binding')==binding),None)
+                if latest and latest['id']!=cid:
+                    problems.append(f'superseded_review:{cid}')
             if rev["check_type"] in ("technical","changed_region") and (rev["reviewer_type"]!="automated" or not rev.get("evidence_data",{}).get("report",{}).get("ok")):
                 problems.append(f"automated_evidence_required:{cid}")
             if rev.get("binding") != binding:

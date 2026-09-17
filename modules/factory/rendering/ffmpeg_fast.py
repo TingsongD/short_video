@@ -20,7 +20,7 @@ def _digest(path):
 
 
 def _ass_time(frame, fps=30):
-    cs = frame * 100 // fps
+    cs = int(frame * 100 // fps)
     seconds, fraction = divmod(cs, 100)
     minutes, seconds = divmod(seconds, 60)
     hours, minutes = divmod(minutes, 60)
@@ -41,7 +41,7 @@ WrapStyle: 0
 ScaledBorderAndShadow: yes
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Caption,Times New Roman,54,&H00FFFFFF,&H00FFFFFF,&H20000000,0,0,0,0,100,100,0,0,1,0.6,2,8,86,86,0,1
+Style: Caption,Arial,54,&H00FFFFFF,&H00FFFFFF,&H20000000,&H80000000,0,0,0,0,100,100,0,0,1,0.6,2,8,86,86,0,1
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """

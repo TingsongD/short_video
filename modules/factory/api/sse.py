@@ -12,8 +12,8 @@ def sse_frames(events, keepalive=True):
     clients can resume via Last-Event-ID."""
     out = []
     for e in events:
-        out.append(f"id: {e['seq']}\nevent: {e['type']}\n"
-                   f"data: {e['body']}\n\n")
+        out.append(f"id: {e['seq']}\nevent: factory\n"
+                   f"data: {json.dumps({'type':e['type'],'stream':e.get('stream'),'body':json.loads(e['body'])})}\n\n")
     if keepalive:
         out.append(": keepalive\n\n")
     return out
@@ -26,7 +26,7 @@ async def event_stream(services, stream, after, follow=False,
     response suitable for tests and dashboards alike."""
     sent = after
     for e in services.events_since(stream, sent):
-        yield f"id: {e['seq']}\nevent: {e['type']}\ndata: {e['body']}\n\n"
+        yield f"id: {e['seq']}\nevent: factory\ndata: {json.dumps({'type':e['type'],'stream':e.get('stream'),'body':json.loads(e['body'])})}\n\n"
         sent = e["seq"]
     yield ": keepalive\n\n"
     if follow:
@@ -37,6 +37,6 @@ async def event_stream(services, stream, after, follow=False,
                 yield ": keepalive\n\n"
                 continue
             for e in new:
-                yield f"id: {e['seq']}\nevent: {e['type']}\n" \
-                      f"data: {e['body']}\n\n"
+                yield f"id: {e['seq']}\nevent: factory\n" \
+                      f"data: {json.dumps({'type':e['type'],'stream':e.get('stream'),'body':json.loads(e['body'])})}\n\n"
                 sent = e["seq"]

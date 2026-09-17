@@ -5,7 +5,7 @@ PY := .venv/bin/python
 setup:
 	uv venv .venv
 	uv pip install -p .venv pytest jsonschema python-dotenv==1.2.3 \
-		fastapi==0.141.1 httpx==0.28.1
+		fastapi==0.141.1 httpx==0.28.1 uvicorn==0.53.0
 
 test:
 	$(PY) -m pytest tests -q

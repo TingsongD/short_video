@@ -5,10 +5,11 @@ switches to a configured alternative — never kills the listener.
 """
 import json
 import subprocess
+import time
 from datetime import datetime, timezone
 
 from ..domain.errors import ContractError
-from ..resources.service import scan_listeners, _kill
+from ..resources.service import scan_listeners, _kill, CleanupService
 
 
 def _now():
@@ -67,7 +68,7 @@ class ServiceManager:
             if mine and mine["pid"] == holder:
                 chosen = cand          # already ours — idempotent
                 break
-        if chosen is None:
+        if chosen is None and port is not None:
             raise ContractError(
                 "port_occupied", "port",
                 f"{port} and alternatives {alternatives} are held by "
@@ -75,10 +76,33 @@ class ServiceManager:
         argv = [a.replace("{port}", str(chosen)) for a in argv]
         info = self.spawn(argv, workspace)
         pid = info["pid"]
+        deadline=time.monotonic()+5
+        identity=None
+        while time.monotonic()<deadline:
+            identity=(self.table() if self.table else process_table()).get(pid)
+            if identity:break
+            time.sleep(.05)
+        if not identity:
+            raise ContractError('service_start_failed','service',name+': process exited before registration')
+        if mine:
+            if same_process(mine,table.get(mine["pid"])):
+                raise ContractError("service_still_running","service",name)
+            with self.reg.db.uow() as u:
+                u.events.append("factory:services","old_service_identity",{"id":f"service-{name}",**mine})
+                u.conn.execute("DELETE FROM records WHERE kind='resource' AND id=?",(f"service-{name}",))
         self.reg.register(
-            f"service-{name}", pid, self._birth(pid),
-            self._command(pid), "app", workspace=workspace,
-            ports=(chosen,), cls=cls)
+            f"service-{name}", pid, identity['birth'],
+            identity['command'], "app", workspace=workspace,
+            ports=(chosen,) if chosen is not None else (), cls=cls)
+        while time.monotonic()<deadline:
+            current=(self.table() if self.table else process_table()).get(pid)
+            if not same_process(identity,current):
+                raise ContractError('service_start_failed','service',name+': process exited during startup')
+            ready=self.health_fn(name,chosen) if self.health_fn else chosen is None or self.listeners().get(chosen)==pid
+            if ready:break
+            time.sleep(.1)
+        else:
+            raise ContractError('service_not_ready','service',name+': process is owned; inspect status or stop it')
         return {"service": name, "pid": pid, "port": chosen,
                 "state": "started", "at": _now()}
 
@@ -100,12 +124,12 @@ class ServiceManager:
         res = self.reg.get(f"service-{name}")
         if res is None:
             return {"service": name, "state": "absent"}
-        from ...batch.local import process_table, same_process
-        import signal
-        if same_process(res, process_table().get(res["pid"])):
-            kill_fn(res["pid"], signal.SIGTERM)
-        self.reg.set_status(f"service-{name}", "stopped")
-        return {"service": name, "state": "stopped", "at": _now()}
+        from ...batch.local import process_table
+        out=CleanupService(self.reg,table_fn=self.table or process_table,kill_fn=kill_fn,
+                           port_fn=self.listeners).cleanup(res["owner"],resource_ids={f"service-{name}"},include_application=True)
+        state="stopped" if out["state"]=="verified" else "blocked"
+        if state=="stopped": self.reg.set_status(f"service-{name}","stopped")
+        return {"service":name,"state":state,"at":_now(),"cleanup":out}
 
     def drain(self, scheduler):
         """Drain: stop NEW dispatch, let accepted work finish —

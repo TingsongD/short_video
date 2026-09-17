@@ -15,15 +15,14 @@ from modules.factory.artifacts.registry import ArtifactStore
 from modules.factory.seeds.registry import SeedRegistry
 from modules.factory.services import FactoryServices
 from modules.factory.store import Database
+from modules.factory.bootstrap import bootstrap
+from test_factory_application import application, prepare, quote_and_run
 
 
 @pytest.fixture
 def env(tmp_path):
-    db = Database(tmp_path / "f.db")
-    artifacts = ArtifactStore(tmp_path / "artifacts", db=db)
-    services = FactoryServices(db, seeds=SeedRegistry(db),
-                               artifacts=artifacts,
-                               artifact_root=tmp_path / "artifacts")
+    services = bootstrap(tmp_path)
+    db = services.db
     app = create_app(services, session_token="tok-test")
     client = TestClient(app)
     r = client.post("/api/session")
@@ -90,61 +89,32 @@ def test_idempotent_replay_and_conflict(env):
     assert r3.json()["error"] == "idempotency_conflict"
 
 
-def test_stale_revision_conflict(env):
-    client, csrf, *_ = env
-    mut(client, csrf, "post", "/api/experiments",
-        json={"id": "e1", "variants": ["A", "B"]})
-    r = mut(client, csrf, "patch",
-            "/api/experiments/e1/draft", rev=5, key="k-p1",
-            json={"provider": "vertex"})
-    assert r.status_code == 409
-    assert r.json()["error"] == "stale_revision"
-    r2 = mut(client, csrf, "patch",
-             "/api/experiments/e1/draft", rev=0, key="k2",
-             json={"provider": "vertex"})
-    assert r2.json()["draft"]["revision"] == 1
+def test_stale_revision_conflict(application):
+    s,c,act,w,root=application; prepare(application)
+    r=act('patch','/api/experiments/fixture-exp/draft',{'reason':'edit'},rev=5)
+    assert r.status_code==409 and r.json()['error']=='stale_revision'
+    r=act('patch','/api/experiments/fixture-exp/draft',{'reason':'edit'},rev=1)
+    assert r.json()['draft']['revision']==2
 
 
-# ------------------------------------------------- quote→auth→run ---
-
-def test_quote_authorize_run_flow(env):
-    client, csrf, *_ = env
-    mut(client, csrf, "post", "/api/experiments",
-        json={"id": "e2", "unique_work":
-              [{"credits": 4}, {"usd_micros": 900}]})
-    q = mut(client, csrf, "post", "/api/experiments/e2/quote",
-            key="kq", json={}).json()["quote"]
-    assert q["units"] == {"credits": 4, "usd_micros": 900}
-    a = mut(client, csrf, "post", "/api/experiments/e2/authorize",
-            key="ka", rev=0, json={})
-    assert a.json()["authorization"]["revision"] == 0
-    r = mut(client, csrf, "post", "/api/experiments/e2/run",
-            key="kr", rev=0, json={})
-    assert r.status_code == 202
-    assert r.json()["run"]["job_id"] == "job-e2"
+def test_quote_authorize_run_flow(application):
+    s,c,act,w,root=application; prepare(application)
+    plan=quote_and_run(application)
+    assert plan['total_price']=={}  # imported footage has no invented price
+    assert s.db.uow().jobs.get('run-fixture-exp-r1')
 
 
-def test_authorize_wrong_revision(env):
-    client, csrf, *_ = env
-    mut(client, csrf, "post", "/api/experiments",
-        json={"id": "e3", "unique_work": []})
-    mut(client, csrf, "post", "/api/experiments/e3/quote",
-        key="kq", json={})
-    mut(client, csrf, "patch", "/api/experiments/e3/draft", key="kp",
-        rev=0, json={"note": "changed"})
-    r = mut(client, csrf, "post", "/api/experiments/e3/authorize",
-            key="ka", rev=0, json={})
-    assert r.status_code == 409              # old approval can't fund
+def test_authorize_wrong_revision(application):
+    s,c,act,w,root=application; prepare(application)
+    r=act('post','/api/experiments/fixture-exp/authorize',{},rev=0)
+    assert r.status_code==409 and r.json()['error']=='stale_revision'
 
 
-def test_run_requires_authorization(env):
-    client, csrf, *_ = env
-    mut(client, csrf, "post", "/api/experiments",
-        json={"id": "e4"})
-    r = mut(client, csrf, "post", "/api/experiments/e4/run",
-            key="kr", json={})
-    assert r.status_code == 409
-    assert r.json()["error"] == "not_authorized"
+def test_run_requires_authorization(application):
+    s,c,act,w,root=application; prepare(application)
+    act('post','/api/experiments/fixture-exp/quote',{},rev=1);w.tick()
+    r=act('post','/api/experiments/fixture-exp/run',{},rev=1)
+    assert r.status_code==409 and r.json()['error']=='not_authorized'
 
 
 # ------------------------------------------------------------- media
@@ -168,6 +138,10 @@ def test_media_range_and_containment(env):
         f"bytes 10-19/{len(data)}"
     r = client.get(f"/api/assets/{aid}/media",
                    headers={"range": f"bytes={len(data)-1}-{len(data)+9}"})
+    assert r.status_code == 206 and r.content == data[-1:]
+    r = client.get(f"/api/assets/{aid}/media",headers={"range":"bytes=-10"})
+    assert r.status_code == 206 and r.content == data[-10:]
+    r = client.get(f"/api/assets/{aid}/media",headers={"range":"bytes=-0"})
     assert r.status_code == 416
     r = client.get("/api/assets/../secrets.toml/media")
     assert r.status_code in (404, 400, 422)
@@ -226,15 +200,17 @@ def test_openapi_documented(env):
         assert p in paths, p
 
 
-def test_material_edit_invalidates_quote_and_authorization(env):
-    client, csrf, *_ = env
-    mut(client, csrf, "post", "/api/experiments", key="create", json={"id": "edited", "unique_work": [{"credits": 5}]})
-    mut(client, csrf, "post", "/api/experiments/edited/quote", key="quote", json={})
-    mut(client, csrf, "post", "/api/experiments/edited/authorize", key="approve", rev=0, json={})
-    edit = mut(client, csrf, "patch", "/api/experiments/edited/draft", key="edit", rev=0, json={"unique_work": [{"credits": 500}]})
-    assert edit.status_code == 200
-    assert mut(client, csrf, "post", "/api/experiments/edited/run", key="run", rev=1, json={}).json()["error"] == "not_authorized"
-    assert mut(client, csrf, "post", "/api/experiments/edited/authorize", key="approve-again", rev=1, json={}).json()["error"] == "no_quote"
+def test_material_edit_invalidates_quote_and_authorization(application):
+    s,c,act,w,root=application; body,art=prepare(application)
+    act('post','/api/experiments/fixture-exp/quote',{},rev=1);w.tick()
+    plan=s.plan_for('fixture-exp')
+    act('post','/api/experiments/fixture-exp/authorize',{'plan_hash':plan['plan_hash'],'reviewer':'test'},rev=1)
+    edit=act('patch','/api/experiments/fixture-exp/draft',{'segments':body['segments'],'reason':'new cut'},rev=1)
+    assert edit.status_code==200
+    r=act('post','/api/experiments/fixture-exp/run',{},rev=2)
+    assert r.json()['error']=='no_quote'
+    r=act('post','/api/experiments/fixture-exp/authorize',{'plan_hash':plan['plan_hash'],'reviewer':'test'},rev=2)
+    assert r.json()['error']=='no_quote'
 
 
 def test_same_size_import_with_different_bytes_is_a_conflict(env):
