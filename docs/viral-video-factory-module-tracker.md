@@ -1,6 +1,6 @@
 # Viral Video Factory — Module Progress Tracker
 
-**Version:** 2.1 · **Initialized/updated:** 2026-09-16 · **State:** planning only; review findings are assigned below, and no new module tests have been certified by this documentation update.
+**Version:** 2.1 · **Initialized/updated:** 2026-09-16 · **State:** implementation started 2026-09-16 on `feat/factory`; F00 baseline recorded (344-test green baseline verified). Authoritative acceptance records: legacy `docs/gates.md` (G0 signed; G1–G12 pending live) and this tracker — neither signs the other.
 
 Use the [main handover](viral-video-factory-handover.md), [detailed module guide](viral-video-factory-implementation-modules.md) and [validation runbook](viral-video-factory-validation-runbook.md) together. Update this tracker during implementation with actual evidence; preserve the original requirement and explain deviations.
 
@@ -53,7 +53,7 @@ Dependencies below define implementation prerequisites, not permission to spend.
 
 | Module | Prerequisites | Engineering | Offline manual | Live | Owner / evidence / blocker |
 | --- | --- | --- | --- | --- | --- |
-| [F00 — Baseline and engineer onboarding](viral-video-factory-implementation-modules.md#f00) | None | planned | not_run | not_applicable | Unassigned; no evidence yet |
+| [F00 — Baseline and engineer onboarding](viral-video-factory-implementation-modules.md#f00) | None | passed | in_progress | not_applicable | Devin; rev `13a5d51`+F00 commit; [report](factory-reports/F00.md); M01–M04 agent-verified, human sign-off pending |
 | [F01 — QA harness, deterministic fixtures and fake providers](viral-video-factory-implementation-modules.md#f01) | F00 | planned | not_run | not_applicable | Unassigned; no evidence yet |
 | [F02 — Factory contracts and immutable revisions](viral-video-factory-implementation-modules.md#f02) | F01 | planned | not_run | not_applicable | Unassigned; no evidence yet |
 | [F03 — SQLite store and migrations](viral-video-factory-implementation-modules.md#f03) | F02 | planned | not_run | not_applicable | Unassigned; no evidence yet |

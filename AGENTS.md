@@ -1,5 +1,15 @@
 # AGENTS.md — Swarm Ownership Map & Rules
 
+> **SCOPE BANNER (factory work, 2026-09-16):** The swarm ownership table,
+> per-agent write partitions, Wave 1 fixture-only restriction and `feat/m<N>`
+> branch arrangement below are **historical and superseded** for Viral Video
+> Factory work. The factory assignment uses **one sequential builder** on
+> `feat/factory` per `docs/viral-video-factory-handover.md` §2.3. Still in
+> force: frozen `schemas/` + `tests/fixtures/` contracts, offline-only tests,
+> credential protection, and the finished-video upload/cleanup rule. F-module
+> acceptance (tracker) and legacy G-gates (`docs/gates.md`) are independent
+> records; neither signs the other.
+
 Wave 0 is complete. Contracts in `schemas/` + fixtures in `tests/fixtures/` are **FROZEN**.
 Read `GOAL.md` (mission) and `BUILD_PLAN.md` (spec) before touching code.
 

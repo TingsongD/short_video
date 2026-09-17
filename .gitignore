@@ -15,6 +15,12 @@ data/production/
 data/radar/viral-outliers/
 logs/
 
+# Factory runtime state — durable but never source-controlled (handover §2.4)
+/data/costs/*
+!/data/costs/.gitkeep
+/data/factory/
+/data/factory-qa/
+
 # Vendored repos — re-clone via pins in docs/vendor-pins.md
 vendor/
 

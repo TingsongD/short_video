@@ -1,3 +1,9 @@
+> **SCOPE BANNER (factory work, 2026-09-16):** This file's M1→M12 restart
+> sequence is the completed historical build. Current work is the Viral Video
+> Factory per `docs/viral-video-factory-handover.md` — do not restart M1.
+> Still in force: frozen contracts, offline tests, secrets discipline,
+> paid-call approval, and the video completion rule.
+
 /goal — REGULAR BUILD (single builder, sequential)
 
 Build the short-form AI video system in this repo, one module at a time:
