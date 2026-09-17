@@ -42,7 +42,7 @@ class Records:
                      getattr(record, "status", ""),
                      getattr(record, "parent_hash", "") or None,
                      getattr(record, "content_hash", "") or None,
-                     canonical(body), now, now))
+                     canonical(body), record.created_at or now, now))
             except sqlite3.IntegrityError as e:
                 raise ContractError("record_conflict", record.id, str(e))
         else:
@@ -90,7 +90,8 @@ class Jobs:
                 "VALUES(?,?,?,?,?,?,?,?,?,?,?,1)",
                 (job.id, job.logical_key, job.phase, job.experiment_id,
                  job.revision, job.variant_key, job.status,
-                 json.dumps(job.depends_on), job.retry_class, now, now))
+                 json.dumps(job.depends_on), job.retry_class,
+                 job.created_at or now, now))
         else:
             cur = self.conn.execute(
                 "UPDATE jobs SET status=?, lease_owner=?, lease_expires=?,"
