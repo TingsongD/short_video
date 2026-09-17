@@ -61,7 +61,7 @@ MODULES = {
 # run when its module is in this set.
 IMPLEMENTED = {"F00", "F01", "F02", "F03", "F04", "F05", "F06", "F07",
                "F08", "F09", "F10", "F11", "F12", "F13", "F14",
-               "F15", "F16", "F17", "F18", "F19", "F20", "F21", "F22", "F23", "F24", "F25", "F26", "F27", "F28", "F29", "F30", "F31", "F32", "F33"}
+               "F15", "F16", "F17", "F18", "F19", "F20", "F21", "F22", "F23", "F24", "F25", "F26", "F27", "F28", "F29", "F30", "F31", "F32", "F33", "F34"}
 
 LIVE_CASES = {  # cases that can only qualify under funded/connected scope
     "F16-M04", "F17-M04", "F25-M04", "F31-M04", "F32-M04",
@@ -187,7 +187,7 @@ def all_cases():
                    cases_f25, cases_f26, cases_f27, cases_f28,
                    cases_f29, cases_f30,
                    cases_f31, cases_f32,
-                   cases_f33)
+                   cases_f33, cases_f34)
     impls = {**cases_f01.implementations(), **cases_f02.implementations(),
              **cases_f03.implementations(), **cases_f04.implementations(),
              **cases_f05.implementations(), **cases_f06.implementations(),
@@ -213,7 +213,8 @@ def all_cases():
              **cases_f30.implementations(),
              **cases_f31.implementations(),
              **cases_f32.implementations(),
-             **cases_f33.implementations()}
+             **cases_f33.implementations(),
+             **cases_f34.implementations()}
     specs = {}
     for mid in MODULES:
         for n in range(1, 5):

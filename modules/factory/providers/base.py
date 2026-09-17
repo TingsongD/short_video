@@ -58,6 +58,10 @@ class GenerationAdapter:
     def observe(self, operation_id):
         raise NotImplementedError
 
+    def poll(self, operation_id):
+        """Executor-facing alias for observe — one remote-state read."""
+        return self.observe(operation_id)
+
     def download(self, operation_id, destination=None):
         raise NotImplementedError
 

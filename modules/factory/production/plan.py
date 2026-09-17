@@ -139,8 +139,11 @@ class ProductionService:
         try:
             outcome = self._execute(plan_id, node)
         except ContractError as e:
+            # remote_unfinished means the provider is still working —
+            # hand the job back to ready rather than failing it
             self.scheduler.fail(job["id"], job["fencing_token"],
-                                e.code, retryable=False)
+                                e.code,
+                                retryable=e.code == "remote_unfinished")
             return {"node": key, "outcome": "failed", "error": e.code}
         if outcome == "awaiting_review":
             self.scheduler.transition(job["id"], job["fencing_token"],

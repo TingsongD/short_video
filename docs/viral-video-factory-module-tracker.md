@@ -87,7 +87,7 @@ Dependencies below define implementation prerequisites, not permission to spend.
 | [F31 — Manual and authorized automated publishing](viral-video-factory-implementation-modules.md#f31) | F27, F25 | done | run | pending | docs/factory-reports/F31.md; 27 tests; M01–M03 pass, M04 awaits live post; suite 803 |
 | [F32 — Analytics readback and coverage](viral-video-factory-implementation-modules.md#f32) | F31 | done | run | pending | docs/factory-reports/F32.md; 19 tests; M01–M03 pass, M04 awaits live horizon; suite 821 |
 | [F33 — Experiment decisions and learning library](viral-video-factory-implementation-modules.md#f33) | F32 | done | run | pending | docs/factory-reports/F33.md; 16 tests; M01–M04 pass; suite 837 |
-| [F34 — Failure drills and performance qualification](viral-video-factory-implementation-modules.md#f34) | F30, F33 | planned | not_run | not_applicable | Unassigned; no evidence yet |
+| [F34 — Failure drills and performance qualification](viral-video-factory-implementation-modules.md#f34) | F30, F33 | done | run | pending | docs/factory-reports/F34.md; 14 e2e drills; M02/M04 pass, M01/M03 await operator review; suite 852 |
 | [F35 — Funded pilot, release and engineer handoff](viral-video-factory-implementation-modules.md#f35) | F34 | planned | not_run | pending | Unassigned; no evidence yet |
 
 ## Live qualification scopes

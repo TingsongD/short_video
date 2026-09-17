@@ -1050,6 +1050,7 @@ class FakeVertexTransport:
     def __init__(self, path, auth_loader):
         self.path = Path(path)
         self.auth_loader = auth_loader
+        self.payload_fn = None        # oid -> bytes; default marker
         if self.path.exists():
             self.doc = json.loads(self.path.read_text())
         else:
@@ -1146,7 +1147,8 @@ class FakeVertexTransport:
                 it["output"] = {"video": {"base64": "!!!not-b64!!!"}}
             else:
                 it["status"] = "SUCCEEDED"
-                payload = f"vertex-media:{iid}".encode()
+                payload = (self.payload_fn(iid) if self.payload_fn
+                           else f"vertex-media:{iid}".encode())
                 it["output"] = {"video": {
                     "base64": base64.b64encode(payload).decode()}}
                 it["usage"] = {"input_tokens": 103,
