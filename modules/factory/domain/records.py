@@ -495,6 +495,105 @@ class Authorization(Record):
         return e
 
 
+# ------------------------------------------------------------ references
+
+REFERENCE_ROLES = {"product_front", "product_back", "product_detail",
+                   "presenter_headshot", "presenter_full", "style",
+                   "scene"}
+REFERENCE_ORIGINS = {"manual_import", "product_snapshot", "generated"}
+ATTR_STATES = {"observed", "inferred", "unknown"}
+
+
+@dataclass
+class PresenterIdentity(Record):
+    """Fictional or otherwise authorized presenter — never the seed's
+    presenter copied forward."""
+    kind: str = "fictional"          # fictional | licensed
+    guide: dict = field(default_factory=dict)   # appearance/setting/
+                                                # framing/wardrobe
+    provenance: str = ""             # where the identity is authorized from
+
+    def validate(self):
+        e = super().validate()
+        if self.kind not in ("fictional", "licensed"):
+            e.append(ContractError("bad_presenter_kind", "kind", self.kind))
+        if not self.provenance:
+            e.append(ContractError("missing_field", "provenance"))
+        if self.provenance == "seed_frame":
+            e.append(ContractError("seed_presenter_copied", "provenance"))
+        return e
+
+
+@dataclass
+class VisualReference(Record):
+    """One candidate/accepted visual reference bound to exact artifact
+    bytes. Acceptance pins `artifact_sha256`; a replaced reference is a
+    new revision, never a mutation."""
+    pack_id: str = ""
+    revision: int = 0
+    role: str = ""                   # REFERENCE_ROLES
+    origin: str = "manual_import"    # REFERENCE_ORIGINS
+    artifact_id: str = ""
+    artifact_sha256: str = ""
+    source_artifact_ids: list = field(default_factory=list)
+    variant_id: str = ""
+    attributes: dict = field(default_factory=dict)
+    # {name: {"value": str, "state": observed|inferred|unknown}}
+    acceptance: dict = field(default_factory=dict)
+    # {state: pending|accepted|rejected, reviewer, reasons[], limits[],
+    #  reviewed_hash}
+    generation_attempt_id: str = ""
+    parent_hash: str = ""
+    status: str = "pending"          # pending|accepted|rejected|superseded
+
+    def validate(self):
+        e = super().validate()
+        _id_errors(e, self.pack_id, "pack_id")
+        if self.role not in REFERENCE_ROLES:
+            e.append(ContractError("bad_reference_role", "role", self.role))
+        if self.origin not in REFERENCE_ORIGINS:
+            e.append(ContractError("bad_reference_origin", "origin",
+                                   self.origin))
+        for name, attr in (self.attributes or {}).items():
+            if not isinstance(attr, dict):
+                continue               # control keys: extra_details, ...
+            if attr.get("state") not in ATTR_STATES:
+                e.append(ContractError("bad_attr_state",
+                                       f"attributes.{name}"))
+        acc = self.acceptance or {}
+        if acc.get("state") == "accepted" and \
+                acc.get("reviewed_hash") != self.artifact_sha256:
+            e.append(ContractError("acceptance_hash_mismatch",
+                                   "acceptance.reviewed_hash"))
+        if self.status not in ("pending", "accepted", "rejected",
+                               "superseded"):
+            e.append(ContractError("bad_reference_status", "status",
+                                   self.status))
+        return e
+
+
+@dataclass
+class ReferencePack(Record):
+    """All visual references for one product/variant + presenter, bound
+    to a plan hash. `pack_hash` identifies the accepted selection."""
+    product_snapshot_id: str = ""
+    product_id: str = ""
+    variant_id: str = ""
+    presenter_id: str = ""
+    plan_hash: str = ""              # bound experiment/plan revision
+    pack_hash: str = ""              # hash of {role: artifact_sha256}
+    required_roles: list = field(default_factory=list)
+    repair_attempts: int = 0
+    status: str = "assembling"       # assembling|ready|stale
+
+    def validate(self):
+        e = super().validate()
+        _id_errors(e, self.product_id, "product_id")
+        if self.status not in ("assembling", "ready", "stale"):
+            e.append(ContractError("bad_pack_status", "status", self.status))
+        return e
+
+
 # ------------------------------------------------------------------ jobs
 
 @dataclass

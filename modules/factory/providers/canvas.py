@@ -10,6 +10,7 @@
 - The adapter records its own prep/operation map in `state` (a
   dict-like store); the caller's Executor records intents/attempts.
 """
+import base64
 import hashlib
 import json
 
@@ -102,12 +103,17 @@ class CanvasAdapter(GenerationAdapter):
             request, dict) else request.requested_duration_s)
         model = (request.get("model") if isinstance(request, dict)
                  else request.model)
+        kind = (request.get("kind") if isinstance(request, dict)
+                else getattr(request, "kind", "video")) or "video"
         canvas = self.cli.call("canvas", "create", "--title", title)
         project_id = canvas["projectId"]
-        node = self.cli.call(
-            "node", "create", "video", "--project-id", project_id,
-            "--model", model, "--mode", "t2v",
-            "--duration", duration, "--prompt", prompt)
+        args = ["node", "create", kind, "--project-id", project_id,
+                "--model", model,
+                "--mode", "t2v" if kind == "video" else "t2i",
+                "--prompt", prompt]
+        if kind == "video":
+            args += ["--duration", duration]
+        node = self.cli.call(*args)
         prep = {"project_id": project_id,
                 "node_id": node["nodeId"],
                 "update_id": node.get("updateId"),
@@ -170,8 +176,13 @@ class CanvasAdapter(GenerationAdapter):
             data = self.cli.call(*args)
         except CanvasError as e:
             raise ProviderError(e.code, transient=True)
+        raw = data.get("bytes_b64")
+        payload = base64.b64decode(raw) if raw is not None else \
+            data.get("bytes", b"")
+        if isinstance(payload, str):
+            payload = payload.encode()
         return {"operation_id": operation_id,
-                "bytes": data.get("bytes", b""),
+                "bytes": payload,
                 "sha256": data.get("sha256", "")}
 
     def _remote_op(self, operation_id=None, submit_id=None):

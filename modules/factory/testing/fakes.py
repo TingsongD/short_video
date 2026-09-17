@@ -714,6 +714,10 @@ VERTEX_MODELS = {
         "references": {"image": 2, "video": 1}, "audio": True}}
 
 
+_TINY_PNG_B64 = ("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ"
+                 "AAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
+
+
 class _Completed:
     def __init__(self, rc, stdout="", stderr=""):
         self.returncode, self.stdout, self.stderr = rc, stdout, stderr
@@ -921,8 +925,12 @@ class FakeCanvasRunner:
             if "download_fails" in self.doc["faults"]:
                 raise _Fault("transport_error")
             import hashlib as _h
-            payload = f"canvas-media:{nid}".encode()
-            return {"bytes": payload.decode(),
+            if node.get("kind") == "image":
+                # a real 1x1 PNG so artifact intake can probe it
+                payload = base64.b64decode(_TINY_PNG_B64)
+            else:
+                payload = f"canvas-media:{nid}".encode()
+            return {"bytes_b64": base64.b64encode(payload).decode(),
                     "sha256": _h.sha256(payload).hexdigest()}
         raise _Fault(f"unknown_command:{' '.join(argv)}")
 
