@@ -1,7 +1,7 @@
 """Ordered migrations. Every DB carries meta.schema_version; an older
 binary refuses a newer database rather than reinterpreting it."""
 
-CURRENT_VERSION = 5
+CURRENT_VERSION = 6
 
 MIGRATIONS = [
     (1, """
@@ -61,7 +61,8 @@ CREATE TABLE attempts (
 );
 CREATE INDEX attempts_remote ON attempts(remote_id) WHERE remote_id IS NOT NULL;
 CREATE INDEX attempts_unfinished ON attempts(status)
-  WHERE status IN ('dispatching','accepted','running','unknown');
+  WHERE status IN ('prepared','dispatching','accepted','running',
+                   'unknown','cancel_requested');
 
 CREATE TABLE events (
   seq INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -188,5 +189,8 @@ CREATE TABLE scheduler_flags (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+"""),
+    (6, """
+ALTER TABLE attempts ADD COLUMN retry_state TEXT NOT NULL DEFAULT '{}';
 """),
 ]

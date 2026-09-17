@@ -144,7 +144,8 @@ class Attempts:
     def unfinished(self):
         return [dict(r) for r in self.conn.execute(
             "SELECT * FROM attempts WHERE status IN "
-            "('dispatching','accepted','running','unknown')").fetchall()]
+            "('prepared','dispatching','accepted','running','unknown',"
+            "'cancel_requested')").fetchall()]
 
 
 class Events:

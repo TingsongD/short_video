@@ -136,7 +136,9 @@ class FakeProvider:
             self.state.save()
             raise ProviderError("operation_not_found")
         op["polls"] += 1
-        if op["status"] == "accepted":
+        if op["status"] == "cancel_requested":
+            op["status"] = "cancelled"
+        elif op["status"] == "accepted":
             if "stalled-operation" in op["faults"]:
                 pass  # stays accepted forever
             elif "accepted-then-failed" in op["faults"]:
@@ -175,6 +177,19 @@ class FakeProvider:
             destination.write_bytes(payload)
         return {"operation_id": operation_id, "bytes": payload,
                 "sha256": hashlib.sha256(payload).hexdigest()}
+
+    def cancel(self, operation_id):
+        """Acknowledgement is not terminal cancellation: an accepted op
+        becomes cancel_requested and resolves to cancelled on next poll."""
+        self._check_auth()
+        op = self.state.doc["operations"].get(operation_id)
+        if op is None:
+            raise ProviderError("operation_not_found")
+        if op["status"] in ("accepted", "running"):
+            op["status"] = "cancel_requested"
+        self.state.save()
+        return {"operation_id": operation_id,
+                "acknowledged": True, "terminal": False}
 
     def reconcile(self, operation_id=None, request_hash=None):
         """Truthful remote state for recovery — no new effects."""
