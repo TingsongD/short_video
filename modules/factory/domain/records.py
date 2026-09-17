@@ -946,6 +946,8 @@ class Publication(Record):
     horizon_policy: dict = field(default_factory=dict)  # predeclared
     manual: bool = False             # manual lane registration
     deleted_at: str = ""             # explicit deletion — never silent
+    experiment_id: str = ""          # owning experiment (resolved from variant plan)
+    experiment_revision: int = 0     # revision at publication time — learning is scoped by it
 
     def validate(self):
         e = super().validate()

@@ -3,6 +3,7 @@
 frame regions and declared fields; anything else is a policy breach —
 music, product, voice or provider drift is named explicitly.
 """
+from ...script.voicetext import clean
 from ..domain.clocks import FrameInterval
 
 DEPENDENT_OF = {
@@ -96,4 +97,28 @@ def check_treatment(control, variant, allowed_regions, allowed_fields,
                         "flag": "dependency_outside_region",
                         "detail": f"{field} change requires {dep} inside "
                                   "the declared region"})
+    # Derived media are content-addressed by their source: a declared
+    # dependent field is not proof the derived track actually changed.
+    for c, v in zip(csegs, vsegs):
+        if c.get("copy") != v.get("copy"):
+            for dep in ("speech", "captions"):
+                if v.get(dep) and v.get(dep) == c.get(dep):
+                    problems.append({
+                        "flag": "stale_derived_media",
+                        "detail": f"segment {c.get('id')} copy changed but "
+                                  f"{dep} is byte-identical"})
+            pic = v.get("picture")
+            if isinstance(pic, dict) and pic == c.get("picture") and (
+                    pic.get("lip_sync") or pic.get("derived_from") == "speech"):
+                problems.append({
+                    "flag": "stale_derived_media",
+                    "detail": f"segment {c.get('id')} copy changed but "
+                              "lip-sync picture is unchanged"})
+        speech = v.get("speech")
+        bound = isinstance(speech, dict) and speech.get("normalized_copy")
+        if bound and clean(v.get("copy") or "") != bound:
+            problems.append({
+                "flag": "stale_speech",
+                "detail": f"segment {c.get('id')} speech was synthesized "
+                          "for different copy"})
     return problems

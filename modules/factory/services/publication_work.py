@@ -22,6 +22,14 @@ class PublicationWork:
             platform=body.get('platform',''),account_id=body.get('account_id',''),metadata=body.get('metadata',{}),
             visibility=body.get('visibility','public'),scheduled_at=body.get('scheduled_at',''),tz=body.get('timezone','UTC'),horizon_policy=policy,
             experiment_id=v['experiment_id'],experiment_revision=v['experiment_revision'])
+        # Persist the review evidence the external effect must still
+        # satisfy — acceptance is revalidated at execution time, so a
+        # withdrawn or superseded review can never publish.
+        row=s.db.uow().records.get('publicationintent','intent:'+p.id)
+        saved=json.loads(row['body'])
+        saved.update(check_ids=list(body.get('check_ids') or []),binding=binding)
+        with s.db.uow() as u:
+            u.conn.execute("UPDATE records SET body=? WHERE kind='publicationintent' AND id=? AND revision=?",(json.dumps(saved),'intent:'+p.id,row['revision']))
         return p.to_dict()
 
     def authorize(self,pid,body):
@@ -52,6 +60,17 @@ class PublicationWork:
             s.executor.require_request(aid,request);return aid
         s.publishing.effects=grant
         path=s.artifacts.verified_path(p['artifact_id'])
+        # Final gate before the external effect: the creative review must
+        # still pass against these bytes — a review withdrawn, superseded
+        # or invalidated since queueing blocks publication truthfully.
+        intent=s.detail('publicationintent','intent:'+p['id']) or {}
+        check_ids=intent.get('check_ids');bind=intent.get('binding')
+        if check_ids is None or bind is None:
+            meta=s.db.conn.execute("SELECT value FROM meta WHERE key=?",('final:'+p['variant_plan_id'],)).fetchone()
+            stored=json.loads(meta[0]) if meta else {}
+            check_ids=stored.get('check_ids',[]) if check_ids is None else check_ids
+            bind=stored.get('binding') if bind is None else bind
+        s.quality.accept(path,check_ids,bind)
         out=s.publishing.publish(p['id'],video_path=str(path))
         if out['status'] in ('uploading','processing','unknown'):
             with s.db.uow() as u:u.conn.execute("UPDATE jobs SET phase='collect' WHERE id=?",(job['id'],))

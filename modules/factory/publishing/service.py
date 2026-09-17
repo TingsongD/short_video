@@ -85,7 +85,9 @@ class PublishingService:
                         metadata=dict(metadata or {}),
                         media_url=media_url, timezone=tz,
                         horizon_policy=dict(horizon_policy or {}),
-                        manual=not automated)
+                        manual=not automated,
+                        experiment_id=experiment_id,
+                        experiment_revision=experiment_revision)
         p.artifact_id=artifact_id
         p.validate_or_raise()
         with self.db.uow() as u:
@@ -308,6 +310,10 @@ class PublishingService:
                                     "remote_post_id", remote_post_id)
             if post.get('platform')!=platform or post.get('remote_post_id')!=remote_post_id or not post.get('published_at') or not post.get('post_url','').startswith('https://'):
                 raise ContractError('post_identity_unverified','remote_post_id')
+        # The publication inherits the variant's experiment identity —
+        # revision-scoped learning depends on it.
+        vp = self.db.uow().records.get("variantplan", variant_plan_id)
+        vpb = json.loads(vp["body"]) if vp else {}
         p = Publication(
             schema_version="publication.v1", id=publication_id,
             created_at=now, variant_plan_id=variant_plan_id,
@@ -321,7 +327,9 @@ class PublishingService:
             idempotency_key=_key(publication_id, final_sha256,
                                  platform, account_id),
             metadata=dict(metadata or {}),
-            horizon_policy=dict(horizon_policy or {}), manual=True)
+            horizon_policy=dict(horizon_policy or {}), manual=True,
+            experiment_id=vpb.get("experiment_id",""),
+            experiment_revision=vpb.get("experiment_revision",0))
         p.validate_or_raise()
         with self.db.uow() as u:
             u.records.put(p)

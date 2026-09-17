@@ -303,7 +303,11 @@ class ApplicationWorker:
             if offset!=end: raise ContractError('picture_coverage_incomplete','segment',seg['id'])
             for c in seg.get('captions') or []:
                 captions.append({'id':seg['id']+'-caption-'+str(len(captions)),**c})
-            speech=seg.get('speech') or {}
+            speech=seg.get('speech') if isinstance(seg.get('speech'),dict) else {}
+            if speech.get('normalized_copy') is not None:
+                from ...script.voicetext import clean
+                if clean(seg.get('copy') or '')!=speech['normalized_copy']:
+                    raise ContractError('stale_speech','segment',seg['id'])
             if speech.get('artifact_id'):
                 aid=speech['artifact_id']; art=s.db.uow().artifacts.get(aid); path=s.artifacts.verified_path(aid)
                 item={'id':seg['id']+'-speech','kind':'audio','artifact_id':aid,'sha256':art['sha256'],'in_frame':start,'out_frame':end,

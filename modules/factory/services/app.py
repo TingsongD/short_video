@@ -215,8 +215,17 @@ class FactoryServices:
             raise ContractError('approval_binding_required','plan_hash/reviewer')
         bp=next((x for x in self.collection('blueprints') if x['content_hash']==exp.blueprint_hash),None)
         if not bp: raise ContractError('blueprint_missing','experiment')
-        report=self.experiments.acceptance_report(eid,self.analysis.get(bp['id']),self.templates.get(exp.packaging['template_ref']['id'],exp.packaging['template_ref']['revision']),
-             [ProductSnapshot(**self.detail('productsnapshot',pid)) for pid in exp.product_snapshot_ids])
+        # Product evidence is pinned to the packaged snapshot REVISION —
+        # a post-approval refresh must never rewrite the approved facts.
+        pins={p['snapshot_id']:p.get('revision') for p in exp.packaging.get('products',[])}
+        snapshots=[]
+        for pid in exp.product_snapshot_ids:
+            rev=pins.get(pid)
+            row=self.db.uow().records.get('productsnapshot',pid,revision=rev) if rev is not None else self.db.uow().records.get('productsnapshot',pid)
+            if row is None:
+                raise ContractError('pinned_revision_missing','productsnapshot',pid)
+            snapshots.append(ProductSnapshot(**json.loads(row['body'])))
+        report=self.experiments.acceptance_report(eid,self.analysis.get(bp['id']),self.templates.get(exp.packaging['template_ref']['id'],exp.packaging['template_ref']['revision']),snapshots)
         if report['problems']: raise ContractError('acceptance_blocked','experiment',json.dumps(report['problems']))
         with self.db.uow() as u:
             self.experiments.accept(eid,exp.content_hash)

@@ -188,7 +188,16 @@ class ExperimentService:
                              "detail": "blueprint not accepted"})
         claim_texts = {c["text"] for p in snapshots
                        for c in p.claims}
-        for seg in control.packaging["segments"]:
+        # Every variant's claims face the pinned product evidence — a
+        # treatment may not introduce support the control never had.
+        segments = list(control.packaging["segments"])
+        for key in "BCD":
+            row = self.db.uow().records.get(
+                "variantplan", f"{experiment_id}:{key.lower()}")
+            if row:
+                segments += (json.loads(row["body"]).get("segments")
+                             or [])
+        for seg in segments:
             for claim in seg.get("claims") or []:
                 if claim not in claim_texts:
                     problems.append({"flag": "unsupported_claim",

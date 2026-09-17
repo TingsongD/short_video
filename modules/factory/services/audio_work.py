@@ -29,7 +29,7 @@ class AudioWork:
             raise ContractError('speech_scope_mismatch','job_id')
         operation=next(x for x in effect['operations'] if x['key']==command['command']['input']['operation'])
         req=operation['request']
-        if req.get('text')!=self.speech.normalize(seg.get('copy','')):raise ContractError('speech_copy_mismatch','text')
+        if self.speech.normalize(req.get('text',''))!=self.speech.normalize(seg.get('copy','')):raise ContractError('speech_copy_mismatch','text')
         sid='speech-'+uuid.uuid4().hex
         voice={k:req.get(k) for k in ('voice_id','model','language','settings')}
         self.speech.plan_segment(sid,variant.id,req['text'],voice,seg['target'],utcnow())
@@ -67,11 +67,18 @@ class AudioWork:
             if binding['experiment_id']!=eid or binding['revision']!=revision or speech['status']!='approved':raise ContractError('stale_or_unapproved_speech','speech_id')
             self.s.artifacts.verified_path(speech['artifact_id'])
             caps=self.s.detail('captionset','caps:'+sid)
+            attached=0
             for key,items in segments.items():
                 for seg in items:
-                    if seg['id']==binding['segment_id'] and seg.get('copy')==speech['source_text'] and seg['target']==speech['target']:
-                        seg['speech']={'artifact_id':speech['artifact_id'],'speech_hash':speech['speech_hash']}
+                    if seg['id']==binding['segment_id'] and self.speech.normalize(seg.get('copy') or '')==self.speech.normalize(speech.get('source_text') or '') and seg['target']==speech['target']:
+                        # Bind the canonical identity, not the surface
+                        # form: copy text may carry contractions/numerals
+                        # the synthesizer spelled differently.
+                        seg['speech']={'artifact_id':speech['artifact_id'],'speech_hash':speech['speech_hash'],
+                                       'source_text':speech.get('source_text'),'normalized_copy':self.speech.normalize(speech.get('source_text') or '')}
+                        attached+=1
                         if not seg.get('captions'):seg['captions']=[{k:c[k] for k in ('start_frame','end_frame','text')} for c in caps['cues']]
+            if not attached:raise ContractError('speech_unattached','speech_id',sid)
         branches=[{'key':k,'factor':v.changed_factor,'regions':[x.to_dict() if hasattr(x,'to_dict') else x for x in v.allowed_regions],
             'segments':segments[k],'hypothesis':v.hypothesis,'primary_metric':v.primary_metric,'allowed_fields':v.allowed_fields,'dependent_fields':v.dependent_fields} for k,v in variants.items() if k!='A']
         return self.s.patch_experiment_draft(eid,{'segments':segments['A'],'variants':branches,'reason':'Attach reviewed speech and fitted captions'},revision)

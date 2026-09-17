@@ -69,8 +69,11 @@ class LearningService:
             body = json.loads(pub["body"])
             vp = self._record("variantplan",
                               body.get("variant_plan_id", ""))
+            # Only this revision's publications gate its policy — older
+            # revisions' posts belong to older decision chains.
             if vp and json.loads(vp["body"]).get(
                     "experiment_id") == experiment_id and \
+                    body.get("experiment_revision") == revision and \
                     body.get("status") not in ("failed",):
                 raise ContractError(
                     "policy_after_publication", "experiment_id",
@@ -129,7 +132,7 @@ class LearningService:
         control_key = "A"
         evidence, per_variant = [], {}
         for vp in variants:
-            pub = self._publication_for(vp["id"])
+            pub = self._publication_for(vp)
             snap = self._snapshot(pub["id"], horizon) if pub else None
             entry = {"variant": vp["variant_key"],
                      "publication_id": (pub or {}).get("id", ""),
@@ -396,8 +399,12 @@ class LearningService:
                 out.append(b)
         return out
 
-    def _publication_for(self,variant_plan_id):
-        found=[json.loads(r['body']) for r in self._all('publication') if json.loads(r['body']).get('variant_plan_id')==variant_plan_id and json.loads(r['body']).get('status')=='public' and not json.loads(r['body']).get('deleted_at')]
+    def _publication_for(self,variant):
+        found=[json.loads(r['body']) for r in self._all('publication')
+            if json.loads(r['body']).get('variant_plan_id')==variant['id']
+            and json.loads(r['body']).get('experiment_revision')==variant.get('experiment_revision')
+            and json.loads(r['body']).get('status')=='public'
+            and not json.loads(r['body']).get('deleted_at')]
         return found[0] if len(found)==1 else None
 
     def _snapshot(self,publication_id,horizon):
