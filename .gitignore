@@ -19,7 +19,7 @@ logs/
 /data/costs/*
 !/data/costs/.gitkeep
 /data/factory/
-/data/factory-qa/
+/data/factory-qa*/
 
 # Vendored repos — re-clone via pins in docs/vendor-pins.md
 vendor/
