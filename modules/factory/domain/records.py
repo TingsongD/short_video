@@ -672,6 +672,89 @@ class CaptionSet(Record):
         return e
 
 
+# ---------------------------------------------------------------- music
+
+@dataclass
+class MusicBed(Record):
+    """One music master for an experiment — imported/licensed or
+    generated. Provenance is mandatory; `bpm` stays None when
+    unmeasured."""
+    source: str = "imported"         # imported | generated
+    provenance: str = ""             # license ref or model+route
+    artifact_id: str = ""
+    sha256: str = ""
+    duration_s: object = None
+    bpm: object = None
+    structure: dict = field(default_factory=dict)
+    brief: dict = field(default_factory=dict)   # seed energy/rhythm/
+                                                # arrangement → original
+    construction: dict = field(default_factory=dict)  # trims/loops/
+                                                      # crossfades
+    generation_attempt_id: str = ""
+    status: str = "draft"            # draft | master | superseded
+
+    def validate(self):
+        e = super().validate()
+        if self.source not in ("imported", "generated"):
+            e.append(ContractError("bad_bed_source", "source",
+                                   self.source))
+        if not self.provenance:
+            e.append(ContractError("missing_field", "provenance"))
+        return e
+
+
+@dataclass
+class MixProfile(Record):
+    """Frozen mix config for an experiment revision: bed, gains, duck
+    envelope, rate/channels, clipping policy, measured loudness
+    target. `profile_hash` is the frozen identity."""
+    experiment_id: str = ""
+    music_bed_id: str = ""
+    sample_rate: int = 48000
+    channels: int = 2
+    speech_gain_db: float = 0.0
+    music_gain_db: float = -14.0
+    duck: dict = field(default_factory=dict)
+    # {enabled, amount_db, regions: [FrameInterval-dict]}
+    loudness_target: dict = field(default_factory=dict)
+    # measured during fixture qualification — never an invented
+    # platform number: {"rms_dbfs": x, "peak_dbfs": y, "basis": str}
+    clip_policy: str = "prevent"     # prevent | allow_report
+    profile_hash: str = ""
+    status: str = "draft"            # draft | frozen
+
+    def validate(self):
+        e = super().validate()
+        _id_errors(e, self.experiment_id, "experiment_id")
+        if self.sample_rate <= 0 or self.channels not in (1, 2):
+            e.append(ContractError("bad_mix_format", "sample_rate/"
+                                   "channels"))
+        if self.clip_policy not in ("prevent", "allow_report"):
+            e.append(ContractError("bad_clip_policy", "clip_policy"))
+        if self.status == "frozen" and not self.profile_hash:
+            e.append(ContractError("missing_field", "profile_hash"))
+        return e
+
+
+@dataclass
+class SoundEffect(Record):
+    """Optional timed asset — changes require declared treatment scope;
+    it must not leak into unchanged comparison regions."""
+    experiment_id: str = ""
+    variant_id: str = ""
+    artifact_id: str = ""
+    target: FrameInterval = None
+    gain_db: float = 0.0
+    treatment_scope: str = ""        # declared region key it belongs to
+
+    def validate(self):
+        e = super().validate()
+        _id_errors(e, self.experiment_id, "experiment_id")
+        if self.target is None:
+            e.append(ContractError("missing_field", "target"))
+        return e
+
+
 # ------------------------------------------------------------------ jobs
 
 @dataclass

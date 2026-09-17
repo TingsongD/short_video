@@ -61,7 +61,7 @@ MODULES = {
 # run when its module is in this set.
 IMPLEMENTED = {"F00", "F01", "F02", "F03", "F04", "F05", "F06", "F07",
                "F08", "F09", "F10", "F11", "F12", "F13", "F14",
-               "F15", "F16", "F17", "F18", "F19"}
+               "F15", "F16", "F17", "F18", "F19", "F20"}
 
 LIVE_CASES = {  # cases that can only qualify under funded/connected scope
     "F16-M04", "F17-M04", "F25-M04", "F31-M04", "F32-M04",
@@ -150,6 +150,10 @@ EXPECTED = {
     "F19-M02": "too-long/excess-silence block for copy revision, not clips",
     "F19-M03": "hook-only change; body/cta byte-identical reuse",
     "F19-M04": "lost TTS ack reconciles; download retries transfer only",
+    "F20-M01": "exact 30s+169.7s beds; declared joins; measured levels",
+    "F20-M02": "clip repaired w/ documented gain; missing audio named",
+    "F20-M03": "identical music in unchanged regions; duck confined",
+    "F20-M04": "gen interrupt reconciles 1 op; import has provenance, no charge",
 }
 
 
@@ -163,7 +167,7 @@ def all_cases():
     from . import (cases_f01, cases_f02, cases_f03, cases_f04,
                    cases_f05, cases_f06, cases_f07, cases_f08, cases_f09,
                    cases_f10, cases_f11, cases_f12, cases_f13, cases_f14,
-                   cases_f15, cases_f16, cases_f17, cases_f18, cases_f19)
+                   cases_f15, cases_f16, cases_f17, cases_f18, cases_f19, cases_f20)
     impls = {**cases_f01.implementations(), **cases_f02.implementations(),
              **cases_f03.implementations(), **cases_f04.implementations(),
              **cases_f05.implementations(), **cases_f06.implementations(),
@@ -175,7 +179,8 @@ def all_cases():
              **cases_f16.implementations(),
              **cases_f17.implementations(),
              **cases_f18.implementations(),
-             **cases_f19.implementations()}
+             **cases_f19.implementations(),
+             **cases_f20.implementations()}
     specs = {}
     for mid in MODULES:
         for n in range(1, 5):

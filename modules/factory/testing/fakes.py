@@ -1304,3 +1304,95 @@ class FakeAligner:
                  "end_s": round(edge + (i + 0.92) * span, 3),
                  "confidence": 0.95}
                 for i, w in enumerate(words)]
+
+
+class FakeMusicGen:
+    """Persistent music-generation fake (F20): own route/auth — not
+    implied by video OAuth. Returns a real WAV bed; drills mirror the
+    other providers."""
+
+    name = "fake_music"
+    unit = "elevenlabs_credits"
+
+    def __init__(self, path, authed=True):
+        self.path = Path(path)
+        if self.path.exists():
+            self.doc = json.loads(self.path.read_text())
+        else:
+            self.doc = {"seq": 0, "ops": {}, "polls": {}, "faults": [],
+                        "lost_submits": [], "authed": authed}
+            self._save()
+
+    def _save(self):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self.path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(self.doc, indent=1, sort_keys=True))
+        tmp.replace(self.path)
+
+    def set_auth(self, ok):
+        self.doc["authed"] = bool(ok)
+        self._save()
+
+    def lose_next_submit(self):
+        self.doc["lost_submits"].append("pending")
+        self._save()
+
+    def submit(self, request):
+        if not self.doc["authed"]:
+            raise ProviderError("route_auth_required")
+        self.doc["seq"] += 1
+        oid = f"mus-{self.doc['seq']:05d}"
+        self.doc["ops"][oid] = {"operation_id": oid,
+                                "request": request,
+                                "status": "RUNNING"}
+        self._save()
+        if self.doc["lost_submits"]:
+            self.doc["lost_submits"].pop()
+            self._save()
+            raise ProviderError("transport_timeout")
+        return {"operation_id": oid, "status": "accepted"}
+
+    def observe(self, operation_id):
+        op = self.doc["ops"].get(operation_id)
+        if op is None:
+            raise ProviderError("operation_not_found")
+        n = self.doc["polls"].get(operation_id, 0)
+        self.doc["polls"][operation_id] = n + 1
+        if op["status"] == "RUNNING" and n >= 1:
+            op["status"] = "SUCCEEDED"
+        self._save()
+        return {"operation_id": operation_id,
+                "status": {"RUNNING": "running",
+                           "SUCCEEDED": "succeeded"}[op["status"]]}
+
+    def download(self, operation_id, destination=None):
+        op = self.doc["ops"].get(operation_id)
+        if op is None or op["status"] != "SUCCEEDED":
+            raise ProviderError("output_not_available", transient=True)
+        payload = _wav_bytes(6.0, freq=110.0)
+        return {"operation_id": operation_id, "bytes": payload,
+                "sha256": hashlib.sha256(payload).hexdigest()}
+
+    def reconcile(self, operation_id=None, request_hash=None):
+        if operation_id and operation_id in self.doc["ops"]:
+            return self.observe(operation_id)
+        return None
+
+    def cancel(self, operation_id):
+        if operation_id in self.doc["ops"]:
+            self.doc["ops"][operation_id]["status"] = "FAILED"
+            self._save()
+        return {"acknowledged": True, "terminal": True}
+
+
+class FakeAudioAnalyzer:
+    """Deterministic BPM/structure probe for constructed beds."""
+
+    def __init__(self, bpm=120, structure=None):
+        self.bpm = bpm
+        self.structure = structure or {"sections": [
+            {"name": "bed", "start_s": 0.0}]}
+
+    def analyze(self, artifact):
+        return {"duration": (artifact.probe or {}).get("duration_s"),
+                "bpm": self.bpm, "structure": self.structure}
