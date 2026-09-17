@@ -57,6 +57,7 @@ def open(path, readonly=False):
             conn.close()
             raise NewerDatabaseError(v)
         return conn
-    conn = _configure(sqlite3.connect(path, isolation_level=None))
+    conn = _configure(sqlite3.connect(path, isolation_level=None,
+                                      check_same_thread=False))
     migrate(conn)
     return conn
