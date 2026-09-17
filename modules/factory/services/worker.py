@@ -158,7 +158,27 @@ class ApplicationWorker:
                 spec=s.executor._intent_body(r['id']);adapter=s.providers.get(spec.get('provider'))
                 if adapter is None:raise ContractError('reconcile_route_unavailable','provider')
                 s.executor.provider=adapter;results.append(s.executor.reconcile(r['id']))
-            return {'attempts':results}
+            # Remote truth decides: an alive/finished effect resumes the
+            # ORIGINAL job (its own poll/download path collects and
+            # unblocks descendants — no resubmission, no new reservation).
+            # All-unknown stays failed for evidence-based operator
+            # resolution; a failed/cancelled attempt keeps the job dead.
+            statuses={a['status'] for a in s.db.conn.execute(
+                'SELECT status FROM attempts WHERE job_id=?',(body['job_id'],)).fetchall()}
+            job=s.db.uow().jobs.get(body['job_id'])
+            resumed=False
+            if job and job['status'] in ('failed','blocked') and \
+                    statuses & {'accepted','running','succeeded','downloaded'} and \
+                    not statuses & {'failed','cancelled'}:
+                from .recovery import unblock_descendants
+                with s.db.uow() as u:
+                    u.conn.execute("UPDATE jobs SET status='waiting_dependencies',lease_owner=NULL,"
+                        "lease_expires=NULL,next_attempt_at=NULL,blocked_reason=NULL WHERE id=?",(body['job_id'],))
+                    unblock_descendants(u,body['job_id'])
+                    u.events.append('factory','job_resumed_by_reconcile',
+                                    {'job_id':body['job_id'],'attempts':sorted(statuses)})
+                resumed=True
+            return {'attempts':results,'resumed':resumed}
         if kind=='studio_open':
             variant,final,path,binding=s._final(body['variant_id'])
             if binding!=body['binding']:raise ContractError('stale_revision','studio')
@@ -190,15 +210,32 @@ class ApplicationWorker:
             result=s.delivery.deliver(body['delivery_id'],path,body['name'],body['folder_id'],
                       variant_plan_id=v['id'],experiment_revision=v['experiment_revision'])
             if result['status']!='verified': return result
-            cleanup=s.cleanup.cleanup(v['id'])
-            s.delivery._set(body['delivery_id'],cleanup_receipt=json.dumps(cleanup))
-            if cleanup['state']!='verified': raise ContractError('cleanup_incomplete','resources',json.dumps(cleanup))
-            with s.db.uow() as u:
-                plan=s.plan_for(v['experiment_id'])
-                u.conn.execute("UPDATE jobs SET status='succeeded',lease_owner=NULL,lease_expires=NULL,updated_at=? WHERE id=? AND status='awaiting_review'",(utcnow(),plan['id']+':del:'+v['variant_key']))
-                u.events.append('factory','video_completed',{'variant_id':v['id'],'delivery_id':body['delivery_id'],'link':result['link']})
-            return {**result,'cleanup':cleanup}
+            return self._finish_delivery(v,body['delivery_id'],result)
+        if kind=='delivery_retry':
+            v,final,path,binding=s._final(body['variant_id'])
+            original=s.commands.get(body['delivery_id'])['command']
+            if not original or original['kind']!='delivery':raise ContractError('unknown_delivery','delivery_id')
+            effects=EffectService(s.db,s.executor)
+            def retry_scope(request,*unused):
+                att=effects.prepare(original['input']['authorization_id'],'delivery',job['id'],job['fencing_token'],self.scheduler.worker_id)
+                s.executor.require_request(att,request)
+                return att
+            s.delivery.effects=retry_scope
+            result=s.delivery.retry(body['delivery_id'],path)
+            if result['status']!='verified': return result
+            return self._finish_delivery(v,body['delivery_id'],result)
         raise ContractError('handler_unavailable','command',kind)
+
+    def _finish_delivery(self,v,delivery_id,result):
+        s=self.s
+        cleanup=s.cleanup.cleanup(v['id'])
+        s.delivery._set(delivery_id,cleanup_receipt=json.dumps(cleanup))
+        if cleanup['state']!='verified': raise ContractError('cleanup_incomplete','resources',json.dumps(cleanup))
+        with s.db.uow() as u:
+            plan=s.plan_for(v['experiment_id'])
+            u.conn.execute("UPDATE jobs SET status='succeeded',lease_owner=NULL,lease_expires=NULL,updated_at=? WHERE id=? AND status='awaiting_review'",(utcnow(),plan['id']+':del:'+v['variant_key']))
+            u.events.append('factory','video_completed',{'variant_id':v['id'],'delivery_id':delivery_id,'link':result['link']})
+        return {**result,'cleanup':cleanup}
 
     def production(self,job):
         s=self.s
@@ -217,7 +254,7 @@ class ApplicationWorker:
             # not evidence that its renderer stopped. Only this job recovers it.
             with s.db.uow() as u:
                 u.conn.execute('INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)',('local_work:'+job['id'],json.dumps({'plan':plan['id'],'variant':node['consumers'][0]})))
-            result=self.render(plan,node['consumers'][0])
+            result=self.render(plan,node['consumers'][0],job)
             if result.get('status')=='rendered':
                 with s.db.uow() as u:
                     u.conn.execute('DELETE FROM meta WHERE key=?',('local_work:'+job['id'],))
@@ -240,10 +277,10 @@ class ApplicationWorker:
             if review['verdict']!='pass': return 'reject' if review['verdict']=='fail' else 'uncertain'
         return 'accept'
 
-    def render(self,plan,key):
+    def render(self,plan,key,job=None):
         s=self.s; exp=s._current(plan['experiment_id'],plan['experiment_revision']); variant=s.experiments._variant(exp.experiment_id,key)
         from ..resources.runner import OwnedRunner
-        s.rendering.fast.runner=OwnedRunner(s.db,Path(s.db.path).parent/'processes',variant.id)
+        s.rendering.fast.runner=OwnedRunner(s.db,Path(s.db.path).parent/'processes',variant.id,attempt=(job or {}).get('retry_count',0))
         fps=exp.output_clock['num']/exp.output_clock['den']; segments=[]; captions=[]; pictures=[]; audio=[]; narration=[]
         nodes=s.production._nodes(plan['id'])
         for seg in variant.segments:

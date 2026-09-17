@@ -309,7 +309,24 @@ class FactoryServices:
             return self.commands.enqueue('cleanup',{'delivery_id':did,'variant_id':variant_id},phase='collect',identity='cleanup-'+did)
         prior=self.db.uow().records.get('appcommand',did)
         if prior:
-            return {'job_id':did,'accepted':True}
+            # A still-live job is already retrying; a dead or failed one
+            # gets an explicit transfer retry under a fresh identity.
+            job=self.db.uow().jobs.get(did)
+            if job and job['status'] not in ('failed','succeeded'):
+                return {'job_id':did,'accepted':True}
+            if existing and existing['status']=='conflict':
+                return {'status':'conflict','delivery_id':did,
+                        'detail':'remote name exists with different content — resolve or rename before retry'}
+            n=(existing or {}).get('retry_count') or 0
+            if existing:
+                return self.commands.enqueue('delivery_retry',
+                    {'delivery_id':did,'variant_id':variant_id},
+                    experiment_id=variant['experiment_id'],revision=expected_revision,
+                    phase='deliver',identity=f'{did}:retry:{n}')
+            saved=json.loads(prior['body'])
+            return self.commands.enqueue('delivery',saved['input'],
+                experiment_id=variant['experiment_id'],revision=expected_revision,
+                phase='deliver',identity=f'{did}:retry:{n}')
         req={'artifact_sha256':binding['artifact_sha256'],'folder_id':folder,'name':name,
              'size':path.stat().st_size,'md5':hashlib.md5(path.read_bytes()).hexdigest()}
         command={'delivery_id':did,'variant_id':variant_id,'artifact_id':final['artifact_id'],

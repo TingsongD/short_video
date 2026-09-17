@@ -4,6 +4,19 @@ from ..domain.errors import ContractError
 from ..store.uow import utcnow
 
 
+def unblock_descendants(u,root_id):
+    """Only dependencies made satisfiable by this root advancing will
+    leave 'blocked'; the walk is transitive so a whole chain reopens."""
+    changed={root_id}
+    while True:
+        pending=u.conn.execute("SELECT id,depends_on FROM jobs WHERE status='blocked'").fetchall()
+        children=[r['id'] for r in pending if set(json.loads(r['depends_on'])) & changed]
+        if not children:break
+        for child in children:u.conn.execute("UPDATE jobs SET status='waiting_dependencies',blocked_reason=NULL WHERE id=?",(child,))
+        changed.update(children)
+    return changed
+
+
 def retry_local(s,jid,reviewer):
     if not reviewer:raise ContractError('reviewer_required','reviewer')
     job=s.db.uow().jobs.get(jid)
@@ -27,15 +40,8 @@ def retry_local(s,jid,reviewer):
     with s.db.uow() as u:
         u.conn.execute('DELETE FROM meta WHERE key=?',('local_work:'+jid,))
         u.conn.execute('DELETE FROM capacity_holds WHERE job_id=?',(jid,))
-        u.conn.execute("UPDATE jobs SET status='waiting_dependencies',lease_owner=NULL,lease_expires=NULL,next_attempt_at=NULL,blocked_reason=NULL WHERE id=?",(jid,))
-        # Only dependencies made satisfiable by this retry will advance later.
-        changed={jid}
-        while True:
-            pending=u.conn.execute("SELECT id,depends_on FROM jobs WHERE status='blocked'").fetchall()
-            children=[r['id'] for r in pending if set(json.loads(r['depends_on'])) & changed]
-            if not children:break
-            for child in children:u.conn.execute("UPDATE jobs SET status='waiting_dependencies',blocked_reason=NULL WHERE id=?",(child,))
-            changed.update(children)
+        u.conn.execute("UPDATE jobs SET status='waiting_dependencies',lease_owner=NULL,lease_expires=NULL,next_attempt_at=NULL,blocked_reason=NULL,retry_count=retry_count+1 WHERE id=?",(jid,))
+        unblock_descendants(u,jid)
         u.events.append('factory','local_retry_requested',{'job_id':jid,'reviewer':reviewer,'at':utcnow()})
     return {'job_id':jid,'accepted':True}
 

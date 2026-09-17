@@ -55,7 +55,12 @@ class DeliveryService:
         if existing:
             if existing["file_sha256"] != sha or existing["parent_folder_id"] != folder_id or existing.get("delivery_name") != name:
                 raise ContractError("delivery_identity_conflict", "delivery_id", delivery_id)
-            return self.reconcile(delivery_id, now=now)
+            rec = self.reconcile(delivery_id, now=now)
+            # A pre-upload failure leaves no attempt: the listing proved
+            # nothing remote exists, so the same final transfers again.
+            if rec["status"] == "pending" and not existing.get("attempt_id"):
+                return self.retry(delivery_id, final_path, now=now)
+            return rec
         d = Delivery(schema_version="delivery.v1", id=delivery_id,
                      created_at=now, file_sha256=sha,
                      parent_folder_id=folder_id, status="pending",
@@ -188,6 +193,7 @@ class DeliveryService:
         # An absent listing cannot prove an ambiguous upload was not accepted.
         if d.get("attempt_id"):
             return {"status": "unknown", "action": "reconcile_or_review_evidence"}
+        self._set(delivery_id, retry_count=(d.get("retry_count") or 0) + 1)
         name = self._name_of(delivery_id)
         up = self._upload(delivery_id, final_path, d["parent_folder_id"], name)
         return self._verify(delivery_id, up["id"], name, d["parent_folder_id"],

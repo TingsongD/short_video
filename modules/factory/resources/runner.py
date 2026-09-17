@@ -13,15 +13,30 @@ from ...batch.local import process_table, same_process
 
 
 class OwnedRunner:
-    def __init__(self,db,root,owner):
-        self.db,self.root,self.owner=db,Path(root).resolve(),owner
+    def __init__(self,db,root,owner,attempt=0):
+        self.db,self.root,self.owner,self.attempt=db,Path(root).resolve(),owner,attempt
         self.root.mkdir(parents=True,exist_ok=True)
+
+    def _live_prior(self,argv,cwd):
+        """A prior attempt's still-running receipt blocks a new launch —
+        observation may resume it, but nothing may duplicate it."""
+        for file in self.root.glob('*.json'):
+            try: prior=DurableState(file)
+            except Exception: continue
+            if prior.get('status')!='running': continue
+            if prior.get('argv')!=argv or prior.get('cwd')!=cwd or prior.get('owner')!=self.owner: continue
+            ident=prior.get('identity')
+            if ident and same_process(ident,process_table().get(ident['pid'])):
+                return prior
+        return None
 
     def __call__(self,argv,timeout=120,cwd=None):
         argv=list(map(str,argv)); cwd=str(Path(cwd or self.root).resolve())
-        identity=hashlib.sha256(json.dumps([argv,cwd,self.owner]).encode()).hexdigest()
+        identity=hashlib.sha256(json.dumps([argv,cwd,self.owner,self.attempt]).encode()).hexdigest()
         file=self.root/(identity+'.json'); state=DurableState(file)
         if not state:
+            prior=self._live_prior(argv,cwd)
+            if prior:raise ContractError('local_process_unresolved','process',prior['resource_id'])
             state.update(argv=argv,cwd=cwd,owner=self.owner,timeout=timeout,status='prepared',resource_id='process-'+identity)
             state.flush()
         if state.get('status')=='prepared':
