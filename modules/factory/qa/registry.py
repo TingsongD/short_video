@@ -61,7 +61,7 @@ MODULES = {
 # run when its module is in this set.
 IMPLEMENTED = {"F00", "F01", "F02", "F03", "F04", "F05", "F06", "F07",
                "F08", "F09", "F10", "F11", "F12", "F13", "F14",
-               "F15"}
+               "F15", "F16"}
 
 LIVE_CASES = {  # cases that can only qualify under funded/connected scope
     "F16-M04", "F17-M04", "F25-M04", "F31-M04", "F32-M04",
@@ -134,6 +134,10 @@ EXPECTED = {
     "F15-M02": "duration/ref/unqualified blocked; zero submissions",
     "F15-M03": "expired+out-of-scope blocks; scoped USD auth routes vertex",
     "F15-M04": "unknown original suppresses eligible fallback",
+    "F16-M01": "recoverable prep, native credits, zero ops pre-authority",
+    "F16-M02": "2/5 accepted preserved; interrupt recovery, no duplicates",
+    "F16-M03": "expired login named; wrong-account rejected; same-op resume",
+    "F16-M04": "live gate blocked offline; fake success never qualifies",
 }
 
 
@@ -147,7 +151,7 @@ def all_cases():
     from . import (cases_f01, cases_f02, cases_f03, cases_f04,
                    cases_f05, cases_f06, cases_f07, cases_f08, cases_f09,
                    cases_f10, cases_f11, cases_f12, cases_f13, cases_f14,
-                   cases_f15)
+                   cases_f15, cases_f16)
     impls = {**cases_f01.implementations(), **cases_f02.implementations(),
              **cases_f03.implementations(), **cases_f04.implementations(),
              **cases_f05.implementations(), **cases_f06.implementations(),
@@ -155,7 +159,8 @@ def all_cases():
              **cases_f09.implementations(), **cases_f10.implementations(),
              **cases_f11.implementations(), **cases_f12.implementations(),
              **cases_f13.implementations(), **cases_f14.implementations(),
-             **cases_f15.implementations()}
+             **cases_f15.implementations(),
+             **cases_f16.implementations()}
     specs = {}
     for mid in MODULES:
         for n in range(1, 5):

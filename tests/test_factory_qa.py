@@ -224,13 +224,17 @@ def test_cli_run_unknown_and_unimplemented(space):
                     "--case", f"{pending}-M01"]) == 1  # missing prereq
 
 
-def test_cli_live_mode_requires_authorization(space):
+def test_cli_live_mode_requires_authorization(space, capsys):
     assert qa_main(["run", "--workspace", str(space.path),
                     "--case", "F16-M04", "--mode", "live"]) == 1
-    # even with an authorization id, an unimplemented case still fails cleanly
+    capsys.readouterr()
+    # with an authorization id the implemented live case runs, but a live
+    # gate can never self-pass — it must land on awaiting_manual_review
     assert qa_main(["run", "--workspace", str(space.path),
                     "--case", "F16-M04", "--mode", "live",
-                    "--authorization-id", "auth-1"]) == 1
+                    "--authorization-id", "auth-1", "--json"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["status"] == "awaiting_manual_review"
 
 
 def test_cli_inspect_views(space):

@@ -711,3 +711,258 @@ VERTEX_MODELS = {
         "durations_s": [4, 6, 8], "aspects": ["9:16"],
         "resolutions": ["720x1280", "1080x1920"],
         "references": {"image": 2, "video": 1}, "audio": True}}
+
+
+class _Completed:
+    def __init__(self, rc, stdout="", stderr=""):
+        self.returncode, self.stdout, self.stderr = rc, stdout, stderr
+
+
+class FakeCanvasRunner:
+    """Argv-level fake of the dreamina-canvas CLI (F16): persistent
+    JSON state (auth, account, credits, canvases, nodes, ops, catalog).
+    Returns CompletedProcess-shaped results; faults drill specific
+    failures without touching real commands."""
+
+    def __init__(self, path, credits=1000, user_id="u-1", region="cn"):
+        self.path = Path(path)
+        if self.path.exists():
+            self.doc = json.loads(self.path.read_text())
+        else:
+            self.doc = {
+                "loggedIn": True, "region": region, "environment": "prod",
+                "userId": user_id, "isVip": True, "vipLevel": 3,
+                "credits": credits, "seq": 0, "canvases": {},
+                "nodes": {}, "ops": {}, "poll_counts": {},
+                "faults": [], "lost_runs": [],
+                "models": [{
+                    "model": "seedance_2.0_fast_vip",
+                    "aliases": ["seedance-fast"],
+                    "modes": [{"name": "t2v", "flags": [
+                        {"flag": "--duration",
+                         "values": ["4", "8"], "min": 1, "max": 10,
+                         "step": 1},
+                        {"flag": "--ratio", "values": ["9:16", "16:9"]},
+                        {"flag": "--resolution",
+                         "values": ["720P", "1080P"]},
+                        {"flag": "--prompt", "minLength": 1,
+                         "maxLength": 2000},
+                        {"flag": "--count", "min": 1, "max": 1}]}]}]}
+        self._save()
+
+    def _save(self):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self.path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(self.doc, indent=1, sort_keys=True))
+        tmp.replace(self.path)
+
+    def _next(self, prefix):
+        self.doc["seq"] += 1
+        return f"{prefix}-{self.doc['seq']:05d}"
+
+    # -- drills ---------------------------------------------------------
+    def expire_login(self):
+        self.doc["loggedIn"] = False
+        self._save()
+
+    def reconnect(self, user_id="u-1"):
+        self.doc["loggedIn"] = True
+        self.doc["userId"] = user_id
+        self._save()
+
+    def set_fault(self, name):
+        if name not in self.doc["faults"]:
+            self.doc["faults"].append(name)
+            self._save()
+
+    def lose_next_run(self):
+        """The next `node run` accepts remotely but drops the response."""
+        self.doc["lost_runs"].append("pending")
+        self._save()
+
+    # -- argv entrypoint -------------------------------------------------
+    def __call__(self, cmd, capture_output=True, text=True, timeout=None):
+        import subprocess as _sp
+        if "cli_missing" in self.doc["faults"]:
+            raise FileNotFoundError(cmd[0])
+        if "transport_timeout" in self.doc["faults"]:
+            raise _sp.TimeoutExpired(cmd, timeout or 60)
+        args = [a for a in cmd[1:]
+                if not a.startswith("--format") and
+                a not in ("json", "--non-interactive")]
+        # strip --profile/--region pairs
+        skip = {"--profile", "--region"}
+        argv, i = [], 0
+        while i < len(args):
+            if args[i] in skip:
+                i += 2
+                continue
+            argv.append(args[i])
+            i += 1
+        try:
+            data = self._dispatch(argv)
+            return _Completed(0, json.dumps(
+                {"schemaVersion": "1", "ok": True, "data": data}))
+        except _Fault as f:
+            return _Completed(30, json.dumps(
+                {"schemaVersion": "1", "ok": False,
+                 "error": {"code": f.code,
+                           "requiredAction": f.action}}))
+        except _Malformed:
+            return _Completed(0, "<<not-json")
+
+    def _flag(self, argv, name, default=None):
+        return argv[argv.index(name) + 1] if name in argv else default
+
+    def _dispatch(self, argv):
+        if "malformed_json" in self.doc["faults"]:
+            raise _Malformed()
+        head = " ".join(argv[:2])
+        if argv[0] == "version":
+            return {"version": "1.4.2", "commit": "abc123"}
+        if argv[0] == "schema":
+            return self._schema()
+        if head == "auth status":
+            return {"loggedIn": self.doc["loggedIn"],
+                    "region": self.doc["region"],
+                    "environment": self.doc["environment"]}
+        if head == "auth account":
+            if not self.doc["loggedIn"]:
+                raise _Fault("login_required", "auth login")
+            return {"userId": self.doc["userId"],
+                    "isVip": self.doc["isVip"],
+                    "vipLevel": self.doc["vipLevel"]}
+        if head == "model list":
+            return {"items": self.doc["models"]}
+        if head == "canvas create":
+            pid = self._next("proj")
+            self.doc["canvases"][pid] = {
+                "projectId": pid,
+                "title": self._flag(argv, "--title", "untitled")}
+            self._save()
+            return {"projectId": pid}
+        if head == "canvas ls":
+            items = list(self.doc["canvases"].values())
+            return {"items": items, "hasMore": False, "nextCursor": None}
+        if head == "node create":
+            nid = self._next("node")
+            self.doc["nodes"][nid] = {
+                "nodeId": nid,
+                "projectId": self._flag(argv, "--project-id"),
+                "kind": argv[2], "status": "DRAFT",
+                "model": self._flag(argv, "--model"),
+                "duration": self._flag(argv, "--duration"),
+                "prompt": self._flag(argv, "--prompt")}
+            self._save()
+            return {"nodeId": nid, "updateId": self._next("upd")}
+        if head == "node show":
+            nid = self._flag(argv, "--node-id")
+            node = self.doc["nodes"].get(nid)
+            if node is None:
+                return {"nodes": [{"result": "NOT_FOUND"}]}
+            # progress each poll: DRAFT→QUEUED→RUNNING→SUCCEEDED
+            n = self.doc["poll_counts"].get(nid, 0)
+            self.doc["poll_counts"][nid] = n + 1
+            if node["status"] in ("QUEUED", "RUNNING") and n >= 1:
+                node["status"] = "SUCCEEDED" if \
+                    "node_fails" not in self.doc["faults"] else "FAILED"
+                if node["status"] == "SUCCEEDED":
+                    node["result"] = {"output": f"media:{nid}"}
+                else:
+                    node["error"] = {"code": "generation_failed"}
+            self._save()
+            return {"nodes": [{"result": "FOUND", "node": node}]}
+        if head == "node quote":
+            wanted = [a for i, a in enumerate(argv)
+                      if i and argv[i - 1] == "--node-id"]
+            if "partial_quote" in self.doc["faults"] and len(wanted) > 1:
+                wanted = wanted[:-1]
+            items = [{"nodeId": n, "maxCredits": 54} for n in wanted]
+            total = sum(i["maxCredits"] for i in items)
+            return {"items": items, "totalMaxCredits": total,
+                    "confirmable": True, "draftVersion": "dv-1"}
+        if head == "node confirm":
+            ceiling = int(self._flag(argv, "--credit-ceiling", "0"))
+            if ceiling <= 0:
+                raise _Fault("invalid_ceiling")
+            return {"creditConfirmationToken": f"tok-{self._next('tok')}",
+                    "creditCeiling": ceiling}
+        if head == "node run":
+            nid = self._flag(argv, "--node-id")
+            if "credit_reject" in self.doc["faults"]:
+                raise _Fault("credits_rejected", "check balance")
+            self.doc["nodes"][nid]["status"] = "QUEUED"
+            op = {"operationId": self._next("op"),
+                  "submitId": self._flag(argv, "--submit-id"),
+                  "nodeId": nid,
+                  "projectId": self.doc["nodes"][nid].get("projectId")}
+            self.doc["ops"][op["operationId"]] = op
+            self._save()
+            if self.doc["lost_runs"]:
+                self.doc["lost_runs"].pop()
+                self._save()
+                import subprocess as _sp
+                raise _sp.TimeoutExpired("node run", 60)
+            return op
+        if head == "node cancel":
+            nid = self._flag(argv, "--node-id")
+            if nid in self.doc["nodes"]:
+                self.doc["nodes"][nid]["status"] = "CANCELLED"
+                self._save()
+            return {"cancelled": True}
+        if head == "operation status":
+            return {"items": list(self.doc["ops"].values())}
+        if head == "resource download":
+            nid = self._flag(argv, "--node-id")
+            node = self.doc["nodes"].get(nid)
+            if node is None or node.get("status") != "SUCCEEDED":
+                raise _Fault("output_not_available")
+            if "download_fails" in self.doc["faults"]:
+                raise _Fault("transport_error")
+            import hashlib as _h
+            payload = f"canvas-media:{nid}".encode()
+            return {"bytes": payload.decode(),
+                    "sha256": _h.sha256(payload).hexdigest()}
+        raise _Fault(f"unknown_command:{' '.join(argv)}")
+
+    def _schema(self):
+        def node(name, flags=(), subs=()):
+            return {"name": name, "flags": [{"name": f.lstrip("-")} for f in flags],
+                    "subcommands": list(subs)}
+        return {"subcommands": [
+            node("canvas", (), [
+                node("create", ["--title", "--project-id"]),
+                node("ls", ["--cursor", "--limit"])]),
+            node("node", (), [
+                node("create", (), [
+                    node("video", ["--node-id", "--update-id",
+                                   "--duration", "--model", "--mode",
+                                   "--project-id", "--prompt"]),
+                    node("image", ["--node-id", "--update-id",
+                                   "--model", "--mode", "--project-id",
+                                   "--prompt"])]),
+                node("quote", ["--node-id", "--project-id"]),
+                node("confirm", ["--credit-ceiling", "--project-id",
+                                 "--node-id"]),
+                node("run", ["--submit-id", "--credit-token",
+                             "--project-id", "--node-id"]),
+                node("show", ["--node-id", "--project-id"]),
+                node("cancel", ["--project-id", "--node-id"])]),
+            node("operation", (), [
+                node("status", ["--project-id"]),
+                node("wait", ["--timeout"])]),
+            node("resource", (), [
+                node("download", ["--output", "--project-id",
+                                  "--node-id"])]),
+            node("auth", (), [node("status"), node("account")]),
+            node("model", (), [node("list", ["--type"])]),
+            node("version"), node("schema")]}
+
+
+class _Fault(Exception):
+    def __init__(self, code, action=None):
+        self.code, self.action = code, action
+
+
+class _Malformed(Exception):
+    pass
