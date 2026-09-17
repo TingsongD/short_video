@@ -1,0 +1,73 @@
+{
+  "schema_version": "factory.fixture_data.v1",
+  "shop": "fixture-shop.myshopify.com",
+  "pages": [
+    {
+      "page": 1,
+      "products": [
+        {
+          "id": "gid://shopify/Product/8001", "handle": "sky-jeans",
+          "title": "Sky-Blue Polka-Dot Jeans", "status": "ACTIVE",
+          "descriptionHtml": "<p>Wide-leg denim with <b>dot</b> print.</p>",
+          "variants": [
+            {"id": "gid://shopify/ProductVariant/90001", "title": "S / blue", "availableForSale": true, "price": {"amount": "39.00", "currencyCode": "USD"}},
+            {"id": "gid://shopify/ProductVariant/90002", "title": "M / blue", "availableForSale": false, "price": {"amount": "39.00", "currencyCode": "USD"}}
+          ],
+          "media": [
+            {"id": "gid://shopify/MediaImage/70001", "type": "image", "url": "https://cdn.fixture/sky-jeans-front.png", "expires": false},
+            {"id": "gid://shopify/MediaImage/70002", "type": "image", "url": "https://cdn.fixture/sky-jeans-side.png", "expires": false}
+          ]
+        },
+        {
+          "id": "gid://shopify/Product/8002", "handle": "tank-basic",
+          "title": "Image-Only Tank", "status": "ACTIVE",
+          "descriptionHtml": "<p>Single front photo; no back view.</p>",
+          "variants": [
+            {"id": "gid://shopify/ProductVariant/90003", "title": "OS / white", "availableForSale": true, "price": {"amount": "19.00", "currencyCode": "USD"}}
+          ],
+          "media": [
+            {"id": "gid://shopify/MediaImage/70003", "type": "image", "url": "https://cdn.fixture/tank-front.png", "expires": false}
+          ],
+          "known_gap": "no back-detail reference"
+        }
+      ],
+      "hasNextPage": true
+    },
+    {
+      "page": 2,
+      "products": [
+        {
+          "id": "gid://shopify/Product/8003", "handle": "midi-rose",
+          "title": "Rose-Stripe Midi Dress", "status": "ACTIVE",
+          "descriptionHtml": "<p>Striped midi with pocket detail.</p>",
+          "variants": [
+            {"id": "gid://shopify/ProductVariant/90004", "title": "S / rose", "availableForSale": true, "price": {"amount": "49.00", "currencyCode": "USD"}},
+            {"id": "gid://shopify/ProductVariant/90005", "title": "M / rose", "availableForSale": true, "price": {"amount": "49.00", "currencyCode": "USD"}}
+          ],
+          "media": [
+            {"id": "gid://shopify/MediaImage/70004", "type": "image", "url": "https://cdn.fixture/midi-rose.png?exp=1726000000&sig=abc", "expires": true},
+            {"id": "gid://shopify/Video/70005", "type": "video", "url": "https://cdn.fixture/midi-rose-spin.mp4", "expires": false}
+          ]
+        },
+        {
+          "id": "gid://shopify/Product/8004", "handle": "hoodie-olive",
+          "title": "Olive Check Hoodie", "status": "ACTIVE",
+          "descriptionHtml": "<p>Olive/cream checks, kangaroo pocket.</p>",
+          "variants": [
+            {"id": "gid://shopify/ProductVariant/90006", "title": "L / olive", "availableForSale": false, "price": {"amount": "59.00", "currencyCode": "USD"}}
+          ],
+          "media": [
+            {"id": "gid://shopify/MediaImage/70006", "type": "image", "url": "https://cdn.fixture/hoodie.png", "expires": false}
+          ]
+        }
+      ],
+      "hasNextPage": false
+    }
+  ],
+  "expectations": {
+    "product_count": 4,
+    "unavailable_variants": ["gid://shopify/ProductVariant/90002", "gid://shopify/ProductVariant/90006"],
+    "expiring_media": ["gid://shopify/MediaImage/70004"],
+    "missing_angle_product": "gid://shopify/Product/8002"
+  }
+}

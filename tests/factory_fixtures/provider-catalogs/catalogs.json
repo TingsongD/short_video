@@ -1,0 +1,50 @@
+{
+  "schema_version": "factory.fixture_data.v1",
+  "providers": {
+    "jimeng_canvas": {
+      "unit": "jimeng_credits",
+      "models": {
+        "seedance_2.0_fast_vip": {
+          "status": "generation_tested",
+          "durations_s": [4, 5, 6, 8, 10, 12, 15],
+          "resolutions": ["480P", "720P", "1080P"],
+          "input_modes": ["text", "image_reference", "outfit_reference", "audio_attach"],
+          "native_audio": "external_only",
+          "quota_scope": "account",
+          "snapshot_at": "2026-09-16T00:00:00Z"
+        }
+      },
+      "expired_snapshot_example": {
+        "model": "seedance_1.0_legacy", "snapshot_at": "2025-01-01T00:00:00Z",
+        "expect": "stale_catalog"
+      }
+    },
+    "google_vertex": {
+      "unit": "usd_micros",
+      "models": {
+        "gemini-omni-1.1-flash-preview": {
+          "status": "generation_tested_text_only",
+          "location": "global",
+          "api": "interactions",
+          "durations_s": [3, 4, 5, 6, 7, 8, 9, 10],
+          "resolutions": ["720x1280"],
+          "native_fps": 24,
+          "input_modes": {"text": "qualified_pilot", "image_reference": "unqualified", "video_reference": "unqualified"},
+          "native_audio": "present_stereo",
+          "quota_scope": "project",
+          "snapshot_at": "2026-09-16T00:00:00Z"
+        },
+        "veo-3.1-fast-generate-001": {
+          "status": "catalog_visible_not_tested",
+          "expect": "unqualified_route",
+          "snapshot_at": "2026-09-16T00:00:00Z"
+        },
+        "veo-3.1-lite-generate-001": {
+          "status": "catalog_visible_not_tested",
+          "expect": "unqualified_route",
+          "snapshot_at": "2026-09-16T00:00:00Z"
+        }
+      }
+    }
+  }
+}

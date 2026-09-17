@@ -1,0 +1,36 @@
+{
+  "schema_version": "factory.fixture_data.v1",
+  "publication": {
+    "post_id": "yt-fixture-post-1",
+    "published_at": "2026-09-01T12:00:00Z",
+    "platform": "youtube",
+    "account": "fixture-channel"
+  },
+  "horizons_hours": [48, 168, 672],
+  "snapshots": [
+    {
+      "at": "2026-09-03T12:00:00Z", "horizon": "48h",
+      "public_views": 1200, "engaged_views": 980,
+      "avg_view_percentage": 61.5, "retention_ratio_peak": 1.0,
+      "coverage": {"requested": "2026-09-01..2026-09-03", "returned": "2026-09-01..2026-09-02", "delayed_tail": true}
+    },
+    {
+      "at": "2026-09-08T12:00:00Z", "horizon": "7d",
+      "public_views": 5400, "engaged_views": 4300,
+      "avg_view_percentage": 58.2, "retention_ratio_peak": 1.2,
+      "coverage": {"requested": "2026-09-01..2026-09-08", "returned": "2026-09-01..2026-09-06", "delayed_tail": true},
+      "note": "retention_ratio_peak 1.2 exceeds 1 — replay-based ratio must not be clamped"
+    },
+    {
+      "at": "2026-09-29T12:00:00Z", "horizon": "28d",
+      "public_views": 9100, "engaged_views": 7400,
+      "avg_view_percentage": 57.0, "retention_ratio_peak": 1.18,
+      "coverage": {"requested": "2026-09-01..2026-09-29", "returned": "2026-09-01..2026-09-27", "delayed_tail": true}
+    }
+  ],
+  "degenerate_cases": {
+    "no_rows": {"returned_rows": [], "expect": "unknown_not_zero"},
+    "measured_zero": {"views": 0, "expect": "zero_is_a_measurement"},
+    "mismatched_period": {"requested_days": 7, "returned_days": 5, "expect": "coverage_incomplete"}
+  }
+}

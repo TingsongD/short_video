@@ -1,0 +1,29 @@
+{
+  "schema_version": "factory.fixture_data.v1",
+  "faults": [
+    "reject-before-accept",
+    "accept-then-timeout",
+    "malformed-ack",
+    "accepted-then-failed",
+    "stalled-operation",
+    "auth-expiry",
+    "quota-rejection",
+    "download-failure",
+    "corrupt-bytes",
+    "insufficient-duration",
+    "storage-full",
+    "event-disconnect",
+    "stale-lease",
+    "stale-review-hash",
+    "duplicate-upload",
+    "ambiguous-publish",
+    "http200-then-errors",
+    "lost-upload-ack",
+    "draft-only"
+  ],
+  "notes": {
+    "http200-then-errors": "Vertex Interactions: HTTP 200 with later terminal errors on poll — pilot-observed",
+    "accept-then-timeout": "paid effect accepted but acknowledgement never reached the caller",
+    "draft-only": "publish path accepts into inbox/draft — not a public post"
+  }
+}

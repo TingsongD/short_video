@@ -1,0 +1,17 @@
+{
+  "schema_version": "factory.fixture_data.v1",
+  "cues": [
+    {"id": "c1", "text": "It's the one you'll wear", "start_s": 0.0, "end_s": 2.0},
+    {"id": "c2", "text": "She said \"finally\" out loud", "start_s": 2.0, "end_s": 4.0},
+    {"id": "c3", "text": "Denim & knit — real texture", "start_s": 4.0, "end_s": 6.0},
+    {"id": "c4", "text": "Costs < $40 today", "start_s": 6.0, "end_s": 8.0},
+    {"id": "c5", "text": "Rated > similar picks", "start_s": 8.0, "end_s": 10.0},
+    {"id": "c6", "text": "Zürich café vibes — café naïve façade", "start_s": 10.0, "end_s": 12.0},
+    {"id": "c7", "text": "Don't wait — sizes go fast", "start_s": 12.0, "end_s": 13.5}
+  ],
+  "known_defect": {
+    "name": "numeric_entity_rendered_literally",
+    "symptom": "&#x27; appears as text instead of '",
+    "required_check": "compare rendered pixels/parse tree against intended literal text"
+  }
+}

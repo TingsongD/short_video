@@ -1,0 +1,21 @@
+{
+  "schema_version": "factory.fixture_data.v1",
+  "credit_scenario": {
+    "cap_credits": 100,
+    "competing": [
+      {"job": "job-a", "amount": 60, "expect": "reserved"},
+      {"job": "job-b", "amount": 50, "expect": "blocked_cap"}
+    ]
+  },
+  "usd_scenario": {
+    "aggregate_cap_micros": 1000000,
+    "vertex_sublimit_micros": 800000,
+    "existing_other_usage_micros": 300000,
+    "request": {"provider": "google_vertex", "amount_micros": 750000, "expect": "blocked_aggregate"}
+  },
+  "edge_cases": [
+    {"name": "zero_cap", "cap": 0, "request": 1, "expect": "blocked_cap"},
+    {"name": "unset_cap", "cap": null, "request": 1, "expect": "blocked_unset"},
+    {"name": "exact_boundary", "cap": 100, "committed": 40, "request": 60, "expect": "reserved"}
+  ]
+}

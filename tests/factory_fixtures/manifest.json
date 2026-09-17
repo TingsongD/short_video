@@ -1,0 +1,84 @@
+{
+  "schema_version": "factory.fixture_manifest.v1",
+  "fixtures": {
+    "core-30s": {
+      "kind": "media+data",
+      "description": "Portrait source, 30s of picture at 24fps, six beats, three synthetic products, fixed transcript",
+      "expected": {
+        "source": {"duration_s": 30.0, "fps": 24, "width": 360, "height": 640},
+        "output": {"fps_num": 30, "fps_den": 1, "frames": 900},
+        "beats_s": [[0, 4], [4, 8], [8, 12], [12, 17], [17, 26], [26, 30]],
+        "variants": {"A": "control", "B": [0, 120], "C": [360, 510], "D": [780, 900]}
+      }
+    },
+    "long-haul-1697": {
+      "kind": "media+data",
+      "description": "169.7s timeline, 20 takes, 10 product snapshots",
+      "expected": {
+        "source": {"duration_s": 169.7, "fps": 24, "width": 360, "height": 640},
+        "output": {"fps_num": 30, "fps_den": 1, "frames": 5091},
+        "takes": 20, "products": 10
+      }
+    },
+    "reference-defects": {
+      "kind": "media",
+      "description": "Thumbnail-as-video, zero-byte, corrupt, VFR, short, missing-audio, duplicate URL, expiring URL",
+      "expected": {"rejections": ["thumbnail_as_video", "zero_byte", "corrupt", "short_clip", "missing_audio"]}
+    },
+    "outlier-math": {
+      "kind": "data",
+      "description": "Seed 1,000,000 views / 10,000 followers; cohort of 20 at 20,000 views",
+      "expected": {"follower_multiple": 100.0, "mean_multiple": 50.0, "median_multiple": 50.0, "cohort_size": 20}
+    },
+    "outlier-boundaries": {
+      "kind": "data",
+      "description": "19,999 / 20,000 / 20,001 views vs 10,000 followers; baseline exactly 5x; small sample",
+      "expected": {"follower_pass": [false, false, true], "strict": true}
+    },
+    "shopify-catalog": {
+      "kind": "data",
+      "description": "Paginated products/media, color variants, image-only product, attached video, unavailable variant, HTML description, stale URL",
+      "expected": {"products": 4, "pages": 2}
+    },
+    "provider-catalogs": {
+      "kind": "data",
+      "description": "Canvas and Vertex capability snapshots: duration/input-mode limits, expired snapshot, unqualified Veo",
+      "expected": {"providers": ["jimeng_canvas", "google_vertex"]}
+    },
+    "provider-failures": {
+      "kind": "data",
+      "description": "Fault names covering the runbook registry including Omni HTTP-200-then-errors",
+      "expected": {"fault_count_minimum": 16}
+    },
+    "money-boundaries": {
+      "kind": "data",
+      "description": "100-credit cap with 60+50 competing; $1 aggregate, $0.80 Vertex sublimit, $0.30 committed",
+      "expected": {"credit_winner_amount": 60, "aggregate_blocks_vertex": true}
+    },
+    "caption-entities": {
+      "kind": "data",
+      "description": "Apostrophes, quotes, &, <, >, Unicode, join-boundary cues",
+      "expected": {"min_cues": 6}
+    },
+    "composition-effects": {
+      "kind": "media+data",
+      "description": "Static haul composition plus one animated overlay unsupported by fast exporter",
+      "expected": {"fast_path": "static", "unsupported": "animated_overlay"}
+    },
+    "delivery-recovery": {
+      "kind": "data",
+      "description": "Fake Drive folders, matching checksum, same-name/different-hash file, lost ack",
+      "expected": {"scenarios": ["identical_reuse", "name_conflict", "md5_mismatch", "lost_ack"]}
+    },
+    "process-ownership": {
+      "kind": "data",
+      "description": "Owned server/child, shared lease, unrelated port owner, simulated PID reuse",
+      "expected": {"protected": ["dashboard", "active_variant", "unrelated_listener"]}
+    },
+    "analytics-windows": {
+      "kind": "data",
+      "description": "Fixed publication times, delayed rows, empty results, mismatched periods, retention >1, three comparisons",
+      "expected": {"horizons_h": [48, 168, 672]}
+    }
+  }
+}

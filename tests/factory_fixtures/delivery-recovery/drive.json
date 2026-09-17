@@ -1,0 +1,28 @@
+{
+  "schema_version": "factory.fixture_data.v1",
+  "authorized_folder": "fixture-drive-folder-1XQU",
+  "scenarios": [
+    {
+      "name": "identical_reuse",
+      "name_field": "MsDressly_Exp-004_Styling-Haul_A_Close-Adaptation_30s_r1.mp4",
+      "content_tag": "final-v1",
+      "expect": "existing verified file reused; no second upload"
+    },
+    {
+      "name": "name_conflict",
+      "name_field": "MsDressly_Exp-004_Styling-Haul_A_Close-Adaptation_30s_r1.mp4",
+      "content_tag": "different-content",
+      "expect": "same name different hash is a conflict, never silently overwritten"
+    },
+    {
+      "name": "md5_mismatch",
+      "remote_md5": "0000000000000000000000000000dead",
+      "expect": "verification fails; local final retained; delivery not complete"
+    },
+    {
+      "name": "lost_ack",
+      "fault": "lost-upload-ack",
+      "expect": "reconcile finds remote file by name+hash; no duplicate upload"
+    }
+  ]
+}

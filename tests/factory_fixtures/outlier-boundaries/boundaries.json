@@ -1,0 +1,18 @@
+{
+  "schema_version": "factory.fixture_data.v1",
+  "followers": 10000,
+  "views_cases": [
+    {"views": 19999, "expect_follower_pass": false, "note": "1.9999x is not >2"},
+    {"views": 20000, "expect_follower_pass": false, "note": "exactly 2.0x is not strictly >2"},
+    {"views": 20001, "expect_follower_pass": true, "note": "2.0001x is strictly >2"}
+  ],
+  "baseline_cases": [
+    {"baseline_multiple": 4.999, "expect_baseline_pass": false},
+    {"baseline_multiple": 5.0, "expect_baseline_pass": true, "note": "baseline threshold is inclusive >=5"},
+    {"baseline_multiple": 5.001, "expect_baseline_pass": true}
+  ],
+  "sample_size_cases": [
+    {"cohort_size": 19, "expect_confidence": "low"},
+    {"cohort_size": 20, "expect_confidence": "standard"}
+  ]
+}

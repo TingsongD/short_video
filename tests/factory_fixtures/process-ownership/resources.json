@@ -1,0 +1,14 @@
+{
+  "schema_version": "factory.fixture_data.v1",
+  "processes": [
+    {"id": "preview-A", "kind": "preview_server", "owner": "variant:A", "port": 5184, "shared": false},
+    {"id": "render-worker-1", "kind": "render", "owner": "variant:B", "port": null, "shared": false, "state": "active"},
+    {"id": "studio-session", "kind": "studio", "owner": "shared", "port": 5190, "shared": true, "holders": ["variant:B", "variant:C"]},
+    {"id": "dashboard", "kind": "app", "owner": "factory", "port": 8000, "protected": true},
+    {"id": "unrelated-listener", "kind": "external", "owner": null, "port": 5185, "protected": true, "note": "occupies a previously-used port; must not be killed"}
+  ],
+  "expectations": {
+    "variant_A_completion_stops": ["preview-A"],
+    "never_stopped": ["studio-session", "dashboard", "unrelated-listener", "render-worker-1"]
+  }
+}
