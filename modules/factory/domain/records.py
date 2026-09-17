@@ -594,6 +594,84 @@ class ReferencePack(Record):
         return e
 
 
+# --------------------------------------------------------------- speech
+
+@dataclass
+class SpeechSegment(Record):
+    """One narration segment. Identity = voice+model+language+settings+
+    normalization+text → `cache_key` shared across variants; a changed
+    hook is a different key, never a reread of the track."""
+    segment_id: str = ""
+    variant_id: str = ""
+    cache_key: str = ""
+    voice: dict = field(default_factory=dict)
+    # {voice_id, model, language, settings{}}
+    normalization: str = ""          # e.g. voicetext.v1
+    source_text: str = ""            # as authored
+    text: str = ""                   # normalized spoken text
+    target: FrameInterval = None
+    status: str = "planned"          # planned|submitted|voiced|aligned|
+                                     # fitted|approved|failed|stale
+    artifact_id: str = ""
+    audio_sha256: str = ""
+    duration_s: object = None        # measured; None while unknown
+    fit: dict = field(default_factory=dict)
+    speech_hash: str = ""            # approved version — lip-sync binds
+
+    def validate(self):
+        e = super().validate()
+        _id_errors(e, self.segment_id, "segment_id")
+        if self.status == "approved" and not self.speech_hash:
+            e.append(ContractError("missing_field", "speech_hash"))
+        if self.duration_s is not None and self.duration_s < 0:
+            e.append(ContractError("bad_duration", "duration_s"))
+        return e
+
+
+@dataclass
+class WordAlignment(Record):
+    """Word timings measured against the exact returned waveform."""
+    segment_id: str = ""
+    audio_sha256: str = ""
+    spoken_text: str = ""
+    words: list = field(default_factory=list)
+    # [{w, start_s, end_s, confidence}]
+    aligner: dict = field(default_factory=dict)   # {kind, version}
+    confidence: float = 0.0
+
+    def validate(self):
+        e = super().validate()
+        _id_errors(e, self.segment_id, "segment_id")
+        prev = -1.0
+        for w in self.words:
+            if w.get("start_s", 0) < prev or \
+                    w.get("end_s", 0) < w.get("start_s", 0):
+                e.append(ContractError("word_times_not_monotonic",
+                                       "words", str(w)[:60]))
+                break
+            prev = w["end_s"]
+        return e
+
+
+@dataclass
+class CaptionSet(Record):
+    """Captions derived from the approved wording + alignment, mapped
+    onto target frames after fit transforms."""
+    segment_id: str = ""
+    speech_hash: str = ""            # approved speech version bound
+    cues: list = field(default_factory=list)
+    # [{start_frame, end_frame, text, word_refs[]}]
+    transform: dict = field(default_factory=dict)
+
+    def validate(self):
+        e = super().validate()
+        _id_errors(e, self.segment_id, "segment_id")
+        for c in self.cues:
+            if c.get("end_frame", 0) <= c.get("start_frame", 0):
+                e.append(ContractError("bad_cue", "cues", str(c)[:60]))
+        return e
+
+
 # ------------------------------------------------------------------ jobs
 
 @dataclass

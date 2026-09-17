@@ -1160,3 +1160,147 @@ class FakeVertexTransport:
         it["status"] = "CANCELLED"
         self._save()
         return 200, {"interactionId": iid, "status": "CANCELLED"}
+
+
+def _wav_bytes(duration_s, freq=220.0, rate=22050):
+    """Deterministic mono PCM WAV — real probeable audio for fakes."""
+    import io
+    import math
+    import struct
+    import wave
+    n = max(1, int(duration_s * rate))
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        frames = b"".join(
+            struct.pack("<h", int(12000 * math.sin(
+                2 * math.pi * freq * i / rate))) for i in range(n))
+        w.writeframes(frames)
+    return buf.getvalue()
+
+
+class FakeTTS:
+    """Persistent ElevenLabs-style synthesis (F19): submit → op;
+    observe polls RUNNING→SUCCEEDED; download returns a real WAV whose
+    duration derives from word count. Usage = characters, an estimate
+    in elevenlabs_credits — never settled billing."""
+
+    unit = "elevenlabs_credits"
+
+    def __init__(self, path):
+        self.path = Path(path)
+        if self.path.exists():
+            self.doc = json.loads(self.path.read_text())
+        else:
+            self.doc = {"seq": 0, "ops": {}, "polls": {}, "faults": [],
+                        "lost_submits": []}
+            self._save()
+
+    def _save(self):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self.path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(self.doc, indent=1, sort_keys=True))
+        tmp.replace(self.path)
+
+    def set_fault(self, name):
+        if name not in self.doc["faults"]:
+            self.doc["faults"].append(name)
+            self._save()
+
+    def clear_fault(self, name):
+        if name in self.doc["faults"]:
+            self.doc["faults"].remove(name)
+            self._save()
+
+    def lose_next_submit(self):
+        self.doc["lost_submits"].append("pending")
+        self._save()
+
+    def price(self, text):
+        return max(1, -(-len(text) // 100))      # 1 credit / 100 chars
+
+    def submit(self, request):
+        if "quota" in self.doc["faults"]:
+            raise ProviderError("quota_exceeded", transient=True)
+        self.doc["seq"] += 1
+        oid = f"tts-{self.doc['seq']:05d}"
+        words = len((request.get("text") or "").split())
+        duration = 0.3 + words * 0.38           # speech + edge silence
+        self.doc["ops"][oid] = {
+            "operation_id": oid, "request": request,
+            "request_hash": hashlib.sha256(json.dumps(
+                request, sort_keys=True, default=str).encode()
+            ).hexdigest(),
+            "status": "RUNNING", "duration_s": round(duration, 3)}
+        self._save()
+        if self.doc["lost_submits"]:
+            self.doc["lost_submits"].pop()
+            self._save()
+            raise ProviderError("transport_timeout")
+        return {"operation_id": oid, "status": "accepted"}
+
+    def observe(self, operation_id):
+        op = self.doc["ops"].get(operation_id)
+        if op is None:
+            raise ProviderError("operation_not_found")
+        n = self.doc["polls"].get(operation_id, 0)
+        self.doc["polls"][operation_id] = n + 1
+        if op["status"] == "RUNNING" and n >= 1:
+            op["status"] = "FAILED" if "synth_fails" in \
+                self.doc["faults"] else "SUCCEEDED"
+            if op["status"] == "SUCCEEDED":
+                op["usage"] = {"characters":
+                               len(op["request"].get("text") or "")}
+        self._save()
+        out = dict(op)
+        out["status"] = {"RUNNING": "running", "SUCCEEDED": "succeeded",
+                         "FAILED": "failed"}[op["status"]]
+        return out
+
+    def download(self, operation_id, destination=None):
+        op = self.doc["ops"].get(operation_id)
+        if op is None:
+            raise ProviderError("operation_not_found")
+        if op["status"] != "SUCCEEDED":
+            raise ProviderError("output_not_available", transient=True)
+        if "download_fails" in self.doc["faults"]:
+            raise ProviderError("transport_error", transient=True)
+        payload = _wav_bytes(op["duration_s"])
+        return {"operation_id": operation_id, "bytes": payload,
+                "sha256": hashlib.sha256(payload).hexdigest(),
+                "usage": op.get("usage")}
+
+    def reconcile(self, operation_id=None, request_hash=None):
+        if operation_id and operation_id in self.doc["ops"]:
+            return self.observe(operation_id)
+        if request_hash:
+            for op in self.doc["ops"].values():
+                if op.get("request_hash") == request_hash:
+                    return self.observe(op["operation_id"])
+        return None
+
+    def cancel(self, operation_id):
+        op = self.doc["ops"].get(operation_id)
+        if op is None:
+            raise ProviderError("operation_not_found")
+        op["status"] = "FAILED"
+        self._save()
+        return {"acknowledged": True, "terminal": True}
+
+
+class FakeAligner:
+    """Deterministic word timing: words spaced evenly inside the
+    waveform's speech region (edge silence excluded)."""
+
+    def align(self, text, audio_sha256, duration_s):
+        words = (text or "").split()
+        if not words:
+            return []
+        edge = 0.15
+        span = max(0.05, (duration_s - 2 * edge) / len(words))
+        return [{"w": w, "start_s": round(edge + i * span, 3),
+                 "end_s": round(edge + (i + 0.92) * span, 3),
+                 "confidence": 0.95}
+                for i, w in enumerate(words)]
