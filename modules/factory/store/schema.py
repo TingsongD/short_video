@@ -1,7 +1,7 @@
 """Ordered migrations. Every DB carries meta.schema_version; an older
 binary refuses a newer database rather than reinterpreting it."""
 
-CURRENT_VERSION = 4
+CURRENT_VERSION = 5
 
 MIGRATIONS = [
     (1, """
@@ -165,6 +165,28 @@ CREATE TABLE ledger_imports (
   source_hash TEXT NOT NULL,
   body TEXT NOT NULL,
   imported_at TEXT NOT NULL
+);
+"""),
+    (5, """
+CREATE TABLE capacities (
+  name TEXT PRIMARY KEY,
+  limit_n INTEGER NOT NULL
+);
+
+CREATE TABLE capacity_holds (
+  capacity TEXT NOT NULL,
+  job_id TEXT NOT NULL,
+  holder TEXT NOT NULL,
+  fencing INTEGER NOT NULL,
+  expires_at TEXT NOT NULL,
+  retained_reason TEXT,
+  PRIMARY KEY (capacity, job_id)
+);
+CREATE INDEX holds_expiry ON capacity_holds(expires_at);
+
+CREATE TABLE scheduler_flags (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
 );
 """),
 ]

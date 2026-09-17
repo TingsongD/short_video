@@ -197,7 +197,9 @@ def test_registry_144_cases():
     assert len(ids) == 144
     assert case_status(specs["F01-M01"]) == "implemented"
     assert case_status(specs["F02-M01"]) == "implemented"
-    assert case_status(specs["F06-M01"]) == "missing_prerequisite"
+    from modules.factory.qa.registry import MODULES, IMPLEMENTED
+    pending = next(m for m in sorted(MODULES) if m not in IMPLEMENTED)
+    assert case_status(specs[f"{pending}-M01"]) == "missing_prerequisite"
 
 
 def test_cli_run_and_idempotent_replay(space, capsys):
@@ -216,8 +218,10 @@ def test_cli_run_and_idempotent_replay(space, capsys):
 def test_cli_run_unknown_and_unimplemented(space):
     assert qa_main(["run", "--workspace", str(space.path),
                     "--case", "NOPE"]) == 1
+    from modules.factory.qa.registry import MODULES, IMPLEMENTED
+    pending = next(m for m in sorted(MODULES) if m not in IMPLEMENTED)
     assert qa_main(["run", "--workspace", str(space.path),
-                    "--case", "F06-M01"]) == 1  # missing prerequisite
+                    "--case", f"{pending}-M01"]) == 1  # missing prereq
 
 
 def test_cli_live_mode_requires_authorization(space):
@@ -234,8 +238,13 @@ def test_cli_inspect_views(space):
                     "--view", "provider-calls", "--json"]) == 0
     assert qa_main(["inspect", "--workspace", str(space.path),
                     "--view", "health", "--json"]) == 0
+    from modules.factory.qa.views import VIEW_MODULE
+    from modules.factory.qa.registry import IMPLEMENTED
+    pending_view = next(v for v, m in VIEW_MODULE.items()
+                        if m not in IMPLEMENTED)
     assert qa_main(["inspect", "--workspace", str(space.path),
-                    "--view", "jobs", "--json"]) == 1  # F06 not built
+                    "--view", pending_view,
+                    "--json"]) == 1  # owning module not built
     assert qa_main(["inspect", "--workspace", str(space.path),
                     "--view", "nonsense"]) == 1
 
