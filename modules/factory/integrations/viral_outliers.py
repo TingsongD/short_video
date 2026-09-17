@@ -15,6 +15,7 @@ import json
 from urllib.parse import urljoin, urlsplit
 
 from ..events.redact import redact
+from ..providers.synchronous import SynchronousAdapter
 from ..seeds.ssrf import (MAX_BYTES, MAX_REDIRECTS, assert_fetchable,
                           check_redirect)
 from ..testing.fakes import ProviderError
@@ -22,68 +23,20 @@ from ..testing.fakes import ProviderError
 BASE_URL = "https://viraloutliers.com"
 
 
-class ViralOutliersSource:
+class ViralOutliersSource(SynchronousAdapter):
     """Provider-protocol adapter over an injectable HTTP transport."""
 
-    def __init__(self, transport, resolver=None, max_bytes=MAX_BYTES):
-        self._transport = transport
-        self._resolver = resolver
-        self._max = max_bytes
-        self._ops = {}          # op_id -> {status, request, result, blob}
-        self._seq = 0
+    def __init__(self, transport, state_dir, resolver=None, max_bytes=MAX_BYTES):
+        super().__init__(state_dir)
+        self._transport, self._resolver, self._max = transport, resolver, max_bytes
 
-    # ------------------------------------------------------ provider api
-
-    def submit(self, request):
-        """request: {kind: 'metadata'|'media', post_id?, url?}."""
-        self._seq += 1
-        op_id = f"vo-src:{self._seq}"
-        kind = request.get("kind")
-        if kind == "metadata":
-            result = self._metadata(request["post_id"])
-            op = {"operation_id": op_id, "status": "succeeded",
-                  "result": result}
-        elif kind == "media":
-            blob = self._fetch(request["url"])
-            op = {"operation_id": op_id, "status": "accepted"}
-            self._ops[op_id] = {"status": "succeeded", "blob": blob,
-                                "request": request}
-            return op
-        else:
-            raise ProviderError("unsupported_kind")
-        self._ops[op_id] = {"status": "succeeded", "request": request,
-                            "result": result}
-        return op
-
-    def poll(self, operation_id):
-        op = self._ops.get(operation_id)
-        if op is None:
-            raise ProviderError("unknown_operation", http_status=404)
-        return {"operation_id": operation_id, "status": op["status"],
-                "result": op.get("result")}
-
-    def download(self, operation_id, destination=None):
-        op = self._ops.get(operation_id)
-        if op is None:
-            raise ProviderError("unknown_operation", http_status=404)
-        blob = op.get("blob")
-        if blob is None:
-            raise ProviderError("no_payload", http_status=409)
-        import hashlib
-        data, content_type = blob
-        if destination:
-            with open(destination, "wb") as f:
-                f.write(data)
-        return {"sha256": hashlib.sha256(data).hexdigest(),
-                "bytes": len(data), "content_type": content_type,
-                "path": destination}
-
-    def reconcile(self, operation_id=None, request_hash=None):
-        return self._ops.get(operation_id) if operation_id else None
-
-    def cancel(self, operation_id):
-        if operation_id in self._ops:
-            self._ops[operation_id]["status"] = "cancelled"
+    def execute(self, request):
+        if request.get("kind") == "metadata":
+            return self._metadata(request["post_id"]), None, {}
+        if request.get("kind") == "media":
+            raw, content_type = self._fetch(request["url"])
+            return {}, raw, {"content_type": content_type}
+        raise ProviderError("unsupported_kind")
 
     # -------------------------------------------------------- internals
 

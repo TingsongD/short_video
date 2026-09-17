@@ -67,10 +67,12 @@ class RenderService:
                 return {"status": "failed", "problem": str(e)}
             return self._finalize_local(build_id, final)
         # hypit path
+        if b.get("remote_build_id"):
+            return {"status": "running", "remote_build_id": b["remote_build_id"]}
         out = self.hypit.submit(svrun_path or
                                 ws / "render.svrun")
         self._set(build_id, status="running",
-                  remote_build_id=out["build_id"])
+                  remote_build_id=out["build_id"], hypit_workspace=out["workspace"])
         return {"status": "running",
                 "remote_build_id": out["build_id"]}
 
@@ -88,7 +90,7 @@ class RenderService:
         b = self._build(build_id)
         if b["renderer"] == "ffmpeg_fast":
             return {"status": b["status"]}
-        obs = self.hypit.observe(b["remote_build_id"])
+        obs = self.hypit.observe(b["remote_build_id"], b["hypit_workspace"])
         if obs["status"] == "unknown":
             self._set(build_id, status="observer_lost",
                       problem="observer_timeout")
@@ -109,7 +111,7 @@ class RenderService:
         if b["renderer"] == "hypit":
             dest = Path(b["workspace"]) / "returned-final.mp4"
             final = self.hypit.retrieve(b["remote_build_id"],
-                                        b["output_name"], dest)
+                                        b["output_name"], dest, b["hypit_workspace"])
         else:
             final = Path(b["workspace"]) / "final.mp4"
         data = Path(final).read_bytes()

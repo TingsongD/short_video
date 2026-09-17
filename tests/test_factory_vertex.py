@@ -85,33 +85,26 @@ def test_payload_matches_pilot_shape(tmp_path):
     body = t.doc["interactions"][out["operation_id"]]["request"]
     assert body["model"] == "gemini-omni-1.1-flash-preview"
     assert body["background"] is True
-    assert body["input"] == [{"text": "checkerboard tank on a hanger"}]
-    assert body["response"] == {"format": "video", "aspect_ratio": "9:16",
-                                "resolution": "720p", "duration": "4s"}
+    assert body["input"] == [{"type": "text", "text": "checkerboard tank on a hanger"}]
+    assert body["response_format"] == [{"type": "video", "aspect_ratio": "9:16",
+                                "resolution": "720p", "duration": "4s"}]
     assert body["generation_config"]["video_config"]["task"] == \
         "text_to_video"
     assert "delivery" not in body and "gcs_uri" not in body
 
 
-def test_reference_modes_map_tasks(tmp_path):
-    _, t, ad = make(tmp_path)
-    req = dict(REQ, reference_roles={"a1": "image"})
-    out = ad.submit(req)
-    body = t.doc["interactions"][out["operation_id"]]["request"]
-    assert body["generation_config"]["video_config"]["task"] == \
-        "reference_to_video"
-    req2 = dict(REQ, reference_roles={"a1": "video"})
-    out2 = ad.submit(req2)
-    body2 = t.doc["interactions"][out2["operation_id"]]["request"]
-    assert body2["generation_config"]["video_config"]["task"] == \
-        "video_to_video"
+def test_unqualified_reference_modes_block(tmp_path):
+    _, transport, adapter = make(tmp_path)
+    for role in ("image", "video"):
+        with pytest.raises(ProviderError, match="input_mode_not_qualified"):
+            adapter.submit(dict(REQ, reference_roles={"a1": role}))
+    assert not transport.doc["interactions"]
 
 
-def test_native_audio_policy_explicit(tmp_path):
-    _, t, ad = make(tmp_path)
-    out = ad.submit(dict(REQ, native_audio_policy="keep"))
-    body = t.doc["interactions"][out["operation_id"]]["request"]
-    assert body["generation_config"]["video_config"]["audio"] is True
+def test_payload_does_not_invent_audio_setting(tmp_path):
+    _, transport, adapter = make(tmp_path)
+    out = adapter.submit(dict(REQ, native_audio_policy="keep"))
+    assert transport.doc["interactions"][out["operation_id"]]["request"]["generation_config"] == {"video_config": {"task": "text_to_video"}}
 
 
 # --------------------------------------------------------- lifecycle --
@@ -119,7 +112,7 @@ def test_native_audio_policy_explicit(tmp_path):
 def test_submit_observe_download(tmp_path):
     _, _, ad = make(tmp_path)
     out = ad.submit(REQ)
-    assert out["status"] == "accepted"
+    assert out["status"] == "running"
     ad.observe(out["operation_id"])
     obs = ad.observe(out["operation_id"])
     assert obs["status"] == "succeeded"
@@ -146,7 +139,7 @@ def test_uri_delivery_terminal_failure(tmp_path):
     # simulate a request that carried delivery=uri
     it = t.doc["interactions"][out["operation_id"]]
     it["request"]["delivery"] = "uri"
-    it["status"], it["errors"] = "FAILED", [
+    it["status"], it["errors"] = "failed", [
         {"code": "invalid_request"}]
     t._save()
     obs = ad.observe(out["operation_id"])
@@ -160,7 +153,7 @@ def test_missing_output_not_success(tmp_path):
     out = ad.submit(REQ)
     ad.observe(out["operation_id"])
     obs = ad.observe(out["operation_id"])
-    assert obs["status"] == "succeeded" and obs["has_media"] is False
+    assert obs["status"] == "failed" and obs["has_media"] is False
     with pytest.raises(ProviderError, match="output_not_available"):
         ad.download(out["operation_id"])
 
@@ -203,8 +196,8 @@ def test_reconcile_by_request_hash(tmp_path):
 def test_cancel_maps_terminal(tmp_path):
     _, _, ad = make(tmp_path)
     out = ad.submit(REQ)
-    res = ad.cancel(out["operation_id"])
-    assert res["acknowledged"] and res["terminal"]
+    with pytest.raises(ProviderError, match="cancel_not_qualified"):
+        ad.cancel(out["operation_id"])
 
 
 # ----------------------------------------------------------- pricing --
@@ -212,11 +205,11 @@ def test_cancel_maps_terminal(tmp_path):
 def test_usage_estimate_from_dated_rates(tmp_path):
     _, _, ad = make(tmp_path)
     est = ad.estimate(REQ, 4)
-    # 103*1.5 + 23168*17.5 + 421*9.0 → 409,383.5 micros → 409383
+    # 103*1.5 + 23168*17.5 + 421*9.0 → 409,383.5 micros → 409384
     assert est["kind"] == "estimate" and est["rates_dated"] == "2026-09-16"
-    assert est["usd_micros_est"] == 409383
+    assert est["usd_micros_est"] == 409384
     m = ad.price(REQ, 4)
-    assert (m.unit, m.amount) == ("usd_micros", 409383)
+    assert (m.unit, m.amount) == ("usd_micros", 511730)
 
 
 def test_usage_absent_is_null_not_zero(tmp_path):

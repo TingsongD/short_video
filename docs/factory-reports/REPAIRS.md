@@ -11,7 +11,7 @@ All checks use offline providers; no new live spend or publication scope exists.
 | S0 containment | passed (offline checkpoint) | 856 suite tests passed in 115.35s; 5 focused safety tests passed (the final regression was added after full-suite collection); Approval clock regression reproduced then fixed; structured event redaction; unavailable handlers and empty reviews block; live transport policy defaults offline |
 | S1 state/restore | passed | 863 tests pass (117.24s); atomic v7→v8 migration fault/retry; restored media/ledger checks; normal CLI shares restored database |
 | S2 effects/budgets | shared-boundary checkpoint passed; adapter/application qualification remains S3/S5 | 875 tests pass (119.62s); 10 effect regressions; scoped atomic reservations/attempts/outbox/capacity; API uncertain retries blocked; per-experiment pause and collection; native provider enforcement verified with adapters in S3 |
-| S3 adapters | planned | |
+| S3 adapters | passed (offline protocol checkpoint) | 886 tests pass (119.31s); 11 protocol regressions; installed Canvas schema; validated Shopify queries; real isolated Hypit 30-frame export and owned runtime cleanup. See REPAIR-S3-EVIDENCE.json. |
 | S4 media/QC | planned | |
 | S5 application | planned | |
 | S6 research | planned | |
@@ -28,19 +28,19 @@ separate from engineering repairs; historical tests do not sign either gate.
 | R01 | open | |
 | R02 | in_progress | Shared effect authority/reservation boundary connected to generation, speech, music, research, analysis, delivery and publication. Native transports and real bootstrap require S3/S5 qualification. |
 | R03 | fixed | Edits invalidate draft quotes/authority; dispatch checks immutable bound record and experiment revision. |
-| R04 | open | |
+| R04 | fixed (offline) | Native quotes retained before approval; fresh ceiling cannot increase; absent pricing blocks. Regression tests enforce both boundaries. |
 | R05 | fixed | Duplicate and restarted submissions reuse the original attempt; unknown acknowledgements never dispatch again. |
 | R06 | fixed | Remote holds count independently of leases; five-operation regression, configurable capacity and local heartbeat. |
 | R07 | in_progress | Per-experiment pause, collection queue, bounded retries, terminal failures and manual replacement transitions repaired; application recovery journey pending S5/S8. |
 | R08 | open | |
-| R09 | open | |
-| R10 | open | |
-| R11 | open | |
+| R09 | fixed (offline) | Native OAuth, typed pilot request and completed-step output parsing; durable ambiguous POST receipts. Unqualified reference modes visibly unavailable; live text route qualification still separate. |
+| R10 | fixed (offline) | Installed CLI 1.0.1 contract; stable persisted IDs, shared video canvas, reference imports, exact draft checks, operation/resource provenance and native file receipts. |
+| R11 | fixed (offline) | Pinned 0.1.8 nested build/status/get envelopes, workspace scope, original-build recovery and strict local plan gate. Real local 30-frame export retrieved; runtime stopped. |
 | R12 | open | |
 | R13 | open | |
 | R14 | open | |
 | R15 | open | |
-| R16 | open | |
+| R16 | fixed (offline) | Native Drive full-name listing, complete-list detection, descriptive upload copy, exact byte size and MD5/parent parsing. Live delivery remains separately qualified. |
 | R17 | in_progress | Repeated delivery reconciles, expected size is persisted, and uncertain upload never repeats automatically; artifact acceptance and native Drive qualification pending S3/S5. |
 | R18 | open | |
 | R19 | open | |
@@ -54,8 +54,8 @@ separate from engineering repairs; historical tests do not sign either gate.
 | R27 | open | |
 | R28 | open | |
 | R29 | in_progress | API ownership recorded before action; uncertain retries blocked; fingerprint includes expected revision and exact import SHA256. Atomic queued domain-command response remains S5. |
-| R30 | open | |
-| R31 | open | |
+| R30 | fixed (offline) | Read-only Admin price scalar and full variant/media pagination; bounded media fetch and redirects. Four queries passed schema validation; offline multi-page/redirect tests. |
+| R31 | in_progress | Durable synchronous receipts and artifacts replace in-memory operations; verified search adapter and actual source-media analysis boundary added. Research cache/cohort decisions remain S6; app wiring S5. |
 | R32 | open | |
 | R33 | open | |
 | R34 | open | |

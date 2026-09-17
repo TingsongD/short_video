@@ -6,6 +6,9 @@ import hashlib
 import json
 import re
 import subprocess
+import tempfile
+import shutil
+from pathlib import Path
 
 
 class DriveAdapter:
@@ -44,31 +47,46 @@ class GdriveCLI(DriveAdapter):
                 argv, capture_output=True, text=True, timeout=timeout))
 
     def list_files(self, parent_id):
-        r = self.runner([self.binary, "files", "list", "--parent",
-                         parent_id, "--max", "1000"])
-        if r.returncode != 0:
-            raise RuntimeError(f"list failed: {r.stderr[-200:]}")
-        files = []
-        for line in r.stdout.splitlines():
-            parts = re.split(r"\s{2,}", line.strip())
-            if len(parts) >= 2 and parts[0] \
-                    and not parts[0].lower().startswith("id"):
+        # gdrive paginates internally up to --max. Grow that bound until the
+        # returned count proves exhaustion; never treat a full page as complete.
+        maximum = 1000
+        while maximum <= 128000:
+            r = self.runner([self.binary, "files", "list", "--parent", parent_id,
+                "--max", str(maximum), "--skip-header", "--full-name", "--field-separator", "\t"])
+            if r.returncode:
+                raise RuntimeError("drive_list_failed")
+            files = []
+            for line in r.stdout.splitlines():
+                if not line.strip():
+                    continue
+                parts = line.split("\t")
+                if len(parts) < 2 or not re.fullmatch(r"[A-Za-z0-9_-]+", parts[0]):
+                    raise RuntimeError("drive_listing_malformed")
                 files.append({"id": parts[0], "name": parts[1]})
-        return files
+            if len({f["id"] for f in files}) != len(files):
+                raise RuntimeError("drive_listing_duplicates")
+            if len(files) < maximum:
+                return files
+            maximum *= 2
+        raise RuntimeError("drive_listing_incomplete")
 
     def upload(self, parent_id, path, name):
-        # delivery copy keeps the descriptive name; source stays put
-        r = self.runner([self.binary, "files", "upload", "--parent",
-                         parent_id, "--print-only-id", str(path)])
-        if r.returncode != 0:
-            raise RuntimeError(f"upload failed: {r.stderr[-200:]}")
-        fid = r.stdout.strip().splitlines()[-1].strip()
-        if not fid:
-            raise RuntimeError("upload returned no file id")
+        if not name or name != Path(name).name or any(c in name for c in "\r\n\t"):
+            raise ValueError("invalid_delivery_name")
+        with tempfile.TemporaryDirectory(prefix="factory-drive-") as temporary:
+            copy = Path(temporary) / name
+            shutil.copyfile(path, copy)
+            r = self.runner([self.binary, "files", "upload", "--parent", parent_id,
+                             "--print-only-id", str(copy)])
+        if r.returncode:
+            raise RuntimeError("drive_upload_failed_reconcile_before_retry")
+        fid = r.stdout.strip()
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", fid):
+            raise RuntimeError("drive_upload_identity_unknown")
         return {"id": fid}
 
     def stat(self, file_id):
-        r = self.runner([self.binary, "files", "info", file_id])
+        r = self.runner([self.binary, "files", "info", "--size-in-bytes", file_id])
         if r.returncode != 0:
             return None
         info = {}
@@ -78,10 +96,13 @@ class GdriveCLI(DriveAdapter):
                 k = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_",
                            m.group(1).strip()).lower()
                 info[k.replace(" ", "_")] = m.group(2).strip()
+        if not info.get("size", "").isdigit():
+            raise RuntimeError("drive_metadata_size_invalid")
+        parents = re.findall(r"[A-Za-z0-9_-]+", info.get("parents", ""))
         return {"id": file_id, "name": info.get("name"),
-                "md5": info.get("md5_checksum"),
+                "md5": info.get("md5") or info.get("md5_checksum"),
                 "size": int(info.get("size", "0") or 0),
-                "parent": (info.get("parents") or "").split(",")[0]}
+                "parent": parents[0] if len(parents) == 1 else None, "parents": parents}
 
 
 def local_md5(path):

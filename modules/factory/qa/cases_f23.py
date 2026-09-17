@@ -158,9 +158,14 @@ def f23_m04(ctx: CaseContext):
         def __init__(self, rc, out=""):
             self.returncode, self.stdout, self.stderr = rc, out, ""
 
-    svc.hypit = HypitBuildRunner(
-        runner=lambda a: R(0, '{"build": "b-42"}')
-        if a[0] == "build" else R(0, '{"status": "succeeded"}'))
+    def fake(argv):
+        if argv[0] == "check":
+            return R(0, '{"format":"hypit.cli-check@1","ok":true}')
+        if argv[0] == "plan":
+            return R(0, '{"format":"hypit.cli-plan@1","ok":true,"requestCount":0,"needs":[]}')
+        return R(0, '{"format":"hypit.cli-build@1","build":{"id":"b-42"}}')
+    (ctx.run_dir / "r.svrun").write_text("fixture run")
+    svc.hypit = HypitBuildRunner(runner=fake)
     svc.register("bld-h", {"id": "comp-h", "content_hash": "h2",
                            "variant_key": "A", "renderer": "hypit"},
                  now=NOW)

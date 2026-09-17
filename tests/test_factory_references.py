@@ -210,7 +210,7 @@ def test_generated_reference_flow(stack):
     gen = ReferenceGeneration(db, packs, arts, adapter, executor, budget)
     packs.create_pack("pack-1", "p-1", now=NOW)
     req = {"kind": "image", "prompt": "product photo blue tank", "model": "seedream_4.0", "duration_s": 1}
-    aid = approve_operation(db, executor, req, "job:gen1", kind="generation", provider="jimeng_canvas", model="seedream_4.0", unit="jimeng_credits", amount=30)
+    aid = approve_operation(db, executor, req, "job:gen1", kind="generation", provider="jimeng_canvas", model="seedream_4.0", unit="jimeng_credits", amount=54)
     out = gen.request("pack-1", "r-gen", "job:gen1",
                       "product photo blue tank", [("b-credits", 30)], attempt_id=aid)
     assert out["reservation_id"] and out["operation"]["operation_id"]
@@ -242,7 +242,7 @@ def test_generated_recovery_after_interrupt(stack):
     wire = j.dumps(req, sort_keys=True, default=str)
     rh = h.sha256(wire.encode()).hexdigest()
     from modules.factory.testing.fakes import ProviderError
-    aid = approve_operation(db, executor, req, "job:g2", kind="generation", provider="jimeng_canvas", model="seedream_4.0", unit="jimeng_credits", amount=30)
+    aid = approve_operation(db, executor, req, "job:g2", kind="generation", provider="jimeng_canvas", model="seedream_4.0", unit="jimeng_credits", amount=54)
     with pytest.raises(ProviderError):
         executor.submit(aid, lambda: adapter.submit(req))
     rec = gen.recover("pack-1", "r-gen2", "product_detail",

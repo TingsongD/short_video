@@ -24,8 +24,17 @@ class AlignmentService:
         if not seg.get("audio_sha256") or seg.get("duration_s") is None:
             raise ContractError("no_waveform", "segment_id",
                                 "voice the segment first")
-        words = self.aligner.align(seg["text"], seg["audio_sha256"],
-                                   seg["duration_s"])
+        if seg.get("raw_alignment"):
+            from ...batch.audio import word_times
+            if "".join(seg["raw_alignment"]["characters"]) != seg["text"]:
+                raise ContractError("alignment_text_mismatch", "segment_id")
+            aligned = word_times(seg["raw_alignment"], 0, 1, 0, seg["duration_s"])
+            words = [{"w": w["text"], "start_s": w["start"], "end_s": w["end"], "confidence": 1.0} for w in aligned]
+            aligner_id = "elevenlabs-v3-character-alignment"
+        elif self.aligner is not None:
+            words = self.aligner.align(seg["text"], seg["audio_sha256"], seg["duration_s"])
+        else:
+            raise ContractError("alignment_required", "segment_id")
         conf = ([w.get("confidence", 0.0) for w in words] or [0.0])
         al = WordAlignment(
             schema_version="word_alignment.v1",

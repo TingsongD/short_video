@@ -146,16 +146,22 @@ def test_hypit_build_lifecycle(stack):
             self.returncode, self.stdout, self.stderr = rc, out, ""
 
     def fake(argv):
+        if argv[0] == "check":
+            return R(0, json.dumps({"format": "hypit.cli-check@1", "ok": True}))
+        if argv[0] == "plan":
+            return R(0, json.dumps({"format": "hypit.cli-plan@1", "ok": True, "requestCount": 0, "needs": []}))
         if argv[0] == "build":
-            return R(0, '{"build": "b-777", "status": "accepted"}')
+            return R(0, '{"format":"hypit.cli-build@1", "build":{"id":"b-777","work":{"state":"working"},"result":{"state":"missing"}}}')
         if argv[0] == "status":
-            return R(0, '{"status": "succeeded"}')
+            return R(0, '{"format":"hypit.cli-status@1", "build":{"id":"b-777","work":{"state":"done","outcome":"complete"},"result":{"state":"complete"}}}')
         if argv[0] == "get":
             dest = argv[argv.index("--to") + 1]
             open(dest, "wb").write(sent.read_bytes())
-            return R(0, "{}")
+            return R(0, json.dumps({"format": "hypit.cli-get@1", "build": "b-777", "output": argv[argv.index("--output")+1], "path": dest}))
         return R(1, "bad argv")
 
+    (tmp / "render.svrun").write_text("fixture run")
+    (tmp / "r.svrun").write_text("fixture run")
     svc.hypit = HypitBuildRunner(runner=fake)
     svc.register("bld-h", _comp("hypit"), now=NOW)
     out = svc.dispatch("bld-h", [], [], [], CLOCK,
@@ -176,10 +182,16 @@ def test_observer_timeout_not_failure(stack):
             self.returncode, self.stdout, self.stderr = rc, out, ""
 
     def fake(argv):
+        if argv[0] == "check":
+            return R(0, json.dumps({"format": "hypit.cli-check@1", "ok": True}))
+        if argv[0] == "plan":
+            return R(0, json.dumps({"format": "hypit.cli-plan@1", "ok": True, "requestCount": 0, "needs": []}))
         if argv[0] == "build":
-            return R(0, '{"build": "b-1"}')
+            return R(0, '{"format":"hypit.cli-build@1", "build":{"id":"b-1","work":{"state":"working"},"result":{"state":"missing"}}}')
         raise subprocess.TimeoutExpired(argv, 30)
 
+    (tmp / "render.svrun").write_text("fixture run")
+    (tmp / "r.svrun").write_text("fixture run")
     svc.hypit = HypitBuildRunner(runner=fake)
     svc.register("bld-h", _comp("hypit"), now=NOW)
     svc.dispatch("bld-h", [], [], [], CLOCK, svrun_path=tmp / "r.svrun")

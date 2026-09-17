@@ -1,0 +1,33 @@
+{
+  "id": "fixture-interaction",
+  "status": "completed",
+  "usage": {
+    "total_tokens": 23692,
+    "total_input_tokens": 103,
+    "input_tokens_by_modality": [
+      {
+        "modality": "text",
+        "tokens": 103
+      }
+    ],
+    "total_output_tokens": 23168,
+    "output_tokens_by_modality": [
+      {
+        "modality": "video",
+        "tokens": 23168
+      }
+    ],
+    "total_thought_tokens": 421
+  },
+  "steps": [
+    {
+      "content": [
+        {
+          "type": "video",
+          "mime_type": "video/mp4",
+          "data": "Zml4dHVyZQ=="
+        }
+      ]
+    }
+  ]
+}

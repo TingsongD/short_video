@@ -128,7 +128,7 @@ class TestSSRF:
         assert_fetchable("https://cdn.example.com/x",
                          resolver=lambda h: ["93.184.216.34"])
 
-    def test_adapter_redirect_to_private_refused(self):
+    def test_adapter_redirect_to_private_refused(self, tmp_path):
         def transport(method, url, body):
             if "content/" in url:
                 return 200, {}, json.dumps({"media_url": "https://ok/x"})
@@ -136,11 +136,11 @@ class TestSSRF:
                 return 302, {"location": "http://169.254.169.254/m"}, b""
             return 404, {}, b""
         src = ViralOutliersSource(
-            transport, resolver=lambda h: ["93.184.216.34"])
+            transport, tmp_path / "receipts", resolver=lambda h: ["93.184.216.34"])
         with pytest.raises(SSRFError):
             src.submit({"kind": "media", "url": "https://ok/x"})
 
-    def test_adapter_redirect_chain_bounded(self):
+    def test_adapter_redirect_chain_bounded(self, tmp_path):
         calls = []
 
         def transport(method, url, body):
@@ -148,7 +148,7 @@ class TestSSRF:
             n = len(calls)
             return 302, {"location": f"https://ok/{n}"}, b""
         src = ViralOutliersSource(
-            transport, resolver=lambda h: ["93.184.216.34"])
+            transport, tmp_path / "receipts", resolver=lambda h: ["93.184.216.34"])
         with pytest.raises(SSRFError):       # exceeds redirect limit
             src.submit({"kind": "media", "url": "https://ok/0"})
 

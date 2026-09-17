@@ -1,0 +1,23 @@
+{
+  "model": "gemini-omni-1.1-flash-preview",
+  "input": [
+    {
+      "type": "text",
+      "text": "Fixture product video"
+    }
+  ],
+  "background": true,
+  "response_format": [
+    {
+      "type": "video",
+      "aspect_ratio": "9:16",
+      "resolution": "720p",
+      "duration": "4s"
+    }
+  ],
+  "generation_config": {
+    "video_config": {
+      "task": "text_to_video"
+    }
+  }
+}

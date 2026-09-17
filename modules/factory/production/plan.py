@@ -54,8 +54,14 @@ class ProductionService:
             unit = ""
             if self.adapter is not None:
                 for a in n["allocations"]:
-                    m = self.adapter.price(n["request"],
-                                           a["duration_s"], model)
+                    if hasattr(self.adapter, "prepare_quote"):
+                        n["request"].setdefault("video_id", f"{experiment_id}-{n['consumers'][0].lower()}")
+                        quote = self.adapter.prepare_quote(dict(n["request"], duration_s=a["duration_s"], model=model))
+                        a["quote"] = {k: v for k, v in quote.items() if k != "prep"}
+                        from ..domain.money import Money
+                        m = Money("jimeng_credits", quote["max_credits"])
+                    else:
+                        m = self.adapter.price(n["request"], a["duration_s"], model)
                     m = m.to_dict() if hasattr(m, "to_dict") else m
                     a["price"] = m
                     amount += m["amount"]
@@ -117,7 +123,7 @@ class ProductionService:
                     request_hash=wire_hash(req), plan_hash=self._plan(plan_id)["plan_hash"],
                     provider=node["provider"], model=node["model"], unit=price["unit"],
                     amount=price["amount"], reserve_amount=price["amount"],
-                    rate_basis="adapter:plan-quote", valid_until=valid_until)
+                    rate_basis=json.dumps(allocation.get("quote") or {"kind": "dated_adapter_estimate"}, sort_keys=True), valid_until=valid_until)
                 ops.append(dict(key=f"{key}:{i}", kind="generation", provider=node["provider"],
                     model=node["model"], account=account, request=req, price=quote))
         EffectService(self.db, self.executor).approve(authorization, "productionplan", plan_id, ops, budget_ids)

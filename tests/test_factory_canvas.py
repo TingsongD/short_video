@@ -1,6 +1,10 @@
 """F16: Jimeng Canvas adapter — argv-level fake CLI, idempotent prep,
 native quotes, credit faults, account safety."""
 import pytest
+import uuid
+from modules.assets.canvas import new_node_id
+from modules.factory.domain.money import Money
+from modules.factory.providers.state import DurableState
 
 from modules.assets.canvas_cli import CanvasCLI, CanvasError
 from modules.factory.providers.canvas import CanvasAdapter
@@ -13,7 +17,7 @@ def make(tmp_path, **kw):
     return runner, adapter
 
 
-REQ = {"prompt": "vertical product shot", "duration_s": 4,
+REQ = {"video_id": "test-video", "prompt": "vertical product shot", "duration_s": 4,
        "model": "seedance_2.0_fast_vip"}
 
 
@@ -39,12 +43,12 @@ def test_wrong_account_reconnect_rejected(tmp_path):
 
 def test_prepare_idempotent_across_restart(tmp_path):
     r, _ = make(tmp_path)
-    state = {}
+    state = DurableState(tmp_path / "adapter.json")
     ad = CanvasAdapter(CanvasCLI(runner=r), state)
     p1 = ad.prepare(REQ)
     # 'restart': new runner + adapter, same on-disk fake + same state map
     ad2 = CanvasAdapter(
-        CanvasCLI(runner=FakeCanvasRunner(tmp_path / "cli.json")), state)
+        CanvasCLI(runner=FakeCanvasRunner(tmp_path / "cli.json")), DurableState(tmp_path / "adapter.json"))
     assert ad2.prepare(REQ) == p1
     assert len(r.doc["nodes"]) == 1      # no duplicate paid node
 
@@ -57,7 +61,7 @@ def test_native_quote_ceiling(tmp_path):
 
 def test_submit_observe_download_round_trip(tmp_path):
     _, ad = make(tmp_path)
-    out = ad.submit(REQ)
+    out = ad.submit(REQ, price=Money("jimeng_credits", 54))
     assert out["ceiling"] == 54
     ad.observe(out["operation_id"])
     obs = ad.observe(out["operation_id"])
@@ -68,7 +72,7 @@ def test_submit_observe_download_round_trip(tmp_path):
 
 def test_submit_id_derived_from_request_hash(tmp_path):
     _, ad = make(tmp_path)
-    a, b = ad.submit(REQ), ad.submit(dict(REQ))
+    a, b = ad.submit(REQ, price=Money("jimeng_credits", 54)), ad.submit(dict(REQ), price=Money("jimeng_credits", 54))
     assert a["submit_id"] == b["submit_id"]
 
 
@@ -76,7 +80,7 @@ def test_credit_reject_is_named_fault(tmp_path):
     r, ad = make(tmp_path)
     r.set_fault("credit_reject")
     with pytest.raises(ProviderError, match="credits_rejected"):
-        ad.submit(REQ)
+        ad.submit(REQ, price=Money("jimeng_credits", 54))
 
 
 def test_partial_quote_raises_before_charge(tmp_path):
@@ -87,9 +91,10 @@ def test_partial_quote_raises_before_charge(tmp_path):
     cli = CanvasCLI(runner=r)
     node2 = cli.call("node", "create", "video", "--project-id",
                      prep["project_id"], "--model", REQ["model"],
-                     "--mode", "t2v", "--duration", 4, "--prompt", "x")
+                     "--mode", "t2v", "--duration", 4, "--prompt", "x",
+                     "--node-id", new_node_id(), "--update-id", str(uuid.uuid4()))
     with pytest.raises(CanvasError, match="quote_incomplete"):
-        cli.quote(prep["project_id"], [prep["node_id"], node2["nodeId"]])
+        cli.quote(prep["project_id"], [prep["node_id"], node2["node"]["nodeId"]])
 
 
 def test_malformed_json_response_named(tmp_path):
@@ -118,23 +123,24 @@ def test_lost_run_response_leaves_remote_op(tmp_path):
     r, ad = make(tmp_path)
     r.lose_next_run()
     with pytest.raises(ProviderError, match="transport_timeout"):
-        ad.submit(REQ)
+        ad.submit(REQ, price=Money("jimeng_credits", 54))
     # The remote side did accept — the op exists in fake state
     assert r.doc["ops"], "accepted op must persist despite lost ack"
 
 
 def test_reconcile_by_request_hash(tmp_path):
     _, ad = make(tmp_path)
-    out = ad.submit(REQ)
+    out = ad.submit(REQ, price=Money("jimeng_credits", 54))
     rh = ad._req_hash(REQ)
     rec = ad.reconcile(request_hash=rh)
     assert rec["operation_id"] == out["operation_id"]
 
 
-def test_cancel_supported(tmp_path):
+def test_cancel_is_explicitly_unsupported(tmp_path):
     _, ad = make(tmp_path)
-    out = ad.submit(REQ)
-    assert ad.cancel(out["operation_id"])["acknowledged"]
+    out = ad.submit(REQ, price=Money("jimeng_credits", 54))
+    with pytest.raises(ProviderError, match="cancellation_not_supported"):
+        ad.cancel(out["operation_id"])
 
 
 def test_price_table_estimate(tmp_path):
@@ -146,10 +152,10 @@ def test_price_table_estimate(tmp_path):
 
 def test_state_survives_adapter_restart(tmp_path):
     r, _ = make(tmp_path)
-    state = {}
+    state = DurableState(tmp_path / "adapter.json")
     ad = CanvasAdapter(CanvasCLI(runner=r), state)
-    out = ad.submit(REQ)
+    out = ad.submit(REQ, price=Money("jimeng_credits", 54))
     ad2 = CanvasAdapter(
-        CanvasCLI(runner=FakeCanvasRunner(tmp_path / "cli.json")), state)
+        CanvasCLI(runner=FakeCanvasRunner(tmp_path / "cli.json")), DurableState(tmp_path / "adapter.json"))
     obs = ad2.observe(out["operation_id"])
     assert obs["operation_id"] == out["operation_id"]

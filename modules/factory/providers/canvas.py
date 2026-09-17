@@ -1,24 +1,23 @@
-"""Jimeng Canvas adapter (F16): wraps the official dreamina-canvas CLI
-(`modules.assets.canvas_cli.CanvasCLI`) behind the F15 contract.
+"""Official Canvas 1.0.1 protocol, shared canvases and stable public identities.
 
-- The CLI boundary already guarantees: injectable runner, bounded
-  timeouts, structured JSON only, no argv/stdout/stderr in errors, and
-  credit-confirmation tokens that never leave the call frame.
-- Preparation (canvas + node creation) is recoverable and idempotent
-  by request_hash — a restart reuses the same IDs instead of creating
-  duplicate paid nodes.
-- The adapter records its own prep/operation map in `state` (a
-  dict-like store); the caller's Executor records intents/attempts.
+Protocol source: installed schema 83aeb67 and the verified legacy batch adapter.
+Only prepare creates drafts. Observation, recovery and download never run a node.
 """
-import base64
 import hashlib
 import json
+import subprocess
+import tempfile
+import uuid
+from pathlib import Path
 
 from ...assets.canvas_cli import CanvasError
-from ..domain.errors import ContractError
+from ...assets.canvas import new_node_id
 from ..domain.money import Money
+from ..execution.context import current_effect
+from ..execution.policy import ExecutionPolicy
 from ..testing.fakes import ProviderError
 from .base import GenerationAdapter
+from .state import receipt_locked
 
 
 class CanvasAdapter(GenerationAdapter):
@@ -26,220 +25,298 @@ class CanvasAdapter(GenerationAdapter):
     pricing_kind = "native_quote"
     unit = "jimeng_credits"
 
-    def __init__(self, cli, state, expected_user=None,
-                 price_table=None):
-        """cli: CanvasCLI (runner injected). state: persistent dict-like
-        for prep/op mappings. expected_user: reject a reconnection to a
-        different account. price_table: {model: {duration_s: credits}}."""
-        self.cli = cli
-        self.state = state              # {"preps": {}, "ops": {}}
-        self.state.setdefault("preps", {})
-        self.state.setdefault("ops", {})
+    def __init__(self, cli, state, expected_user=None, price_table=None,
+                 policy=None, artifacts=None):
+        self.cli, self.state = cli, state
+        self.policy = policy or ExecutionPolicy()
+        self.live = cli.runner is subprocess.run
+        if self.live:
+            self.policy.require_live("jimeng_canvas")
+            if not hasattr(state, "flush") or not expected_user:
+                raise ProviderError("durable_account_scope_required")
         self.expected_user = expected_user
         self.price_table = price_table or {}
-        self.models = []
+        self.models, self._caps = [], {}
+        self.artifacts = artifacts
+        for key in ("canvases", "preps", "ops", "imports"):
+            state.setdefault(key, {})
 
-    # ------------------------------------------------------ readiness
+    def _save(self):
+        if hasattr(self.state, "flush"):
+            self.state.flush()
 
     def readiness(self):
         try:
             doc = self.cli.doctor()
-        except CanvasError as e:
-            return {"ready": False, "reason": e.code}
-        if self.expected_user and \
-                doc.get("userId") != self.expected_user:
-            return {"ready": False,
-                    "reason": "account_mismatch"}
-        return {"ready": True, "reason": "ok",
-                "version": doc.get("version"),
-                "region": doc.get("region"),
-                "userId": doc.get("userId"),
-                "isVip": doc.get("isVip")}
+        except CanvasError as error:
+            return {"ready": False, "reason": error.code}
+        if self.expected_user and doc.get("userId") != self.expected_user:
+            return {"ready": False, "reason": "account_mismatch"}
+        return dict(ready=True, reason="ok", **doc)
 
     def refresh_models(self):
-        """Live catalog → adapter model list (F16 checklist 2)."""
-        try:
-            items = self.cli.catalog("video")
-        except CanvasError as e:
-            raise ProviderError(f"catalog_failed:{e.code}")
+        items = self.cli.catalog("video")
         self.models = [i["model"] for i in items]
         return items
 
     def capabilities(self, model):
-        if model not in self.models:
+        if model not in self._caps:
             raise ProviderError("unknown_model")
         return self._caps[model]
 
     def set_capabilities(self, caps):
-        self._caps = caps
-        self.models = list(caps)
-
-    # -------------------------------------------------------- pricing
+        self._caps, self.models = caps, list(caps)
 
     def price(self, request, duration_s, model=None):
-        """Table estimate for routing; the authoritative number is the
-        native node quote obtained in prepare_quote."""
-        m = model or getattr(request, "model", "")
-        table = self.price_table.get(m, {})
-        return Money(self.unit, table.get(duration_s, table.get("*", 1)))
-
-    # ------------------------------------------------------ lifecycle
+        model = model or (request.get("model") if isinstance(request, dict) else request.model)
+        if self.live:
+            req = request if isinstance(request, dict) else request.to_dict()
+            quote = self.prepare_quote(dict(req, duration_s=duration_s, model=model))
+            return Money(self.unit, quote["max_credits"])
+        table = self.price_table.get(model, {})
+        amount = table.get(duration_s, table.get("*"))
+        if amount is None:
+            raise ProviderError("price_unknown")
+        return Money(self.unit, amount)
 
     def _req_hash(self, request):
-        wire = json.dumps(request if isinstance(request, dict)
-                          else request.to_dict(), sort_keys=True,
-                          default=str)
-        return hashlib.sha256(wire.encode()).hexdigest()
+        return hashlib.sha256(json.dumps(request if isinstance(request, dict) else request.to_dict(), sort_keys=True, default=str).encode()).hexdigest()
 
+    def _project(self, video_id, title):
+        saved = self.state["canvases"].get(video_id)
+        if saved:
+            if saved["stage"] == "creating":
+                found = self.cli.find_canvas(saved["project_id"])
+                if not found:
+                    raise ProviderError("canvas_creation_unresolved")
+                saved["stage"] = "created"
+                self._save()
+            return saved["project_id"]
+        saved = {"project_id": str(uuid.uuid4()), "stage": "creating"}
+        self.state["canvases"][video_id] = saved
+        self._save()
+        out = self.cli.call("canvas", "create", title, "--project-id", saved["project_id"])
+        if out.get("project", {}).get("projectId") != saved["project_id"]:
+            raise ProviderError("canvas_identity_mismatch")
+        saved["stage"] = "created"
+        self._save()
+        return saved["project_id"]
+
+    def _references(self, request, project_id):
+        refs = request.get("reference_artifact_ids") or request.get("refs") or []
+        out = []
+        for ref in refs:
+            if ref.startswith("node:") or ref.startswith("resource:"):
+                out.append(ref)
+                continue
+            if self.artifacts is None:
+                raise ProviderError("reference_artifact_required")
+            row = self.artifacts.db.uow().artifacts.get(ref)
+            if not row:
+                raise ProviderError("reference_artifact_missing")
+            key = project_id + ":" + row["sha256"]
+            imp = self.state["imports"].get(key)
+            if imp is None:
+                imp = {"resource_id": str(uuid.uuid4()), "node_id": new_node_id(),
+                       "update_id": str(uuid.uuid4()), "submit_id": str(uuid.uuid4()), "stage": "uploading"}
+                self.state["imports"][key] = imp
+                self._save()
+                upload = self.cli.call("resource", "upload", "--project-id", project_id,
+                    "--resource-id", imp["resource_id"], "--file", self.artifacts.path_for(ref), "--type", row["kind"], "--name", ref)
+                if upload.get("resourceId") != imp["resource_id"]:
+                    raise ProviderError("reference_identity_mismatch")
+                imp["stage"] = "uploaded"
+                self._save()
+            if imp["stage"] == "uploaded":
+                imp["stage"] = "importing"
+                self._save()
+                self.cli.call("node", "create", row["kind"], "--project-id", project_id,
+                    "--node-id", imp["node_id"], "--update-id", imp["update_id"], "--submit-id", imp["submit_id"],
+                    "--resource-id", imp["resource_id"], "--import-kind", "local_upload")
+                imp["stage"] = "imported"
+                self._save()
+            if imp["stage"] == "importing":
+                self.cli.node(project_id, imp["node_id"])
+                imp["stage"] = "imported"
+                self._save()
+            if imp["stage"] != "imported":
+                raise ProviderError("reference_upload_unresolved")
+            out.append("node:" + imp["node_id"])
+        return out
+
+    @receipt_locked
     def prepare(self, request, title="factory-run"):
-        """Idempotent canvas+node creation keyed by request hash."""
+        request = request if isinstance(request, dict) else request.to_dict()
         rh = self._req_hash(request)
-        prep = self.state["preps"].get(rh)
-        if prep:
-            return prep
-        prompt = request.get("prompt") if isinstance(request, dict) \
-            else request.prompt
-        duration = (request.get("duration_s") if isinstance(
-            request, dict) else request.requested_duration_s)
-        model = (request.get("model") if isinstance(request, dict)
-                 else request.model)
-        kind = (request.get("kind") if isinstance(request, dict)
-                else getattr(request, "kind", "video")) or "video"
-        canvas = self.cli.call("canvas", "create", "--title", title)
-        project_id = canvas["projectId"]
-        args = ["node", "create", kind, "--project-id", project_id,
-                "--model", model,
-                "--mode", "t2v" if kind == "video" else "t2i",
-                "--prompt", prompt]
-        if kind == "video":
-            args += ["--duration", duration]
-        node = self.cli.call(*args)
-        prep = {"project_id": project_id,
-                "node_id": node["nodeId"],
-                "update_id": node.get("updateId"),
-                "request_hash": rh}
+        existing = self.state["preps"].get(rh)
+        if existing:
+            if existing["stage"] == "saving":
+                self.cli.node(existing["project_id"], existing["node_id"])
+                existing["stage"] = "saved"
+                self._save()
+            return existing
+        video_id = request.get("video_id") or request.get("experiment_id")
+        if self.live:
+            cap = self.capabilities(request["model"])
+            if not cap.get("live_qualified"):
+                raise ProviderError("input_mode_not_qualified")
+            if (request.get("duration_s") or request.get("requested_duration_s")) not in cap.get("durations_s", []):
+                raise ProviderError("unsupported_duration")
+            if (request.get("aspect") or "9:16") not in cap.get("aspects", []):
+                raise ProviderError("unsupported_aspect")
+            if (request.get("resolution") or "720p") not in cap.get("resolutions", []):
+                raise ProviderError("unsupported_resolution")
+        if self.live and not video_id:
+            raise ProviderError("video_scope_required")
+        project_id = self._project(video_id or title, title)
+        refs = self._references(request, project_id)
+        kind = request.get("kind") or "video"
+        settings = request.get("settings") or {}
+        prep = {"project_id": project_id, "node_id": new_node_id(), "update_id": str(uuid.uuid4()),
+                "submit_id": str(uuid.uuid4()), "request_hash": rh, "kind": kind, "stage": "saving", "refs": refs}
         self.state["preps"][rh] = prep
+        self._save()
+        mode = request.get("mode") or (("m2v" if refs else "t2v") if kind == "video" else ("i2i" if refs else "t2i"))
+        prep["expected"] = {"model": request["model"], "mode": mode,
+            "ratio": request.get("aspect") or settings.get("aspect") or "9:16",
+            "resolution": request.get("resolution") or settings.get("resolution") or ("720p" if kind == "video" else "2K"),
+            "outputCount": 1, "prompt": request["prompt"]}
+        if kind == "video":
+            prep["expected"]["durationSeconds"] = request.get("duration_s") or request.get("requested_duration_s")
+        self._save()
+        args = ["node", "create", kind, "--project-id", project_id, "--node-id", prep["node_id"],
+                "--update-id", prep["update_id"], "--model", request["model"],
+                "--mode", mode,
+                "--prompt", request["prompt"], "--ratio", request.get("aspect") or settings.get("aspect") or "9:16",
+                "--resolution", request.get("resolution") or settings.get("resolution") or ("720p" if kind == "video" else "2K"), "--count", "1"]
+        if kind == "video":
+            args += ["--duration", request.get("duration_s") or request.get("requested_duration_s")]
+        for ref in refs:
+            args += ["--ref", ref]
+        created = self.cli.call(*args)
+        if created.get("node", {}).get("nodeId") != prep["node_id"]:
+            raise ProviderError("node_identity_mismatch")
+        prep["stage"] = "saved"
+        self._save()
         return prep
 
+    def _check_draft(self, prep):
+        node = self.cli.node(prep["project_id"], prep["node_id"])
+        generation = node.get("generation", {})
+        if node.get("type") != prep["kind"] or any(generation.get(k) != v for k, v in prep["expected"].items()):
+            raise ProviderError("draft_changed_requires_approval")
+        refs = [f"{r.get('kind')}:{r.get('id')}" for r in generation.get("references", [])]
+        if refs != prep["refs"]:
+            raise ProviderError("draft_references_changed")
+
     def prepare_quote(self, request):
-        """Native quote through the CLI — ceiling for authorization."""
         prep = self.prepare(request)
+        self._check_draft(prep)
         q = self.cli.quote(prep["project_id"], [prep["node_id"]])
-        return {"prep": prep, "max_credits": q["totalMaxCredits"],
-                "items": q["items"], "draft_version": q["draftVersion"]}
+        prep["quote"] = q
+        self._save()
+        return {"prep": prep, "max_credits": q["totalMaxCredits"], "items": q["items"], "draft_version": q["draftVersion"]}
 
+    @receipt_locked
     def submit(self, request, price=None):
-        """confirm → token → run; the token never leaves the CLI call."""
+        binding = current_effect.get()
+        if self.live:
+            self.policy.require_live("jimeng_canvas")
+            if not binding or binding["provider"] != self.name or binding["account"] != self.expected_user:
+                raise ProviderError("authority_required")
+            if not self.readiness()["ready"]:
+                raise ProviderError("account_not_ready")
+        if binding:
+            approved = binding.get("approved_price")
+            if approved:
+                bound = Money(**approved)
+                if price and price != bound:
+                    raise ProviderError("price_scope_mismatch")
+                price = bound
+        if not isinstance(price, Money) or price.unit != self.unit:
+            raise ProviderError("approved_price_required")
+        prep = self.prepare(request)
+        previous = self.state["ops"].get(prep["submit_id"])
+        if previous:
+            return self.observe(prep["submit_id"])
         quote = self.prepare_quote(request)
-        submit_id = f"sub-{self._req_hash(request)[:12]}"
-        ceiling = quote["max_credits"]
+        if quote["max_credits"] > price.amount:
+            raise ProviderError("quote_exceeds_approval")
+        op = {"operation_id": prep["submit_id"], "submit_id": prep["submit_id"], "project_id": prep["project_id"],
+              "node_id": prep["node_id"], "request_hash": prep["request_hash"], "kind": prep["kind"], "status": "unknown", "ceiling": price.amount}
+        self.state["ops"][op["operation_id"]] = op
+        self._save()
         try:
-            out = self.cli.submit(quote["prep"]["project_id"],
-                                  quote["prep"]["node_id"],
-                                  submit_id, ceiling)
-        except CanvasError as e:
-            raise ProviderError(e.code, http_status=None)
-        op_id = out.get("operationId") or out.get("submitId") or submit_id
-        self.state["ops"][op_id] = {
-            "operation_id": op_id, "submit_id": submit_id,
-            "project_id": quote["prep"]["project_id"],
-            "node_id": quote["prep"]["node_id"],
-            "request_hash": self._req_hash(request),
-            "status": "accepted", "ceiling": ceiling}
-        return dict(self.state["ops"][op_id])
+            response = self.cli.submit(op["project_id"], op["node_id"], op["submit_id"], price.amount)
+        except CanvasError as error:
+            raise ProviderError(error.code) from None
+        items = response.get("items", [])
+        if len(items) != 1 or items[0].get("nodeId") != op["node_id"] or items[0].get("submitId") != op["submit_id"]:
+            raise ProviderError("malformed_ack")
+        state = str(items[0].get("state", "unknown")).lower()
+        if state == "rejected":
+            op["status"] = "failed"
+            self._save()
+            raise ProviderError("rejected_before_accept")
+        if state not in {"accepted", "pending", "running", "succeeded"}:
+            raise ProviderError("malformed_ack")
+        op["status"] = "accepted"
+        self._save()
+        return dict(op)
 
+    @receipt_locked
     def observe(self, operation_id):
         op = self.state["ops"].get(operation_id)
         if op is None:
             raise ProviderError("operation_not_found")
-        node = self.cli.node(op["project_id"], op["node_id"])
-        status = {"QUEUED": "accepted", "RUNNING": "running",
-                  "SUCCEEDED": "succeeded", "FAILED": "failed"}.get(
-                      node.get("status"), "running")
-        op["status"] = status
-        out = dict(op)
-        out["result"] = node.get("result") if status == "succeeded" \
-            else node.get("error")
-        return out
+        try:
+            data = self.cli.call("operation", "status", op["submit_id"], "--project-id", op["project_id"], incomplete=True)
+        except CanvasError as error:
+            raise ProviderError(error.code) from None
+        if data.get("operationRef") != op["submit_id"]:
+            raise ProviderError("operation_identity_mismatch")
+        state = data.get("state")
+        op["status"] = {"pending": "accepted", "submitted": "accepted", "rejected": "failed"}.get(state, state if state in {"accepted", "running", "succeeded", "failed", "cancelled"} else "unknown")
+        if op["status"] == "succeeded":
+            resources = [r["resourceId"] for r in data.get("resources", []) if r.get("state") == "succeeded"]
+            node = self.cli.node(op["project_id"], op["node_id"])
+            if len(resources) != 1 or not any(r.get("resourceId") == resources[0] and r.get("submitId") == op["submit_id"] and r.get("type") == op["kind"] for r in node.get("resources", [])):
+                op["status"] = "unknown"
+                self._save()
+                raise ProviderError("output_identity_mismatch")
+            op["resource_id"] = resources[0]
+        self._save()
+        return dict(op)
 
+    @receipt_locked
     def download(self, operation_id, destination=None):
         op = self.state["ops"].get(operation_id)
-        if op is None:
-            raise ProviderError("operation_not_found")
-        if op["status"] != "succeeded":
+        if not op or op["status"] != "succeeded" or not op.get("resource_id"):
             raise ProviderError("output_not_available")
-        args = ["resource", "download", "--project-id",
-                op["project_id"], "--node-id", op["node_id"]]
-        if destination:
-            args += ["--output", str(destination)]
-        try:
-            data = self.cli.call(*args)
-        except CanvasError as e:
-            raise ProviderError(e.code, transient=True)
-        raw = data.get("bytes_b64")
-        payload = base64.b64decode(raw) if raw is not None else \
-            data.get("bytes", b"")
-        if isinstance(payload, str):
-            payload = payload.encode()
-        return {"operation_id": operation_id,
-                "bytes": payload,
-                "sha256": data.get("sha256", "")}
+        with tempfile.TemporaryDirectory(prefix="factory-canvas-") as temporary:
+            path = Path(destination) if destination else Path(temporary) / ("output.png" if op["kind"] == "image" else "output.mp4")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                data = self.cli.call("resource", "download", op["resource_id"], "--project-id", op["project_id"], "--output", path, timeout=180)
+            except CanvasError as error:
+                raise ProviderError(error.code, transient=True) from None
+            if data.get("resourceId") != op["resource_id"] or not path.is_file():
+                raise ProviderError("download_identity_mismatch")
+            payload = path.read_bytes()
+            digest = hashlib.sha256(payload).hexdigest()
+            if data.get("sha256") != digest or data.get("size") != len(payload):
+                raise ProviderError("download_integrity_mismatch")
+            return {"operation_id": operation_id, "bytes": payload, "sha256": digest}
 
-    def _remote_op(self, operation_id=None, submit_id=None):
-        """Ask the provider for an op the local map has lost — the
-        reconcile path after a restart must find remote work by
-        identity, not by local memory."""
-        try:
-            data = self.cli.call("operation", "status")
-        except CanvasError as e:
-            raise ProviderError(e.code)
-        for item in data.get("items", []):
-            if (operation_id and item.get("operationId") == operation_id) \
-                    or (submit_id and item.get("submitId") == submit_id):
-                return item
-        return None
-
-    def _adopt_remote(self, item):
-        op = {"operation_id": item["operationId"],
-              "submit_id": item.get("submitId"),
-              "project_id": item.get("projectId"),
-              "node_id": item.get("nodeId"),
-              "request_hash": item.get("requestHash"),
-              "status": "accepted"}
-        self.state["ops"][op["operation_id"]] = op
-        return op
-
+    @receipt_locked
     def reconcile(self, operation_id=None, request_hash=None):
-        if operation_id and operation_id in self.state["ops"]:
-            return self.observe(operation_id)
         if operation_id:
-            remote = self._remote_op(operation_id=operation_id)
-            if remote:
-                return self.observe(
-                    self._adopt_remote(remote)["operation_id"])
-        if request_hash:
-            for op in self.state["ops"].values():
-                if op["request_hash"] == request_hash:
-                    return self.observe(op["operation_id"])
-            remote = self._remote_op(
-                submit_id=f"sub-{request_hash[:12]}")
-            if remote:
-                return self.observe(
-                    self._adopt_remote(remote)["operation_id"])
-            prep = self.state["preps"].get(request_hash)
-            if prep:
-                return {"operation_id": None, "status": "prepared",
-                        "prep": prep}
-        return None
+            return self.observe(operation_id)
+        matches = [o for o in self.state["ops"].values() if o["request_hash"] == request_hash]
+        if len(matches) != 1:
+            return None
+        return self.observe(matches[0]["operation_id"])
 
     def cancel(self, operation_id):
-        op = self.state["ops"].get(operation_id)
-        if op is None:
-            raise ProviderError("operation_not_found")
-        try:
-            self.cli.call("node", "cancel", "--project-id",
-                          op["project_id"], "--node-id", op["node_id"])
-        except CanvasError as e:
-            raise ProviderError(e.code)
-        op["status"] = "cancel_requested"
-        return {"acknowledged": True, "terminal": False}
+        # The installed public schema exposes no cancellation command.
+        raise ProviderError("cancellation_not_supported")

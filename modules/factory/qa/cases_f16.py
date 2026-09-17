@@ -3,6 +3,8 @@ acceptance + interrupt, auth-expiry/download resume, live gate."""
 from .cases_f01 import CaseContext, _result
 from ...assets.canvas_cli import CanvasCLI, CanvasError
 from ..providers.canvas import CanvasAdapter
+from ..providers.state import DurableState
+from ..domain.money import Money
 from ..testing.fakes import FakeCanvasRunner
 
 REQS = [{"prompt": f"shot {i} product move", "duration_s": 4,
@@ -11,7 +13,7 @@ REQS = [{"prompt": f"shot {i} product move", "duration_s": 4,
 
 def _stack(ctx, name, **kw):
     runner = FakeCanvasRunner(ctx.run_dir / f"{name}.json", **kw)
-    return runner, CanvasAdapter(CanvasCLI(runner=runner), {})
+    return runner, CanvasAdapter(CanvasCLI(runner=runner), DurableState(ctx.run_dir / f"{name}-adapter.json"))
 
 
 def f16_m01(ctx: CaseContext):
@@ -45,7 +47,7 @@ def f16_m02(ctx: CaseContext):
     """Accept 2 of 5 jobs, interrupt the runner; accepted IDs preserved,
     others not mislabeled, recovery makes no duplicates."""
     runner, ad = _stack(ctx, "m02")
-    accepted = [ad.submit(REQS[i]) for i in range(2)]
+    accepted = [ad.submit(REQS[i], price=Money("jimeng_credits", 54)) for i in range(2)]
     ctx.check("two_accepted",
               len(accepted) == 2
               and all(a["status"] == "accepted" for a in accepted))
@@ -53,18 +55,18 @@ def f16_m02(ctx: CaseContext):
     # 'restart': new adapter + runner on the same state file
     ad2 = CanvasAdapter(
         CanvasCLI(runner=FakeCanvasRunner(
-            ctx.run_dir / "m02.json")), {})
+            ctx.run_dir / "m02.json")), DurableState(ctx.run_dir / "m02-adapter.json"))
     # recovery: reconcile prior accepts; submit remaining three
     rec = [ad2.reconcile(operation_id=a["operation_id"])
            for a in accepted]
     ctx.check("accepted_ids_preserved",
               all(r is not None and r["operation_id"] == a["operation_id"]
                   for r, a in zip(rec, accepted)))
-    rest = [ad2.submit(REQS[i]) for i in range(2, 5)]
+    rest = [ad2.submit(REQS[i], price=Money("jimeng_credits", 54)) for i in range(2, 5)]
     remote = FakeCanvasRunner(ctx.run_dir / "m02.json")
     ctx.check("no_duplicate_submissions",
               len(remote.doc["ops"]) == 5
-              and len({o["submitId"] for o in
+              and len({o["operationRef"] for o in
                        remote.doc["ops"].values()}) == 5,
               f"{len(remote.doc['ops'])} ops, "
               f"{len(remote.doc['nodes'])} nodes")
@@ -82,7 +84,7 @@ def f16_m03(ctx: CaseContext):
     """Expire login during observation, reconnect, resume a failed
     download; wrong-account reconnect rejected."""
     runner, ad = _stack(ctx, "m03")
-    out = ad.submit(REQS[0])
+    out = ad.submit(REQS[0], price=Money("jimeng_credits", 54))
     ad.observe(out["operation_id"])    # poll 1
     ad.observe(out["operation_id"])    # poll 2 → SUCCEEDED
     runner.set_fault("download_fails")

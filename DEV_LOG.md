@@ -223,3 +223,42 @@ are all key- or live-run-dependent (see bottom).
 | S4 | API keys | `YOUTUBE_API_KEY`, `YT_CHANNEL_HANDLE`, `PEXELS_API_KEY`, `ELEVENLABS_API_KEY`, LLM key, YT Analytics OAuth |
 | S5 | Live cron fire verification | run `install-cron`, observe first Monday 06:37 fire |
 | V1–V3 | Verify-at-live | CTR units at first pull; Lane A bridge shape; MPT field compat at G8 |
+
+## Repair checkpoint S3 — native provider protocols (2026-09-17)
+
+This repair continues the S0–S8 program; historical F-module completion claims
+remain subject to the repair ledger. No paid call, store read, Drive upload or
+publication was performed.
+
+- Canvas uses installed public CLI 1.0.1 (83aeb67): stable project/node/update/
+  submit IDs saved before calls, one canvas per video, reference imports,
+  exact node draft checks, fresh quote bounded by recorded approval, native
+  operation/resource identity, file-integrity verification and durable recovery.
+  Unknown prices block. The CLI exposes no qualified cancellation operation.
+- Vertex now sends native OAuth at the transport boundary, matches the saved
+  successful typed-input/response_format/steps-content protocol, preserves
+  ambiguous submissions, rejects malformed or missing outputs, and reserves
+  estimates with at least 25% headroom. Usage remains distinct from settled
+  billing. Unqualified models/reference input modes remain unavailable.
+- Hypit parses pinned 0.1.8 nested build/status/get envelopes and binds every
+  command to its workspace. A durable receipt and unique title prevent automatic
+  rebuild after lost acknowledgement. Strict plan validation rejects malformed,
+  incomplete, hosted or unresolved work. Local qualification exposed and fixed
+  incorrect source-audio wiring and nonzero-exit terminal-status handling.
+- Drive sends descriptive filenames, requests full names and exact sizes,
+  detects incomplete listings, and reads the actual MD5 metadata field.
+- Shopify price queries and pagination queries passed schema validation. Product
+  variants/media retain complete pagination evidence, downloads have size and
+  redirect checks, and non-USD prices are not labeled USD.
+- Synchronous research/acquisition/TTS adapters keep receipts and audio/media on
+  disk. The search adapter reuses the verified legacy API route. Analysis resolves
+  and verifies registered source bytes before invoking its media transport.
+  ElevenLabs v3 uses the verified with-timestamps route; speech retains character
+  alignment for captions without a second transcription request.
+
+Native local evidence: Hypit build `bld_20260917T161953725Z_F9D4B5CADA`
+exported 30 frames at 30 fps, 360×640. Five local requests; zero hosted requests.
+Its isolated runtime was stopped and verified absent. See
+`docs/factory-reports/REPAIR-S3-EVIDENCE.json` and
+`tests/factory_fixtures/protocols/README.md`. This qualifies the local contract,
+not the four-variant application or live provider/account routes.

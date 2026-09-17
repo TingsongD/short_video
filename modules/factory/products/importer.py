@@ -47,6 +47,8 @@ def html_to_text(html):
 def _money(price):
     if not price:
         return None
+    if price.get("currencyCode") != "USD":
+        return None  # retain native price in claims; never label another currency USD
     micros = int(Decimal(str(price["amount"])) * 1_000_000)
     return Money("usd_micros", micros)
 
@@ -64,12 +66,16 @@ class ProductImporter:
         """Paginate the catalog; snapshot each selected product (all when
         selection is None). Returns snapshot ids + warnings."""
         products, cursor, complete = [], None, True
+        cursors = set()
         while True:
             page = self.adapter.products_page(cursor)
             products.extend(page["products"])
             if not page["hasNextPage"]:
                 break
             cursor = page["endCursor"]
+            if not cursor or cursor in cursors:
+                raise ContractError("pagination_incomplete", "products")
+            cursors.add(cursor)
         wanted = set(selection) if selection else None
         snaps, warnings = [], []
         for p in products:
@@ -88,7 +94,12 @@ class ProductImporter:
         by products_page or product_by_handle)."""
         media = list(product.get("media", []))
         # Follow nested media pagination before claiming completeness.
+        cursors = set()
         while product.get("media_has_next"):
+            cursor = product.get("media_cursor")
+            if not cursor or cursor in cursors:
+                raise ContractError("pagination_incomplete", "media")
+            cursors.add(cursor)
             page = self.adapter.media_page(product["id"],
                                            product.get("media_cursor"))
             media.extend(page["media"])
@@ -134,7 +145,7 @@ class ProductImporter:
         digest = hashlib.sha256(json.dumps(
             fact_body, sort_keys=True, default=str).encode()).hexdigest()
         if prior and prior["content_hash"] == digest:
-            return snap                        # refresh, no change
+            return self.get(sid)                # preserve the original revision identity
         snap.content_hash = digest
         snap.validate_or_raise()
         with self.db.uow() as u:
@@ -164,7 +175,7 @@ class ProductImporter:
         artifact = self.artifacts.intake_bytes(
             data, provenance="shopify",
             source_key=media["id"],
-            source_detail=f"product:{product_id} url:{url[:60]}",
+            source_detail=f"product:{product_id}",
             requested_kind=kind)
         return artifact.id
 

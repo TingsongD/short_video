@@ -187,11 +187,10 @@ def test_hosted_import_audit():
 
 
 def test_plan_audit_rejects_hosted_step():
-    diags = audit_plan({"steps": [{"name": "make-clip",
-                                   "kind": "generation"}]})
-    assert diags and diags[0]["code"] == "hosted_step"
-    assert audit_plan({"steps": [{"name": "render",
-                                  "kind": "render"}]}) == []
+    assert audit_plan({"format": "hypit.cli-plan@1", "ok": True, "requestCount": 1,
+                       "needs": [{"capability": "@hosted/generate@1#video"}]})[0]["code"] == "hosted_step"
+    assert audit_plan({"format": "hypit.cli-plan@1", "ok": True, "requestCount": 0, "needs": []}) == []
+    assert audit_plan({"raw": "not-json"})[0]["code"] == "malformed_plan"
 
 
 def test_gate_check_and_plan(stack):
@@ -208,18 +207,19 @@ def test_gate_check_and_plan(stack):
     def fake(argv):
         calls.append(argv)
         if argv[0] == "check":
-            return R(0, '{"ok": true}')
-        return R(0, '{"steps": [{"name": "render", "kind": "render"}]}')
+            return R(0, '{"format":"hypit.cli-check@1", "ok": true}')
+        return R(0, '{"format":"hypit.cli-plan@1", "ok":true, "requestCount":0, "needs":[]}')
 
     gate = HypitGate(runner=fake)
     chk = gate.check(out["files"]["video.svml"])
     assert chk["ok"] is True
     pl = gate.plan(out["files"]["render.svrun"])
     assert pl["ok"] is True
-    assert calls[0] == ["check", out["files"]["video.svml"]]
+    assert calls[0][:2] == ["check", out["files"]["video.svml"]]
+    assert "--workspace" in calls[0]
 
     def hostile(argv):
-        return R(0, '{"steps": [{"name": "gen", "kind": "provider"}]}')
+        return R(0, '{"format":"hypit.cli-plan@1", "ok":true, "requestCount":1, "needs":[{"capability":"@hosted/generation@1#video"}]}')
 
     bad = HypitGate(runner=hostile).plan(out["files"]["render.svrun"])
     assert bad["ok"] is False

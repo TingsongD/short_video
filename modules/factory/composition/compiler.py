@@ -215,7 +215,7 @@ class CompositionService:
             lines.append(
                 f'  <pipeline:Normalize id="norm-{s["id"]}" '
                 f'source={{src-{s["id"]}}} clock={{clock}} '
-                f'video="primary-moving" audio="default" '
+                f'video="primary-moving" audio="none" '
                 f'span-authority="video"/>')
         lines += ['', '  <media:Track id="footage" '
                   'timeline={program.timeline} canvas={canvas}>']
@@ -229,7 +229,7 @@ class CompositionService:
                 f'appearance={{look.media.full}} '
                 f'start="{_sec(s["in_frame"], fps)}" '
                 f'end="{_sec(s["out_frame"], fps)}"'
-                f'{attrs} source-audio="none"/>')
+                f'{attrs}/>')
         lines.append('  </media:Track>')
         if auds:
             lines += ['', '  <media:Track id="sound" '
@@ -271,8 +271,7 @@ class CompositionService:
         lines += ['', '  <film:Film id="main" canvas={canvas} '
                   'timeline={program.timeline} '
                   'appearance={look.film.main}>',
-                  '    <film:Track source={footage.visual}/>',
-                  '    <film:Track source={footage.audio}/>']
+                  '    <film:Track source={footage.visual}/>']
         if auds:
             lines.append('    <film:Track source={sound.audio}/>')
         if captions:

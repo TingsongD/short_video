@@ -828,7 +828,7 @@ class FakeCanvasRunner:
             raise _Malformed()
         head = " ".join(argv[:2])
         if argv[0] == "version":
-            return {"version": "1.4.2", "commit": "abc123"}
+            return {"version": "1.0.1", "commit": "83aeb67"}
         if argv[0] == "schema":
             return self._schema()
         if head == "auth status":
@@ -844,132 +844,98 @@ class FakeCanvasRunner:
         if head == "model list":
             return {"items": self.doc["models"]}
         if head == "canvas create":
-            pid = self._next("proj")
-            self.doc["canvases"][pid] = {
-                "projectId": pid,
-                "title": self._flag(argv, "--title", "untitled")}
+            pid = self._flag(argv, "--project-id")
+            if not pid or "--title" in argv or argv[2].startswith("--"):
+                raise _Fault("invalid_arguments")
+            project = {"projectId": pid, "name": argv[2], "webUrl": "https://example.invalid/canvas/" + pid}
+            self.doc["canvases"][pid] = project
             self._save()
-            return {"projectId": pid}
+            return {"project": project, "draftVersion": 1}
         if head == "canvas ls":
-            items = list(self.doc["canvases"].values())
-            return {"items": items, "hasMore": False, "nextCursor": None}
+            return {"items": list(self.doc["canvases"].values()), "hasMore": False, "nextCursor": None}
+        if head == "resource upload":
+            rid = self._flag(argv, "--resource-id")
+            return {"resourceId": rid, "mediaType": self._flag(argv, "--type")}
         if head == "node create":
-            nid = self._next("node")
-            self.doc["nodes"][nid] = {
-                "nodeId": nid,
-                "projectId": self._flag(argv, "--project-id"),
-                "kind": argv[2], "status": "DRAFT",
-                "model": self._flag(argv, "--model"),
-                "duration": self._flag(argv, "--duration"),
-                "prompt": self._flag(argv, "--prompt")}
-            self._save()
-            return {"nodeId": nid, "updateId": self._next("upd")}
-        if head == "node show":
             nid = self._flag(argv, "--node-id")
-            node = self.doc["nodes"].get(nid)
-            if node is None:
-                return {"nodes": [{"result": "NOT_FOUND"}]}
-            # progress each poll: DRAFT→QUEUED→RUNNING→SUCCEEDED
-            n = self.doc["poll_counts"].get(nid, 0)
-            self.doc["poll_counts"][nid] = n + 1
-            if node["status"] in ("QUEUED", "RUNNING") and n >= 1:
-                node["status"] = "SUCCEEDED" if \
-                    "node_fails" not in self.doc["faults"] else "FAILED"
-                if node["status"] == "SUCCEEDED":
-                    node["result"] = {"output": f"media:{nid}"}
-                else:
-                    node["error"] = {"code": "generation_failed"}
+            if not nid or not self._flag(argv, "--update-id"):
+                raise _Fault("invalid_arguments")
+            refs = [argv[i + 1].split(":", 1) for i, x in enumerate(argv) if x == "--ref"]
+            generation = {"model": self._flag(argv, "--model"), "mode": self._flag(argv, "--mode"),
+                "prompt": self._flag(argv, "--prompt"), "ratio": self._flag(argv, "--ratio"),
+                "resolution": self._flag(argv, "--resolution"), "outputCount": int(self._flag(argv, "--count", "1")),
+                "references": [{"kind": kind, "id": identity} for kind, identity in refs]}
+            if "--duration" in argv:
+                generation["durationSeconds"] = float(self._flag(argv, "--duration"))
+            node = {"nodeId": nid, "projectId": self._flag(argv, "--project-id"), "type": argv[2],
+                    "generation": generation, "resources": []}
+            if "--resource-id" in argv:
+                node["resources"] = [{"resourceId": self._flag(argv, "--resource-id"),
+                    "submitId": self._flag(argv, "--submit-id"), "type": argv[2]}]
+            self.doc["nodes"][nid] = node
             self._save()
-            return {"nodes": [{"result": "FOUND", "node": node}]}
+            return {"node": node, "mutation": {"action": "create", "savedDraftVersion": 1}}
+        if head == "node show":
+            node = self.doc["nodes"].get(self._flag(argv, "--node-id"))
+            return {"nodes": [{"result": "FOUND", "node": node}] if node else [{"result": "NOT_FOUND"}]}
         if head == "node quote":
-            wanted = [a for i, a in enumerate(argv)
-                      if i and argv[i - 1] == "--node-id"]
+            wanted = [a for i, a in enumerate(argv) if i and argv[i - 1] == "--node-id"]
             if "partial_quote" in self.doc["faults"] and len(wanted) > 1:
                 wanted = wanted[:-1]
-            items = [{"nodeId": n, "maxCredits": 54} for n in wanted]
-            total = sum(i["maxCredits"] for i in items)
-            return {"items": items, "totalMaxCredits": total,
-                    "confirmable": True, "draftVersion": "dv-1"}
+            items = [{"nodeId": n, "maxCredits": self.doc.get("quote_credits", 54)} for n in wanted]
+            return {"items": items, "totalMaxCredits": sum(i["maxCredits"] for i in items),
+                    "confirmable": True, "draftVersion": 1}
         if head == "node confirm":
             ceiling = int(self._flag(argv, "--credit-ceiling", "0"))
-            if ceiling <= 0:
+            if ceiling < self.doc.get("quote_credits", 54):
                 raise _Fault("invalid_ceiling")
-            return {"creditConfirmationToken": f"tok-{self._next('tok')}",
-                    "creditCeiling": ceiling}
+            return {"creditConfirmationToken": "fixture-token", "creditCeiling": ceiling}
         if head == "node run":
-            nid = self._flag(argv, "--node-id")
+            nid, sid = self._flag(argv, "--node-id"), self._flag(argv, "--submit-id")
             if "credit_reject" in self.doc["faults"]:
                 raise _Fault("credits_rejected", "check balance")
-            self.doc["nodes"][nid]["status"] = "QUEUED"
-            op = {"operationId": self._next("op"),
-                  "submitId": self._flag(argv, "--submit-id"),
-                  "nodeId": nid,
-                  "projectId": self.doc["nodes"][nid].get("projectId")}
-            self.doc["ops"][op["operationId"]] = op
+            self.doc["ops"].setdefault(sid, {"operationRef": sid, "nodeId": nid, "state": "accepted",
+                "projectId": self.doc["nodes"][nid]["projectId"], "resources": []})
             self._save()
             if self.doc["lost_runs"]:
                 self.doc["lost_runs"].pop()
                 self._save()
                 import subprocess as _sp
                 raise _sp.TimeoutExpired("node run", 60)
-            return op
-        if head == "node cancel":
-            nid = self._flag(argv, "--node-id")
-            if nid in self.doc["nodes"]:
-                self.doc["nodes"][nid]["status"] = "CANCELLED"
-                self._save()
-            return {"cancelled": True}
+            return {"items": [{"nodeId": nid, "submitId": sid, "state": "ACCEPTED", "resources": []}]}
         if head == "operation status":
-            return {"items": list(self.doc["ops"].values())}
+            sid = argv[2]
+            op = self.doc["ops"].get(sid)
+            if not op or self._flag(argv, "--project-id") != op["projectId"]:
+                raise _Fault("operation_not_found")
+            count = self.doc["poll_counts"].get(sid, 0) + 1
+            self.doc["poll_counts"][sid] = count
+            op["state"] = "running" if count < 2 else ("failed" if "node_fails" in self.doc["faults"] else "succeeded")
+            if op["state"] == "succeeded":
+                import uuid
+                rid = str(uuid.uuid5(uuid.NAMESPACE_URL, sid))
+                op["resources"] = [{"resourceId": rid, "state": "succeeded"}]
+                node = self.doc["nodes"][op["nodeId"]]
+                node["resources"] = [{"resourceId": rid, "submitId": sid, "type": node["type"]}]
+            self._save()
+            return dict(op)
         if head == "resource download":
-            nid = self._flag(argv, "--node-id")
-            node = self.doc["nodes"].get(nid)
-            if node is None or node.get("status") != "SUCCEEDED":
+            rid = argv[2]
+            nodes = [n for n in self.doc["nodes"].values() if any(r["resourceId"] == rid for r in n["resources"])]
+            if len(nodes) != 1:
                 raise _Fault("output_not_available")
             if "download_fails" in self.doc["faults"]:
                 raise _Fault("transport_error")
-            import hashlib as _h
-            if node.get("kind") == "image":
-                # a real 1x1 PNG so artifact intake can probe it
-                payload = base64.b64decode(_TINY_PNG_B64)
-            else:
-                payload = f"canvas-media:{nid}".encode()
-            return {"bytes_b64": base64.b64encode(payload).decode(),
-                    "sha256": _h.sha256(payload).hexdigest()}
-        raise _Fault(f"unknown_command:{' '.join(argv)}")
+            import hashlib
+            payload = base64.b64decode(_TINY_PNG_B64) if nodes[0]["type"] == "image" else b"fixture-canvas-video"
+            output = Path(self._flag(argv, "--output"))
+            output.write_bytes(payload)
+            return {"resourceId": rid, "path": str(output), "size": len(payload), "sha256": hashlib.sha256(payload).hexdigest()}
+        raise _Fault("unknown_command")
 
     def _schema(self):
-        def node(name, flags=(), subs=()):
-            return {"name": name, "flags": [{"name": f.lstrip("-")} for f in flags],
-                    "subcommands": list(subs)}
-        return {"subcommands": [
-            node("canvas", (), [
-                node("create", ["--title", "--project-id"]),
-                node("ls", ["--cursor", "--limit"])]),
-            node("node", (), [
-                node("create", (), [
-                    node("video", ["--node-id", "--update-id",
-                                   "--duration", "--model", "--mode",
-                                   "--project-id", "--prompt"]),
-                    node("image", ["--node-id", "--update-id",
-                                   "--model", "--mode", "--project-id",
-                                   "--prompt"])]),
-                node("quote", ["--node-id", "--project-id"]),
-                node("confirm", ["--credit-ceiling", "--project-id",
-                                 "--node-id"]),
-                node("run", ["--submit-id", "--credit-token",
-                             "--project-id", "--node-id"]),
-                node("show", ["--node-id", "--project-id"]),
-                node("cancel", ["--project-id", "--node-id"])]),
-            node("operation", (), [
-                node("status", ["--project-id"]),
-                node("wait", ["--timeout"])]),
-            node("resource", (), [
-                node("download", ["--output", "--project-id",
-                                  "--node-id"])]),
-            node("auth", (), [node("status"), node("account")]),
-            node("model", (), [node("list", ["--type"])]),
-            node("version"), node("schema")]}
+        fixture = Path(__file__).resolve().parents[3] / "tests/factory_fixtures/protocols/canvas-cli-1.0.1.json"
+        return json.loads(fixture.read_text())
 
 
 class _Fault(Exception):
@@ -1081,6 +1047,8 @@ class FakeVertexTransport:
     # -------------------------------------------------- transport ----
     def __call__(self, method, url, headers, body):
         cred = self.auth_loader()
+        if headers.get("Authorization") != "Bearer " + cred.get("access_token", ""):
+            return 401, {"error": {"code": 401}}
         if cred.get("kind") == "api_key" or cred.get("expired") \
                 or not cred.get("access_token"):
             return 401, {"error": {"code": 401,
@@ -1099,25 +1067,27 @@ class FakeVertexTransport:
         return self._get(url.rsplit("/", 1)[1])
 
     def _post(self, body):
+        if "response_format" not in body or any(x.get("type") != "text" for x in body.get("input", [])):
+            return 400, {"error": {"code": "invalid_request"}}
         iid = f"int-{self.doc['seq'] + 1:05d}"
         self.doc["seq"] += 1
-        interaction = {"interactionId": iid, "request": body,
-                       "status": "RUNNING", "errors": [],
-                       "output": {}, "usage": None}
+        interaction = {"id": iid, "request": body,
+                       "status": "in_progress", "errors": [],
+                       "steps": [], "usage": None}
         # pilot failure: URI delivery without a configured bucket is
         # accepted then fails terminally on the resource itself
         if body.get("delivery") == "uri" and not body.get("gcs_uri"):
-            interaction["status"] = "FAILED"
+            interaction["status"] = "failed"
             interaction["errors"] = [
                 {"code": "invalid_request",
                  "message": "URI delivery requires gcs_uri"}]
         if "http200_terminal" in self.doc["faults"]:
-            interaction["status"] = "FAILED"
+            interaction["status"] = "failed"
             interaction["errors"] = [
                 {"code": "content_filtered",
                  "message": "terminal failure after acceptance"}]
         if body.get("model") not in self.KNOWN_MODELS:
-            interaction["status"] = "FAILED"
+            interaction["status"] = "failed"
             interaction["errors"] = [
                 {"code": "model_not_found",
                  "message": str(body.get("model"))}]
@@ -1127,7 +1097,7 @@ class FakeVertexTransport:
             self.doc["lost_posts"].pop()
             self._save()
             raise TimeoutError("response lost after acceptance")
-        return 200, {"interactionId": iid, "status": "RUNNING"}
+        return 200, {"id": iid, "status": "in_progress"}
 
     def _get(self, iid):
         it = self.doc["interactions"].get(iid)
@@ -1135,37 +1105,36 @@ class FakeVertexTransport:
             return 404, {"error": {"code": 404,
                                    "message": "interaction not found"}}
         if "download_fails" in self.doc["faults"] \
-                and it["status"] == "SUCCEEDED":
+                and it["status"] == "completed":
             raise ConnectionError("media retrieval transport failure")
         n = self.doc["polls"].get(iid, 0)
         self.doc["polls"][iid] = n + 1
-        if it["status"] == "RUNNING" and n >= 1:
+        if it["status"] == "in_progress" and n >= 1:
             if "missing_output" in self.doc["faults"]:
-                it["status"] = "SUCCEEDED"
+                it["status"] = "completed"
             elif "malformed_b64" in self.doc["faults"]:
-                it["status"] = "SUCCEEDED"
-                it["output"] = {"video": {"base64": "!!!not-b64!!!"}}
+                it["status"] = "completed"
+                it["steps"] = [{"content": [{"type": "video", "mime_type": "video/mp4", "data": "!!!not-b64!!!"}]}]
             else:
-                it["status"] = "SUCCEEDED"
+                it["status"] = "completed"
                 payload = (self.payload_fn(iid) if self.payload_fn
                            else f"vertex-media:{iid}".encode())
-                it["output"] = {"video": {
-                    "base64": base64.b64encode(payload).decode()}}
-                it["usage"] = {"input_tokens": 103,
-                               "output_tokens": 23168,
-                               "thought_tokens": 421}
+                it["steps"] = [{"content": [{"type": "video", "mime_type": "video/mp4", "data": base64.b64encode(payload).decode()}]}]
+                it["usage"] = {"total_input_tokens": 103,
+                               "total_output_tokens": 23168,
+                               "total_thought_tokens": 421}
         self._save()
-        return 200, {"interactionId": iid, "status": it["status"],
-                     "errors": it["errors"], "output": it["output"],
+        return 200, {"id": iid, "status": it["status"],
+                     "errors": it["errors"], "steps": it["steps"],
                      "usage": it["usage"]}
 
     def _cancel(self, iid):
         it = self.doc["interactions"].get(iid)
         if it is None:
             return 404, {"error": {"code": 404}}
-        it["status"] = "CANCELLED"
+        it["status"] = "cancelled"
         self._save()
-        return 200, {"interactionId": iid, "status": "CANCELLED"}
+        return 200, {"id": iid, "status": "cancelled"}
 
 
 def _wav_bytes(duration_s, freq=220.0, rate=22050):

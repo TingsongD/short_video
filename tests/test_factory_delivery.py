@@ -137,13 +137,16 @@ def test_cli_parses_listing(tmp_path):
     def runner(argv, timeout=300):
         seen.append(argv)
         if "list" in argv:
-            return R("Id   Name\nabc  my file.mp4\ndef  other\n")
+            return R("abc\tmy file.mp4\tvideo/mp4\ndef\tother\tvideo/mp4\n")
         if "upload" in argv:
             return R("drv-new-id\n")
-        return R("Name: x.mp4\nMd5Checksum: deadbeef\nSize: 100\n"
+        return R("Name: x.mp4\nMD5: deadbeef\nSize: 100\n"
                  "Parents: folder-authorized\n")
     cli = GdriveCLI(runner=runner)
     assert cli.list_files(FOLDER)[0] == {"id": "abc", "name": "my file.mp4"}
-    assert cli.upload(FOLDER, "/p/x.mp4", "x.mp4")["id"] == "drv-new-id"
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"local bytes")
+    assert cli.upload(FOLDER, source, "descriptive.mp4")["id"] == "drv-new-id"
+    assert Path(seen[-1][-1]).name == "descriptive.mp4"
     st = cli.stat("abc")
     assert st["md5"] == "deadbeef" and st["size"] == 100

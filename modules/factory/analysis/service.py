@@ -77,7 +77,7 @@ class AnalysisService:
 
         audio = audio_characteristics(src)
         scenes = detect_scenes(src)
-        request = {"artifact_sha256": src_sha,
+        request = {"artifact_id": artifact_id, "artifact_sha256": src_sha,
                    "duration_s": info.duration_s,
                    "scenes": scenes, "audio_present": audio["present"],
                    "input_mode": self.route, "seed_id": seed.id}

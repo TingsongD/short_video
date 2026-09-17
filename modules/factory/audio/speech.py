@@ -141,7 +141,7 @@ class SpeechService:
             requested_kind="audio")
         duration = (art.probe or {}).get("duration_s")
         self._set(segment_id, status="voiced", artifact_id=art.id,
-                  audio_sha256=art.sha256, duration_s=duration)
+                  audio_sha256=art.sha256, duration_s=duration, raw_alignment=dl.get("alignment"))
         return {"status": "voiced", "artifact_id": art.id,
                 "audio_sha256": art.sha256, "duration_s": duration}
 

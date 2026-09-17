@@ -31,7 +31,6 @@ class VertexAuth:
         self._now = now or (lambda: datetime.datetime.now(
             datetime.timezone.utc))
         self._cred = None
-        self._load()
 
     def _load(self):
         try:
@@ -55,12 +54,14 @@ class VertexAuth:
         try:
             when = datetime.datetime.fromisoformat(
                 exp.replace("Z", "+00:00"))
-        except ValueError:
-            return False
+        except (ValueError, TypeError):
+            return True
         return when <= self._now()
 
     def status(self):
         """Readiness only — never carries the token."""
+        if self._cred is None:
+            self._load()
         c = self._cred or {}
         base = {"project": self.project, "location": self.location,
                 "identity": c.get("identity")}
@@ -85,6 +86,7 @@ class VertexAuth:
 
     def bearer(self):
         """Token for a transport call; raises with the named reason."""
+        self._load()
         st = self.status()
         if not st["ready"]:
             raise ProviderError(st["reason"])

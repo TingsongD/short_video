@@ -116,12 +116,18 @@ class Executor:
                 raise ContractError("dispatch_blocked", "migration")
             from .effects import CONTROLLED, EffectService
             kind = u.conn.execute("SELECT kind FROM intents WHERE json_extract(body,'$.attempt_id')=?", (attempt_id,)).fetchone()[0]
+            binding = None
             if kind in CONTROLLED or row["provider"] in {"jimeng_canvas", "google_vertex", "elevenlabs", "viral_outliers", "drive", "upload_post"}:
-                EffectService(self.db, clock=(self.clock.now if hasattr(self.clock, "now") else self.clock)).preflight(attempt_id)
+                effects = EffectService(self.db, clock=(self.clock.now if hasattr(self.clock, "now") else self.clock))
+                binding = effects.preflight(attempt_id)
+                assessed = effects._price(binding)
+                binding = dict(binding, attempt_id=attempt_id, approved_price=({"unit": assessed.unit, "amount": assessed.reserve_amount} if assessed else None))
             u.conn.execute("UPDATE attempts SET status='dispatching',updated_at=? WHERE id=? AND status='prepared'", (utcnow(), attempt_id))
             u.events.append(f"attempt:{attempt_id}", "dispatch_started", {})
         try:
-            op = call()
+            from .context import dispatch_context
+            with dispatch_context(binding):
+                op = call()
         except ProviderError as e:
             cls = retry.classify(e.code, getattr(e, "http_status", None),
                                  where="submit")

@@ -35,11 +35,11 @@ def f17_m01(ctx: CaseContext):
     _, t, ad = _stack(ctx, "m01")
     ok = ad.submit(REQ)
     ctx.check("accepted_shape",
-              ok["status"] == "accepted" and ok["operation_id"])
+              ok["status"] == "running" and ok["operation_id"])
     body = t.doc["interactions"][ok["operation_id"]]["request"]
     ctx.check("pilot_payload",
               body["background"] is True and "delivery" not in body
-              and body["response"]["duration"] == "4s")
+              and body["response_format"][0]["duration"] == "4s")
     t.set_fault("http200_terminal")
     bad = ad.submit(dict(REQ, prompt="fails terminally"))
     ad.observe(bad["operation_id"])
