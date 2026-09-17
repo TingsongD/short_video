@@ -248,7 +248,12 @@ class Slot:
     kind: str = ""                   # hook|product|proof|cta|transition
     min_frames: int = 0
     max_frames: int = 0
+    frames: int = 0                  # nominal length at the template clock
     required_reference: str = ""     # image|video|none
+    effects: list = field(default_factory=list)   # declarative effect names
+    transition_out: str = "cut"      # cut | crossfade | none
+    handle_frames: int = 0           # extra media a transition consumes
+    content: dict = field(default_factory=dict)   # slot-local params
 
 
 @dataclass

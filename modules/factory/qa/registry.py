@@ -60,7 +60,7 @@ MODULES = {
 # Modules whose service code exists. Grows as phases land; a case can only
 # run when its module is in this set.
 IMPLEMENTED = {"F00", "F01", "F02", "F03", "F04", "F05", "F06", "F07",
-               "F08", "F09", "F10", "F11", "F12"}
+               "F08", "F09", "F10", "F11", "F12", "F13"}
 
 LIVE_CASES = {  # cases that can only qualify under funded/connected scope
     "F16-M04", "F17-M04", "F25-M04", "F31-M04", "F32-M04",
@@ -121,6 +121,10 @@ EXPECTED = {
     "F12-M02": "169.7 s → 5091 frames; 20 beats; final CTA preserved",
     "F12-M03": "audio/speech/music unknown; accept blocked on named flags",
     "F12-M04": "lost-ack resume → same op; edit → rev2 + parent hash + stale deps",
+    "F13-M01": "6 slots/900f, image refs; no source names/copy embedded",
+    "F13-M02": "under-min slot + handle-less crossfade named before generation",
+    "F13-M03": "static→ffmpeg_fast, animated→hypit, unknown effect named",
+    "F13-M04": "caption rev2; rev1 appearance intact for pinned plan",
 }
 
 
@@ -133,13 +137,14 @@ def all_cases():
     """The full 144-case registry; impl callables attach in case modules."""
     from . import (cases_f01, cases_f02, cases_f03, cases_f04,
                    cases_f05, cases_f06, cases_f07, cases_f08, cases_f09,
-                   cases_f10, cases_f11, cases_f12)
+                   cases_f10, cases_f11, cases_f12, cases_f13)
     impls = {**cases_f01.implementations(), **cases_f02.implementations(),
              **cases_f03.implementations(), **cases_f04.implementations(),
              **cases_f05.implementations(), **cases_f06.implementations(),
              **cases_f07.implementations(), **cases_f08.implementations(),
              **cases_f09.implementations(), **cases_f10.implementations(),
-             **cases_f11.implementations(), **cases_f12.implementations()}
+             **cases_f11.implementations(), **cases_f12.implementations(),
+             **cases_f13.implementations()}
     specs = {}
     for mid in MODULES:
         for n in range(1, 5):
