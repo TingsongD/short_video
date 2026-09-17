@@ -262,3 +262,40 @@ Its isolated runtime was stopped and verified absent. See
 `docs/factory-reports/REPAIR-S3-EVIDENCE.json` and
 `tests/factory_fixtures/protocols/README.md`. This qualifies the local contract,
 not the four-variant application or live provider/account routes.
+
+
+## Safe repair S4 — media timing and acceptance (2026-09-17)
+
+Parent revision: `474f676`. Implemented duration/handle-aware shared work and
+native allocation pricing hashes; collected media must cover its actual
+allocation. A manual replacement no longer enters generation. Missing asset
+reviews wait for an operator.
+
+Speech fitting now renders and measures new PCM bytes, divides alignment times
+by speed, retains raw synthesis separately and requires a fresh fitted hash for
+approval. Mixing decodes/resamples input, applies frozen offsets/ducking and
+measured RMS targets, accumulates without early clipping and encodes once at
+exact duration. Short music sources cannot create non-advancing crossfade loops.
+
+Composition emits source trims, exact target positions, stills, caption fonts,
+audio gains and Hypit crossfades/zoom sampling. The fast renderer supports its
+explicit subset, including stills and delayed audio; unsupported effects block.
+Cache identity includes media bytes, timings, effects, audio and renderer
+settings. Forced keyframes isolate encoded shot boundaries.
+
+QC checks actual clocks, multiline/EOF freeze detection, decoder/detector errors
+and audio coverage. Region checks compare every frame and actual audio; missing
+hashes or short evidence block. Acceptance requires automated technical evidence
+and an explicit creative review bound to the current plan, composition and
+registered final. Application-level delivery ownership remains S5.
+
+Evidence: `docs/factory-reports/REPAIR-S4-EVIDENCE.json`. Eleven negative probes
+failed before their repairs. Local Hypit qualification produced 48 frames at
+24 fps, verifying a nonzero source offset, six-frame crossfade into an image,
+new caption text, and delayed audio with an initial silent interval. It made
+zero hosted requests and stopped its isolated runtime. The first full offline
+suite passed 902 tests; the collected-duration regression was added afterward
+and the final checkpoint passed **903 tests** in 125.61 seconds (two existing dependency warnings).
+
+This is an offline engineering checkpoint. It does not sign the four-variant
+application journey, production qualification, or legacy G-gates.

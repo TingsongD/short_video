@@ -109,7 +109,7 @@ class FakeProvider:
         seq = self._next_seq()
         op_id = self.ids.next(f"{self.name}-op")
         op = {"operation_id": op_id, "seq": seq, "provider": self.name,
-              "request_hash": request_hash, "status": "accepted",
+              "request_hash": request_hash, "request": request, "status": "accepted",
               "faults": list(faults), "submitted_at": self.clock.iso(),
               "price": price, "polls": 0, "result": None}
         self.state.doc["operations"][op_id] = op

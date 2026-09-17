@@ -20,7 +20,7 @@ def fit_plan(duration_s, target_s, trim_s=0.0):
                             "measure the waveform first")
     if target_s <= 0:
         raise ContractError("invalid_target", "target_s")
-    if trim_s > TRIM_MAX_S:
+    if trim_s < 0 or trim_s > TRIM_MAX_S:
         raise ContractError("trim_exceeds_limit", "trim_s",
                             f"{trim_s}>{TRIM_MAX_S}s per edge")
     spoken = duration_s - 2 * trim_s
@@ -56,6 +56,6 @@ def apply_fit(word_times, fit):
         raise ContractError("unfitted_speech", "fit", fit.get("reason"))
     rate, trim = fit["rate"], fit.get("trim_s", 0.0)
     return [{"w": w["w"],
-             "start_s": max(0.0, (w["start_s"] - trim) * rate),
-             "end_s": max(0.0, (w["end_s"] - trim) * rate)}
+             "start_s": max(0.0, (w["start_s"] - trim) / rate),
+             "end_s": max(0.0, (w["end_s"] - trim) / rate)}
             for w in word_times]

@@ -23,10 +23,10 @@ class RegionGate:
         """a_hashes/b_hashes: {region_key: sha256} of normalized
         intermediate sections. Identical inputs must hash identically
         — a difference is proof of an undeclared change."""
-        diffs = []
+        diffs = [] if unchanged_regions else [{"code":"missing_region_coverage"}]
         for r in unchanged_regions:
             key = f"{r['start_frame']}-{r['end_frame']}"
-            if a_hashes.get(key) != b_hashes.get(key):
+            if not re.fullmatch(r"[0-9a-f]{64}",a_hashes.get(key, "")) or not re.fullmatch(r"[0-9a-f]{64}",b_hashes.get(key, "")) or a_hashes[key] != b_hashes[key]:
                 diffs.append({"region": key, "mode": "hash",
                               "a": (a_hashes.get(key) or "")[:12],
                               "b": (b_hashes.get(key) or "")[:12],
@@ -37,36 +37,37 @@ class RegionGate:
 
     def compare_finals(self, a_path, b_path, unchanged_regions, fps,
                        samples_per_region=1):
-        """Sample-frame SSIM per unchanged region. Encoded pixels carry
-        codec noise — calibrated threshold separates noise from real
-        change. Returns per-region scores for evidence."""
-        regions = []
-        diffs = []
-        for r in unchanged_regions:
-            mid = (r["start_frame"] + r["end_frame"]) // 2
-            t = mid / fps
-            score = self._ssim_at(a_path, b_path, t)
-            regions.append({"region":
-                            f"{r['start_frame']}-{r['end_frame']}",
-                            "sample_frame": mid, "ssim": score})
-            if score is None or score < self.threshold:
-                diffs.append({"region":
-                              f"{r['start_frame']}-{r['end_frame']}",
-                              "sample_frame": mid, "ssim": score,
-                              "code": "undeclared_change"})
-        return {"ok": not diffs, "regions": regions, "diffs": diffs}
-
-    def _ssim_at(self, a, b, t):
-        r = self.runner(
-            ["ffmpeg", "-v", "info",
-             "-ss", f"{t:.4f}", "-i", str(a),
-             "-ss", f"{t:.4f}", "-i", str(b),
-             "-filter_complex",
-             "[0:v]select='eq(n,0)'[x];[1:v]select='eq(n,0)'[y];"
-             "[x][y]ssim", "-f", "null", "-"], timeout=120)
-        log = r.stderr or ""
-        m = re.search(r"All:([\d.]+)", log)
-        return float(m.group(1)) if m else None
+        """Compare every frame in each complete unchanged interval.
+        samples_per_region is retained for callers; coverage is always full.
+        Codec noise uses the configured minimum per-frame SSIM threshold."""
+        import tempfile
+        from pathlib import Path
+        regions, diffs = [], []
+        if not unchanged_regions:
+            return {"ok":False,"regions":[],"diffs":[{"code":"missing_region_coverage","ssim":None,"region":"all"}]}
+        for interval in unchanged_regions:
+            start,end = interval["start_frame"],interval["end_frame"]
+            key = f"{start}-{end}"
+            scores=[]
+            if start >= 0 and end > start:
+                with tempfile.TemporaryDirectory(prefix="factory-ssim-") as td:
+                    stats = Path(td)/"scores.txt"
+                    filt = (f"[0:v]trim=start_frame={start}:end_frame={end},setpts=PTS-STARTPTS[x];"
+                            f"[1:v]trim=start_frame={start}:end_frame={end},setpts=PTS-STARTPTS[y];"
+                            f"[x][y]ssim=stats_file={stats}:shortest=1:repeatlast=0")
+                    try:
+                        r=self.runner(["ffmpeg","-v","error","-i",str(a_path),"-i",str(b_path),
+                                       "-filter_complex",filt,"-an","-f","null","-"],timeout=120)
+                        if r.returncode == 0 and stats.exists():
+                            scores=[float(x) for x in re.findall(r"All:([\d.]+)",stats.read_text())]
+                    except (OSError,subprocess.SubprocessError):
+                        scores=[]
+            score=min(scores) if scores else None
+            evidence={"region":key,"ssim":score,"compared_frames":len(scores),"expected_frames":end-start}
+            regions.append(evidence)
+            if len(scores)!=end-start or score is None or score < self.threshold:
+                diffs.append({**evidence,"code":"undeclared_change" if scores else "missing_evidence"})
+        return {"ok":not diffs,"regions":regions,"diffs":diffs}
 
     # --------------------------------------------------- audio side --
 
@@ -75,6 +76,8 @@ class RegionGate:
         gain or normalization difference outside declared scope is a
         leak. a_mix/b_mix: sample lists (pcm module)."""
         s, e = int(region["start_s"] * rate), int(region["end_s"] * rate)
+        if s < 0 or e <= s or len(a_mix) < e or len(b_mix) < e:
+            return {"ok":False,"code":"missing_audio_coverage","region":region}
         aa, bb = a_mix[s:e], b_mix[s:e]
         if len(aa) != len(bb):
             return {"ok": False, "code": "length_differs",

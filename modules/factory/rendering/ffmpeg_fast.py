@@ -74,43 +74,42 @@ class FastPathRenderer:
 
     # ----------------------------------------------------- sections --
 
-    def normalize_section(self, src, frames, fps, cache_dir):
-        """Normalize one picture input to the target clock and EXACT
-        frame count, keyed by (source sha, frames, fps). Post-verified:
-        a source that cannot cover its allocation refuses, never pads."""
-        info = next(s for s in probe_path(self.runner, src)["streams"]
-                    if s["codec_type"] == "video")
-        exact = (info.get("avg_frame_rate") == f"{fps}/1"
-                 and int(info.get("nb_frames", 0)) == frames)
-        identity = f"{_digest(src)[:16]}-{frames}@{fps}"
-        out = cache_dir / f"{identity}.mp4"
-        receipt = cache_dir / f"{identity}.json"
-        if exact:
-            return out, src
-        if out.exists() and receipt.exists() and \
-                json.loads(receipt.read_text()).get("sha256") == \
-                _digest(out):
-            return out, None          # cached verified intermediate
-        tmp = out.with_suffix(".pending.mp4")
-        r = self.runner(
-            ["ffmpeg", "-v", "error", "-y", "-i", str(src), "-an",
-             "-vf", f"fps={fps},trim=end_frame={frames},"
-                    "setpts=N/(30*TB),setsar=1",
-             "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
-             "-threads", "2", "-pix_fmt", "yuv420p", str(tmp)],
-            timeout=self.timeout)
-        if r.returncode != 0:
-            raise RuntimeError(f"normalize failed: {r.stderr[-200:]}")
-        pic = next(s for s in probe_path(self.runner, tmp)["streams"]
-                   if s["codec_type"] == "video")
-        if int(pic.get("nb_frames", 0)) < frames:
-            raise RuntimeError(
-                f"short_footage: source cannot cover {frames} frames")
+    def normalize_section(self, src, frames, fps, cache_dir, source_in_s=0,
+                          width=None, height=None, kind="video", effects=()):
+        """Normalize the exact selected interval; cache every rendering decision."""
+        if frames <= 0 or fps <= 0 or source_in_s < 0 or set(effects)-{"cut","caption","static_image","text_overlay","audio_bed"}:
+            raise RuntimeError("unsupported_or_invalid_section")
+        info = next(x for x in probe_path(self.runner,src)["streams"] if x["codec_type"] == "video")
+        width,height = width or info["width"],height or info["height"]
+        if kind != "image":
+            duration = float(info.get("duration",0))
+            if duration+1e-5 < source_in_s+frames/fps:
+                raise RuntimeError("short_footage: source range exceeds duration")
+        settings={"source_sha256":_digest(src),"frames":frames,"fps":fps,"source_in_s":source_in_s,
+                  "width":width,"height":height,"kind":kind,"effects":list(effects),"renderer":"normalize.v2",
+                  "codec":"libx264","crf":18,"pix_fmt":"yuv420p"}
+        identity=hashlib.sha256(json.dumps(settings,sort_keys=True).encode()).hexdigest()
+        out=Path(cache_dir)/f"{identity}.mp4"; receipt=out.with_suffix(".json")
+        if out.exists() and receipt.exists():
+            saved=json.loads(receipt.read_text())
+            if saved.get("settings")==settings and saved.get("sha256")==_digest(out):
+                return out,None
+        tmp=out.with_suffix(".pending.mp4")
+        args=["-loop","1","-framerate",str(fps)] if kind=="image" else []
+        vf=(f"trim=start={source_in_s},setpts=PTS-STARTPTS,fps={fps},trim=end_frame={frames},"
+            f"setpts=N/({fps}*TB),scale={width}:{height}:force_original_aspect_ratio=increase,"
+            f"crop={width}:{height},setsar=1")
+        r=self.runner(["ffmpeg","-v","error","-y",*args,"-i",str(src),"-an","-vf",vf,
+                       "-frames:v",str(frames),"-c:v","libx264","-preset","veryfast","-crf","18",
+                       "-threads","2","-pix_fmt","yuv420p",str(tmp)],timeout=self.timeout)
+        if r.returncode:
+            raise RuntimeError("section_normalization_failed")
+        pic=next(x for x in probe_path(self.runner,tmp)["streams"] if x["codec_type"]=="video")
+        if int(pic.get("nb_frames",0))!=frames:
+            raise RuntimeError("short_footage: normalized frame count differs")
         tmp.replace(out)
-        receipt.write_text(json.dumps(
-            {"sha256": _digest(out), "source_sha256": _digest(src),
-             "frames": frames, "fps": fps}))
-        return out, None
+        receipt.write_text(json.dumps({"sha256":_digest(out),"settings":settings}))
+        return out,None
 
     # -------------------------------------------------------- render --
 
@@ -128,15 +127,31 @@ class FastPathRenderer:
         progress = progress if progress is not None else \
             {"completed_sections": [], "current": None}
         inputs = []
+        cursor=0
+        for seg in segments:
+            if seg.get("in_frame",cursor)!=cursor or seg.get("out_frame",cursor+seg["frames"])!=cursor+seg["frames"]:
+                raise RuntimeError("picture_timeline_gap_or_overlap")
+            if seg.get("transition_out", "cut") not in ("cut","none",""):
+                raise RuntimeError("transition_requires_hypit")
+            cursor+=seg["frames"]
+        if not cursor or clock.get("total_frames",cursor)!=cursor:
+            raise RuntimeError("picture_coverage_incomplete")
+        for c in captions:
+            if not 0 <= c["start_frame"] < c["end_frame"] <= cursor:
+                raise RuntimeError("caption_interval_invalid")
         for i, seg in enumerate(segments):
             progress["current"] = seg.get("id", f"seg{i}")
             progress["updated_at"] = time.strftime(
                 "%Y-%m-%dT%H:%M:%SZ", time.gmtime())
             (ws / "progress.json").write_text(json.dumps(progress))
             out, passthrough = self.normalize_section(
-                seg["src"], seg["frames"], fps, cache)
+                seg["src"], seg["frames"], fps, cache,
+                source_in_s=seg.get("source_in_s",0), width=clock["width"],height=clock["height"],
+                kind=seg.get("media_kind","video"),effects=seg.get("effects",[]))
             inputs.append((passthrough or out, seg["frames"]))
-            progress["completed_sections"].append(seg.get("id", f"seg{i}"))
+            sid=seg.get("id",f"seg{i}")
+            if sid not in progress["completed_sections"]:
+                progress["completed_sections"].append(sid)
             progress["updated_at"] = time.strftime(
                 "%Y-%m-%dT%H:%M:%SZ", time.gmtime())
             (ws / "progress.json").write_text(json.dumps(progress))
@@ -145,7 +160,7 @@ class FastPathRenderer:
         # concat in exact shot order with per-segment durations
         concat = ws / "concat.txt"
         concat.write_text("".join(
-            f"file '{Path(p).resolve()}'\n"
+            "file '" + str(Path(p).resolve()).replace("'", "'\\''") + "'\n" +
             f"duration {frames / fps:.12f}\n"
             for p, frames in inputs))
         ass = ws / "captions.ass"
@@ -153,20 +168,29 @@ class FastPathRenderer:
         total = sum(f for _, f in inputs)
         tmp = ws / (final_name + ".pending.mp4")
         audio_args, filter_a = [], ""
-        for i, a in enumerate(audio or []):
-            audio_args += ["-i", str(a["src"])]
-            filter_a += (f"[{i+1}:a]volume={a.get('gain', 1.0)}[a{i}];")
+        for i,a in enumerate(audio or []):
+            off=a.get("offset_s",a.get("in_frame",0)/fps)
+            source=a.get("source_in_s",0)
+            span=a.get("duration_s",(a["out_frame"]-a["in_frame"])/fps if "out_frame" in a else total/fps-off)
+            if off < 0 or source < 0 or span <= 0 or off+span > total/fps+1e-6:
+                raise RuntimeError("audio_interval_invalid")
+            info=next(x for x in probe_path(self.runner,a["src"])["streams"] if x["codec_type"]=="audio")
+            if float(info.get("duration",0))+.02 < source+span:
+                raise RuntimeError("insufficient_audio_coverage")
+            audio_args += ["-i",str(a["src"])]
+            filter_a += (f"[{i+1}:a]atrim=start={source}:duration={span},asetpts=PTS-STARTPTS,aresample=48000,"
+                         f"volume={a.get('gain',1)},adelay={round(off*48000)}S:all=1,apad,atrim=end_sample={round(total/fps*48000)}[a{i}];")
         if audio:
-            mix_in = "".join(f"[a{i}]" for i in range(len(audio)))
-            filter_a += (f"{mix_in}amix=inputs={len(audio)}"
-                         ":duration=first:normalize=0,"
-                         "alimiter=limit=0.95:level=false[aout]")
+            mix_in="".join(f"[a{i}]" for i in range(len(audio)))
+            filter_a += (f"{mix_in}amix=inputs={len(audio)}:duration=longest:normalize=0,"
+                         "alimiter=limit=0.95:level=false:latency=true[aout]")
         else:
             filter_a += "anullsrc=r=48000:cl=mono[aout]"
         vf = (f"[0:v]setpts=N/({fps}*TB),scale={clock['width']}:"
               f"{clock['height']}:flags=bicubic,setsar=1"
               + (",subtitles=captions.ass" if captions else "")
               + "[v]")
+        boundaries=[sum(n for _,n in inputs[:i])/fps for i in range(len(inputs))]
         argv = (["ffmpeg", "-v", "error", "-y", "-copyts",
                  "-f", "concat", "-safe", "0", "-i", "concat.txt"]
                 + audio_args +
@@ -176,6 +200,7 @@ class FastPathRenderer:
                  "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
                  "-threads", "4", "-pix_fmt", "yuv420p",
                  "-r", str(fps), "-fps_mode", "cfr",
+                 "-force_key_frames", ",".join(str(t) for t in boundaries), "-forced-idr", "1",
                  "-c:a", "aac", "-b:a", "192k",
                  "-t", f"{total / fps:.6f}",
                  "-movflags", "+faststart", tmp.name])
@@ -185,6 +210,9 @@ class FastPathRenderer:
             raise RenderTimeout("observer timeout; build state unknown")
         if r.returncode != 0:
             raise RuntimeError(f"render failed: {r.stderr[-300:]}")
+        pic=next(x for x in probe_path(self.runner,tmp)["streams"] if x["codec_type"]=="video")
+        if int(pic.get("nb_frames",0))!=total:
+            raise RuntimeError("final_frame_count_mismatch")
         final = ws / final_name
         tmp.replace(final)
         progress["current"] = "finalized"

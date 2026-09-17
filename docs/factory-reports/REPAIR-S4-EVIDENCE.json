@@ -1,0 +1,101 @@
+{
+  "package": "S4",
+  "parent_revision": "474f676",
+  "mode": "offline",
+  "live_calls": 0,
+  "regressions_red": {
+    "failed": 11,
+    "log": "/tmp/factory-s4-red.log"
+  },
+  "targeted": {
+    "passed": 98,
+    "seconds": 28.3,
+    "log": "/tmp/factory-s4-targeted3.log"
+  },
+  "adversarial_and_quality": {
+    "passed": 28,
+    "seconds": 9.78,
+    "log": "/tmp/factory-s4-extra.log"
+  },
+  "native_hypit": {
+    "build": {
+      "build_id": "bld_20260917T164324411Z_A0F83F3A4E",
+      "workspace": "/private/tmp/factory-repair-s4-hypit-rich-v2/compositions/comp-local/r1"
+    },
+    "status": "passed",
+    "hosted_requests": 0,
+    "probe": {
+      "programs": [],
+      "stream_groups": [],
+      "streams": [
+        {
+          "width": 360,
+          "height": 640,
+          "r_frame_rate": "24/1",
+          "nb_frames": "48"
+        },
+        {
+          "r_frame_rate": "0/0",
+          "nb_frames": "95"
+        }
+      ]
+    },
+    "timeline_checks": {
+      "source_offset_pixel": [
+        0,
+        0,
+        252
+      ],
+      "crossfade_pixel": [
+        0,
+        56,
+        148
+      ],
+      "still_pixel": [
+        0,
+        251,
+        0
+      ],
+      "delayed_audio": {
+        "peak_dbfs": -17.22,
+        "rms_dbfs": -20.25,
+        "clipped": false,
+        "samples": 14000,
+        "duration_s": 0.2917
+      },
+      "initial_silence": {
+        "peak_dbfs": null,
+        "rms_dbfs": null,
+        "clipped": false,
+        "samples": 18000,
+        "duration_s": 0.375
+      }
+    },
+    "cleanup": {
+      "returncode": 0
+    }
+  },
+  "limitations": [
+    "Local native render fixture verifies 48 frames, not full factory production.",
+    "Creative verdicts remain explicit operator actions.",
+    "Unsupported advanced overlay effects are rejected; cut/still/caption/audio and Hypit crossfade/kenburns have implemented compilation.",
+    "Integrated application, delivery ownership and long journeys remain S5/S8."
+  ],
+  "manual_scenarios": {
+    "F19-M01": "automated assertions pass; listening remains manual",
+    "F19-M03": "raw reuse assertions pass; new variant fitting/review remain required",
+    "F21-M04": "split/trim/manual coverage assertions pass",
+    "F24-M04": "missing creative acceptance and stale reviews correctly block"
+  },
+  "full_suite": {
+    "passed": 903,
+    "warnings": 2,
+    "seconds": 125.61,
+    "log": "/tmp/factory-repair-s4-release.log"
+  },
+  "preserved": {
+    "frozen_contracts": true,
+    "legacy_ledger": true,
+    "unrelated_dirty_files": true
+  }
+}

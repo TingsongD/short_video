@@ -127,7 +127,7 @@ class TestCapabilities:
 
     def test_animation_routes_hypit(self):
         slots = [Slot(id="s1", kind="product", frames=100,
-                      effects=["animated_overlay"], transition_out="cut")]
+                      effects=["kenburns"], transition_out="cut")]
         rep = capability_report(slots)
         assert rep["preferred"] == "hypit"
         assert rep["routes"]["s1"] == "hypit"

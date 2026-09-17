@@ -39,16 +39,15 @@ def write_wav(samples, rate=RATE, channels=1):
 
 def gain_db(samples, db):
     f = 10 ** (db / 20.0)
-    return [max(-32768, min(32767, int(round(s * f)))) for s in samples]
+    return [int(round(s * f)) for s in samples]
 
 
 def overlay(base, add, offset_samples):
     out = list(base)
-    if len(out) < offset_samples + len(add):
-        out += [0] * (offset_samples + len(add) - len(out))
-    for i, s in enumerate(add):
-        v = out[offset_samples + i] + s
-        out[offset_samples + i] = max(-32768, min(32767, v))
+    if offset_samples < 0 or offset_samples+len(add)>len(out):
+        raise ValueError("track_exceeds_allocation")
+    for i,s in enumerate(add):
+        out[offset_samples+i]+=s
     return out
 
 
@@ -83,3 +82,32 @@ def sine(duration_s, freq=110.0, rate=RATE, amp=9000):
     n = int(duration_s * rate)
     return [int(amp * math.sin(2 * math.pi * freq * i / rate))
             for i in range(n)]
+
+
+def decode(path, rate=RATE, channels=1):
+    """Decode any supported media to interleaved floating-point PCM, at the output clock."""
+    import array
+    import subprocess
+    import sys
+    r = subprocess.run(['ffmpeg','-v','error','-i',str(path),'-vn','-ar',str(rate),
+                        '-ac',str(channels),'-f','f32le','pipe:1'],capture_output=True,timeout=120)
+    if r.returncode:
+        raise ValueError('audio_decode_failed')
+    values = array.array('f'); values.frombytes(r.stdout)
+    if sys.byteorder != 'little':
+        values.byteswap()
+    return [v * 32768 for v in values]
+
+
+def resample(samples, source_rate, target_rate):
+    """Deterministic linear resampling for already decoded mono fixture samples."""
+    if source_rate <= 0 or target_rate <= 0:
+        raise ValueError('invalid_sample_rate')
+    if source_rate == target_rate:
+        return list(samples)
+    size = round(len(samples)*target_rate/source_rate)
+    result=[]
+    for i in range(size):
+        at=i*source_rate/target_rate; lo=int(at); hi=min(lo+1,len(samples)-1)
+        result.append(samples[lo]*(1-(at-lo)) + samples[hi]*(at-lo))
+    return result

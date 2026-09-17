@@ -28,18 +28,18 @@ class AlignmentService:
             from ...batch.audio import word_times
             if "".join(seg["raw_alignment"]["characters"]) != seg["text"]:
                 raise ContractError("alignment_text_mismatch", "segment_id")
-            aligned = word_times(seg["raw_alignment"], 0, 1, 0, seg["duration_s"])
+            aligned = word_times(seg["raw_alignment"], 0, 1, 0, seg.get("raw_duration_s",seg["duration_s"]))
             words = [{"w": w["text"], "start_s": w["start"], "end_s": w["end"], "confidence": 1.0} for w in aligned]
             aligner_id = "elevenlabs-v3-character-alignment"
         elif self.aligner is not None:
-            words = self.aligner.align(seg["text"], seg["audio_sha256"], seg["duration_s"])
+            words = self.aligner.align(seg["text"], seg.get("raw_audio_sha256",seg["audio_sha256"]), seg.get("raw_duration_s",seg["duration_s"]))
         else:
             raise ContractError("alignment_required", "segment_id")
         conf = ([w.get("confidence", 0.0) for w in words] or [0.0])
         al = WordAlignment(
             schema_version="word_alignment.v1",
             id=f"align:{segment_id}", created_at=now,
-            segment_id=segment_id, audio_sha256=seg["audio_sha256"],
+            segment_id=segment_id, audio_sha256=seg.get("raw_audio_sha256",seg["audio_sha256"]),
             spoken_text=seg["text"], words=words,
             aligner={"kind": "injected", "version": aligner_id},
             confidence=sum(conf) / len(conf))
@@ -61,8 +61,12 @@ class AlignmentService:
         if al is None:
             raise ContractError("missing_alignment", "segment_id",
                                 segment_id)
-        mapped = apply_fit(al["words"], fit)
         seg = speech_get(segment_id)
+        if seg.get("status") not in ("fitted","approved") or fit != seg.get("fit"):
+            raise ContractError("fitted_waveform_required", "segment_id")
+        if speech_hash != seg.get("speech_hash") or al["audio_sha256"] != seg.get("raw_audio_sha256",seg["audio_sha256"]):
+            raise ContractError("stale_alignment", "segment_id")
+        mapped = apply_fit(al["words"], fit)
         tgt = seg.get("target") or {}
         start = tgt.get("start_frame", tgt.get("start", 0))
         fps = clock.num / clock.den
@@ -70,6 +74,9 @@ class AlignmentService:
                  "end_frame": start + int(round(w["end_s"] * fps)),
                  "text": w["w"], "word_refs": [i]}
                 for i, w in enumerate(mapped)]
+        end=tgt.get("end_frame",tgt.get("end"))
+        if not cues or any(not start <= c["start_frame"] < c["end_frame"] <= end for c in cues):
+            raise ContractError("caption_coverage_invalid", "cues")
         cs = CaptionSet(schema_version="caption_set.v1",
                         id=f"caps:{segment_id}", created_at=now,
                         segment_id=segment_id, speech_hash=speech_hash,

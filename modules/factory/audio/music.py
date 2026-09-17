@@ -103,12 +103,15 @@ class MusicService:
         """Exact-duration bed from the master source: declared loops +
         crossfades; every join boundary is explicit, not masked."""
         bed = self._get(bed_id)
-        path = self.artifacts.path_for(bed["artifact_id"])
-        rate, src = pcm.read_wav(open(path, "rb").read())
+        path = self.artifacts.path_for(bed.get("source_artifact_id",bed["artifact_id"]))
+        rate = pcm.RATE
+        src = [round(v) for v in pcm.decode(path, rate)]
         target_n = int(round(target_s * rate))
         xfade_n = int(crossfade_s * rate)
         loops = []
         n = len(src)
+        if target_n <= 0 or xfade_n < 0 or not n or xfade_n >= n:
+            raise ContractError("invalid_music_loop", "crossfade_s", "overlap must be shorter than the source")
         pos = 0
         i = 0
         while pos < target_n:
@@ -134,6 +137,7 @@ class MusicService:
                         "target_s": target_s,
                         "joins_inspected": len(loops) - 1}
         body = dict(bed)
+        body.setdefault("source_artifact_id",bed["artifact_id"])
         body["construction"] = construction
         body["duration_s"] = target_s
         body["status"] = "master"

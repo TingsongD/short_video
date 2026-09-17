@@ -28,14 +28,17 @@ def _stack(ctx, name):
     clip = ctx.run_dir / f"{name}.mp4"
     _color_mp4(clip, 4.0)
     payload = clip.read_bytes()
-    prov.payload_fn = lambda oid: payload
+    long_clip=ctx.run_dir/f"{name}-8s.mp4"
+    _color_mp4(long_clip,8.0)
+    long_payload=long_clip.read_bytes()
+    prov.payload_fn=lambda oid: long_payload if prov.state.doc["operations"][oid]["request"].get("duration_s")==8 else payload
     adapter = FakeGenerationAdapter(
         "jimeng_canvas", prov, JIMENG_MODELS, "jimeng_credits",
         "native_quote", {"seedance_2.0_fast_vip": {4: 30, 8: 54}})
     arts = ArtifactStore(ctx.run_dir / f"{name}-arts", db)
     svc = ProductionService(db, scheduler=sched,
                             executor=Executor(db, provider=prov),
-                            adapter=adapter, artifacts=arts)
+                            adapter=adapter, artifacts=arts, selector=lambda n:"accept")
     return db, sched, prov, arts, svc
 
 
@@ -136,7 +139,7 @@ def f21_m03(ctx: CaseContext):
     svc2 = ProductionService(
         db, scheduler=Scheduler(db, worker_id="w2", lease_s=300),
         executor=Executor(db, provider=prov), adapter=svc.adapter,
-        artifacts=arts)
+        artifacts=arts, selector=lambda n:"accept")
     resumed = svc2.resume("plan-1")["readiness"]
     ctx.check("resume_state", resumed["done"] == done_before
               and len(done_before) > 0,
@@ -158,17 +161,15 @@ def f21_m04(ctx: CaseContext):
     split or validated manual coverage; never under-length submit."""
     db, sched, prov, arts, svc = _stack(ctx, "m04")
     takes = _takes()
-    takes[0]["duration_s"] = 11.0      # 8+3 unsupported → needs_manual
+    takes[0]["duration_s"] = 11.0      # 8+4 with explicit one-second trim
     takes[1]["duration_s"] = 12.0      # 8+4 declared split
     out = svc.plan("plan-1", "exp1", 1, takes, "jimeng_canvas",
                    "seedance_2.0_fast_vip", [4, 8], now=NOW)
     stats = out["plan"]["stats"]
     ctx.check("split_declared", stats["splits"] >= 1,
               "12 s take → 8+4 declared split")
-    ctx.check("manual_flagged", stats["manual_needed"] >= 1,
-              "11 s take → 8+3 remainder named needs_manual")
-    manual = next(k for k, n in svc._nodes("plan-1").items()
-                  if n["status"] == "needs_manual")
+    manual=next(k for k,n in out["nodes"].items() if n["kind"]=="picture" and any(t["duration_s"]==11 for t in n["takes"]))
+    ctx.check("trimmed_remainder",out["nodes"][manual]["allocations"][-1]["over_s"]==1)
     # offered clip too short → rejected by coverage check
     short = ctx.run_dir / "short.mp4"
     _color_mp4(short, 5.0)

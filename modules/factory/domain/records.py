@@ -874,6 +874,9 @@ class Review(Record):
     evidence_ids: list = field(default_factory=list)
     limitations: list = field(default_factory=list)
     invalidated_by: str = ""         # hash that superseded target_hash
+    binding: dict = field(default_factory=dict)  # exact plan/composition/artifact
+    reviewer: str = ""
+    evidence_data: dict = field(default_factory=dict)
 
     def validate(self):
         e = super().validate()

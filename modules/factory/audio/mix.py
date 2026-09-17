@@ -60,35 +60,71 @@ class MixService:
         if prof is None:
             raise ContractError("unknown_profile", "profile_id",
                                 profile_id)
-        rate = prof["sample_rate"]
-        out = [0] * int(round(out_s * rate))
+        rate, channels = prof["sample_rate"], prof["channels"]
+        if rate <= 0 or channels not in (1,2) or out_s <= 0:
+            raise ContractError("invalid_mix_clock", "profile")
+        frames = int(round(out_s * rate))
+        out = [0.0] * (frames*channels)
+        duck = prof.get("duck") or {}
+        regions = duck.get("regions", []) if duck.get("enabled", False) else []
+        fps = duck.get("fps", 30)
         for t in tracks:
             if "samples" in t:
-                samples = t["samples"]
+                mono = pcm.resample(t["samples"], t.get("sample_rate", pcm.RATE), rate)
+                samples = [v for v in mono for _ in range(channels)]
             else:
-                path = self.artifacts.path_for(t["artifact_id"])
-                _, samples = pcm.read_wav(open(path, "rb").read())
-            gain = t.get("gain_db")
-            if gain is None:
-                gain = (prof["speech_gain_db"] if t["kind"] == "speech"
-                        else prof["music_gain_db"])
-            samples = pcm.gain_db(samples, gain)
-            off = int(round(t.get("offset_s", 0.0) * rate))
-            out = pcm.overlay(out, samples, off)
-        measured = pcm.measure(out, rate)
+                samples = pcm.decode(self.artifacts.path_for(t["artifact_id"]), rate, channels)
+            off = round(t.get("offset_s", 0.0) * rate) * channels
+            if off < 0 or off >= len(out):
+                raise ContractError("invalid_track_offset", "offset_s")
+            if len(samples)+off > len(out):
+                if not t.get("trim_to_allocation", False) or t["kind"] == "speech":
+                    raise ContractError("track_exceeds_allocation", "duration")
+                samples = samples[:len(out)-off]
+            gain = t.get("gain_db", prof["speech_gain_db"] if t["kind"] == "speech" else prof["music_gain_db"])
+            factor = 10 ** (gain/20)
+            for i, sample in enumerate(samples):
+                at = (i+off)/channels/rate
+                ducking = (10 ** (-abs(duck.get("amount_db",0))/20)
+                           if t["kind"] == "music" and any(
+                               r.get("start_frame",r.get("start",0))/fps <= at < r.get("end_frame",r.get("end",0))/fps
+                               for r in regions) else 1)
+                out[off+i] += sample * factor * ducking
+        measured = pcm.measure(out, rate*channels)
+        adjustments = {}
+        target = prof.get("loudness_target") or {}
+        if target and "rms_dbfs" not in target:
+            raise ContractError("unsupported_loudness_target", "profile")
+        if "rms_dbfs" in target:
+            if measured["rms_dbfs"] is None:
+                raise ContractError("silent_mix", "loudness")
+            delta = target["rms_dbfs"] - measured["rms_dbfs"]
+            out = [v*10**(delta/20) for v in out]
+            adjustments["loudness_adjustment_db"] = delta
+        peak = max((abs(v) for v in out), default=0)
+        ceiling = 32768 * 10**(-1/20)
+        if peak > ceiling:
+            if prof["clip_policy"] != "prevent":
+                raise ContractError("mix_clipping", "audio")
+            import math
+            adjustment = 20*math.log10(peak/ceiling)
+            out = [v*ceiling/peak for v in out]
+            adjustments["repaired_db"] = round(adjustment,4)
+        out = [round(v) for v in out]
+        measured = {**pcm.measure(out, rate*channels), **adjustments}
+        if "rms_dbfs" in target and abs(measured["rms_dbfs"]-target["rms_dbfs"]) > target.get("tolerance_db",.25):
+            raise ContractError("loudness_target_unmet", "mix", "peak headroom conflicts with frozen target")
+        # Interleaved samples are already in the target channel layout.
+        import io, wave, struct
+        stream = io.BytesIO()
+        with wave.open(stream,"wb") as wavfile:
+            wavfile.setnchannels(channels); wavfile.setsampwidth(2); wavfile.setframerate(rate)
+            wavfile.writeframes(struct.pack(f"<{len(out)}h",*out))
+        wav = stream.getvalue()
         clipped = measured["clipped"]
-        if clipped and prof["clip_policy"] == "prevent":
-            # documented repair: reduce everything by headroom, re-measure
-            headroom_db = measured["peak_dbfs"] - -1.0 \
-                if measured["peak_dbfs"] is not None else 0
-            out = pcm.gain_db(out, -(headroom_db + 0.5))
-            measured = {**pcm.measure(out, rate),
-                        "repaired_db": round(headroom_db + 0.5, 2)}
-            clipped = False
-        wav = pcm.write_wav(out, rate, prof["channels"])
         result = {"profile_hash": prof["profile_hash"],
                   "measured": measured, "clipped": clipped,
-                  "exact_samples": len(out),
+                  "exact_samples": frames,
                   "sha256": hashlib.sha256(wav).hexdigest()}
         if artifact_name:
             art = self.artifacts.intake_bytes(
@@ -106,15 +142,16 @@ class MixService:
         that unchanged regions are identical across variants."""
         prof = self.get(profile_id)
         duck = prof.get("duck") or {}
-        applied = any(region["start_frame"] >= r.get("start",
-                                                    r.get("start_frame", 0))
-                      and region["end_frame"] <= r.get("end",
-                                                       r.get("end_frame", 0))
-                      for r in duck.get("regions", []))
-        return {"music_gain_db": prof["music_gain_db"],
-                "speech_gain_db": prof["speech_gain_db"],
-                "duck_db": -(duck.get("amount_db", 0.0)) if applied else 0.0,
-                "sample_rate": prof["sample_rate"]}
+        envelope=[]
+        if duck.get("enabled",False):
+            for r in duck.get("regions",[]):
+                start=max(region["start_frame"],r.get("start_frame",r.get("start",0)))
+                end=min(region["end_frame"],r.get("end_frame",r.get("end",0)))
+                if end>start:
+                    envelope.append({"start_frame":start,"end_frame":end,"db":-abs(duck.get("amount_db",0))})
+        return {"music_gain_db":prof["music_gain_db"],"speech_gain_db":prof["speech_gain_db"],
+                "duck_envelope":envelope,"duck_fps":duck.get("fps",30),"sample_rate":prof["sample_rate"],
+                "channels":prof["channels"],"loudness_target":prof["loudness_target"],"clip_policy":prof["clip_policy"]}
 
     def assert_unchanged_identical(self, profile_a, profile_b,
                                    unchanged_regions):

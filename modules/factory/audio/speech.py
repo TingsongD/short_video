@@ -5,6 +5,10 @@ approved-speech hash that lip-sync work binds to.
 import hashlib
 import json
 import re
+import subprocess
+import tempfile
+from pathlib import Path
+from .fit import fit_plan
 
 from ...script.voicetext import clean
 from ..domain.errors import ContractError
@@ -71,7 +75,7 @@ class SpeechService:
         row = self.db.uow().records.get("speechsegment", segment_id)
         return json.loads(row["body"]) if row else None
 
-    def cache_lookup(self, cache_key, statuses=("fitted", "approved")):
+    def cache_lookup(self, cache_key, statuses=("voiced", "fitted", "approved")):
         """Reuse voiced/fitted segments across variants by identity."""
         for row in self.db.conn.execute(
                 "SELECT body FROM records WHERE kind='speechsegment'"
@@ -90,11 +94,14 @@ class SpeechService:
         hit = self.cache_lookup(seg["cache_key"])
         if hit is None or hit["id"] == segment_id:
             return None
-        self._set(segment_id, status=hit["status"],
-                  artifact_id=hit["artifact_id"],
-                  audio_sha256=hit["audio_sha256"],
-                  duration_s=hit["duration_s"],
-                  speech_hash=hit.get("speech_hash", ""))
+        raw = hit.get("raw_artifact_id") or hit["artifact_id"]
+        row = self.db.uow().artifacts.get(raw)
+        self._set(segment_id, status="voiced", artifact_id=raw,
+                  audio_sha256=row["sha256"], raw_artifact_id=raw,
+                  raw_audio_sha256=row["sha256"],
+                  duration_s=hit.get("raw_duration_s", hit["duration_s"]),
+                  raw_duration_s=hit.get("raw_duration_s", hit["duration_s"]),
+                  raw_alignment=hit.get("raw_alignment"), fit={}, speech_hash="")
         with self.db.uow() as u:
             u.events.append(f"speech:{segment_id}", "cache_reuse",
                             {"reused_from": hit["id"],
@@ -141,7 +148,8 @@ class SpeechService:
             requested_kind="audio")
         duration = (art.probe or {}).get("duration_s")
         self._set(segment_id, status="voiced", artifact_id=art.id,
-                  audio_sha256=art.sha256, duration_s=duration, raw_alignment=dl.get("alignment"))
+                  audio_sha256=art.sha256, duration_s=duration, raw_alignment=dl.get("alignment"),
+                  raw_artifact_id=art.id, raw_audio_sha256=art.sha256, raw_duration_s=duration)
         return {"status": "voiced", "artifact_id": art.id,
                 "audio_sha256": art.sha256, "duration_s": duration}
 
@@ -155,6 +163,47 @@ class SpeechService:
             return self.collect(segment_id, rec["operation_id"])
         return {"status": rec.get("status", "unknown")}
 
+    def fit(self, segment_id, fps=30, trim_s=0.0, words=None):
+        """Render and measure a duration-specific waveform. Raw synthesis stays reusable."""
+        seg = self._require(segment_id)
+        raw = seg.get("raw_artifact_id") or seg.get("artifact_id")
+        if not raw:
+            raise ContractError("no_waveform", "segment_id")
+        target = seg["target"]
+        target_s = (target.get("end_frame", target.get("end")) -
+                    target.get("start_frame", target.get("start", 0))) / fps
+        raw_duration = seg.get("raw_duration_s", seg["duration_s"])
+        fit = fit_plan(raw_duration, target_s, trim_s)
+        if not fit["fits"]:
+            raise ContractError("copy_revision_required", "fit", fit["reason"])
+        if trim_s:
+            if not words or min(w["start_s"] for w in words) < trim_s or max(w["end_s"] for w in words) > raw_duration-trim_s:
+                raise ContractError("trim_would_remove_words", "fit")
+        source = self.artifacts.path_for(raw)
+        with tempfile.TemporaryDirectory(prefix="factory-fit-") as td:
+            dest = Path(td) / "fitted.wav"
+            filt = (f"atrim=start={trim_s}:end={raw_duration-trim_s},asetpts=PTS-STARTPTS,"
+                    f"atempo={fit['rate']},aresample=48000,apad,atrim=end_sample={round(target_s*48000)}")
+            r = subprocess.run(["ffmpeg","-v","error","-y","-i",str(source),"-af",filt,
+                                "-ac","1","-c:a","pcm_s16le",str(dest)],capture_output=True,timeout=120)
+            if r.returncode:
+                raise ContractError("speech_fit_failed", "audio")
+            data = dest.read_bytes()
+        from . import pcm
+        rate, samples = pcm.read_wav(data)
+        if len(samples) != round(target_s*rate):
+            raise ContractError("fitted_duration_mismatch", "audio")
+        identity = content_hash({"raw_sha256":seg.get("raw_audio_sha256",seg["audio_sha256"]),
+                                 "target":target, "fps":fps, "fit":fit, "version":"pcm-fit.v1"})
+        art = self.artifacts.intake_bytes(data, provenance="generated_other", source_key=f"fit:{identity}",
+                                         source_detail="measured speech fit", requested_kind="audio")
+        speech_hash = content_hash({"audio":art.sha256,"fit":fit,"target":target,"text":seg["text"],"voice":seg["voice"]})
+        self._set(segment_id, status="fitted", raw_artifact_id=raw,
+                  raw_audio_sha256=seg.get("raw_audio_sha256",seg["audio_sha256"]),raw_duration_s=raw_duration,
+                  artifact_id=art.id,audio_sha256=art.sha256,duration_s=len(samples)/rate,
+                  fit=fit,fit_cache_key=identity,speech_hash=speech_hash)
+        return self.get(segment_id)
+
     # ------------------------------------------------------- approval
 
     def approve(self, segment_id, speech_hash, reviewer=""):
@@ -164,6 +213,10 @@ class SpeechService:
             raise ContractError("revision_mismatch", "speech_hash")
         if seg["status"] != "fitted":
             raise ContractError("not_fitted", "status", seg["status"])
+        if not reviewer.strip() or not seg.get("speech_hash") or speech_hash != seg["speech_hash"]:
+            raise ContractError("review_required", "speech_hash")
+        if hashlib.sha256(self.artifacts.path_for(seg["artifact_id"]).read_bytes()).hexdigest()!=seg["audio_sha256"]:
+            raise ContractError("waveform_hash_mismatch", "artifact_id")
         self._set(segment_id, status="approved",
                   speech_hash=speech_hash)
         with self.db.uow() as u:

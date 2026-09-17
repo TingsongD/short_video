@@ -5,17 +5,9 @@ cheapest renderer that supports its whole effect set. Unsupported
 effects are named, never silently dropped.
 """
 
-RENDERERS = {
-    "ffmpeg_fast": {
-        "effects": {"cut", "crossfade", "static_image", "text_overlay",
-                    "audio_bed"},
-        "animated_overlay": False},
-    "hypit": {
-        "effects": {"cut", "crossfade", "static_image", "text_overlay",
-                    "audio_bed", "animated_overlay", "motion_track",
-                    "lip_sync"},
-        "animated_overlay": True},
-}
+from ..composition.compiler import RENDERER_EFFECTS
+RENDERERS = {name: {"effects":effects,"animated_overlay":False} for name,effects in RENDERER_EFFECTS.items()}
+
 
 
 def capability_report(slots):

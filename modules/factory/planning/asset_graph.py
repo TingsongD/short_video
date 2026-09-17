@@ -24,6 +24,8 @@ def expand_take(duration_s, supported, handle_s=0.0):
     Never stretches or under-covers silently: a take over the max
     supported duration splits into supported chunks with declared
     boundaries; an unrepresentable remainder needs manual coverage."""
+    if duration_s <= 0 or handle_s < 0:
+        return {"status": "needs_manual", "reason": "invalid_duration", "allocations": []}
     need = duration_s + handle_s
     supported = sorted((d for d in supported if d > 0), reverse=True)
     if not supported:
@@ -41,18 +43,12 @@ def expand_take(duration_s, supported, handle_s=0.0):
     # split greedily into largest supported chunks
     allocs, remaining, off = [], need, 0.0
     while remaining > 0:
-        chunk = max(d for d in supported if d <= remaining) \
-            if any(d <= remaining for d in supported) else None
-        if chunk is None:
-            return {"status": "needs_manual",
-                    "reason": f"remainder_{remaining}s_unsupported",
-                    "allocations": allocs,
-                    "remainder_s": remaining}
+        chunk = min((d for d in supported if d >= remaining), default=max(supported))
         allocs.append({"duration_s": chunk, "offset_s": off,
                        "split": True, "covers_s": min(chunk, remaining),
-                       "over_s": 0.0})
+                       "over_s": round(max(0, chunk - remaining), 6)})
         off += chunk
-        remaining = round(remaining - chunk, 6)
+        remaining = max(0, round(remaining - chunk, 6))
     return {"status": "ok", "allocations": allocs,
             "split_reason": f"{duration_s}s exceeds max supported "
                             f"{supported[0]}s — declared split"}
@@ -67,7 +63,9 @@ def build_graph(plan_id, takes, provider, model, durations):
     stats = {"takes": len(takes), "unique_pictures": 0,
              "shared_pictures": 0, "splits": 0, "manual_needed": 0}
     for t in takes:
-        key = canonical_request_key(t["request"])
+        key = canonical_request_key({"request": t["request"], "provider": provider,
+                                     "model": model, "duration_s": t["duration_s"],
+                                     "handle_s": t.get("handle_s", 0)})
         pkey = f"pic:{key}"
         if pkey not in nodes:
             fit = expand_take(t["duration_s"], durations,
@@ -89,7 +87,7 @@ def build_graph(plan_id, takes, provider, model, durations):
             by_req[key] = pkey
         n = nodes[pkey]
         n["takes"].append({"variant": t["variant"], "slot": t["slot"],
-                           "duration_s": t["duration_s"]})
+                           "duration_s": t["duration_s"], "handle_s": t.get("handle_s", 0)})
         n["consumers"].add(t["variant"])
     for n in nodes.values():
         n["consumers"] = sorted(n["consumers"])

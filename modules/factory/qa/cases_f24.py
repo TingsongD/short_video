@@ -8,7 +8,7 @@ from ..quality import QualityService, RegionGate, TechnicalQC
 from ..rendering import FastPathRenderer, captions_ass
 from ..reviews import ReviewPack, required_evidence
 from ..store import Database
-from ..testing.fixtures import _color_mp4
+from ..testing.fixtures import _color_mp4, _moving_mp4
 
 NOW = "2026-09-17T00:00:00Z"
 CLOCK = {"fps": 30, "width": 360, "height": 640}
@@ -23,7 +23,7 @@ def _stack(ctx, name):
 
 def _clip(ctx, name, seconds=1.0, color="0x3366cc", rate=30):
     p = ctx.run_dir / f"{name}.mp4"
-    _color_mp4(p, seconds, rate=rate, color=color, size="360x640")
+    (_color_mp4 if color == "0x000000" else _moving_mp4)(p, seconds, rate=rate, color=color, size="360x640")
     return p
 
 
@@ -153,8 +153,11 @@ def f24_m04(ctx: CaseContext):
     final = _render(ctx, "m04", [(_clip(ctx, "a", 1.0), 30),
                                  (_clip(ctx, "b", 1.0), 30)])
     qc.inspect("chk-1", final, {**EXPECTED, "frames": 60})
-    ctx.check("accepts_fresh",
-              qc.accept(final, ["chk-1"])["accepted"])
+    try:
+        qc.accept(final,["chk-1"])
+        ctx.check("incomplete_reviews_block",False)
+    except ContractError:
+        ctx.check("incomplete_reviews_block",True)
     final.write_bytes(final.read_bytes() + b"repair")
     marked = qc.invalidate_stale(final, ["chk-1"])
     ctx.check("stale_marked", marked == ["chk-1"])
@@ -167,11 +170,10 @@ def f24_m04(ctx: CaseContext):
     # re-inspect the altered bytes → new review bound to new hash
     out = qc.inspect("chk-2", final, {**EXPECTED, "frames": 60})
     ctx.check("new_hash_bound",
-              out["target_hash"] != "" and
-              qc.accept(final, ["chk-2"])["accepted"])
+              out["target_hash"] != "" and out["target_hash"] != qc._get("chk-1")["target_hash"])
     return _result(ctx, "passed",
                    "altered bytes invalidated the old review; new "
-                   "inspection binds the new hash and accepts")
+                   "inspection binds the new hash; creative acceptance is still required")
 
 
 def implementations():

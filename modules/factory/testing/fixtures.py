@@ -36,6 +36,18 @@ def _color_mp4(path, duration, size="360x640", rate=24, color="0x3366cc",
     _ffmpeg(args)
 
 
+def _moving_mp4(path, duration, size="360x640", rate=30, color="0x3366cc", audio=True):
+    """Moving bar over color makes freezes distinguishable from intentional stills."""
+    src=f"color=c={color}:s={size}:r={rate}:d={duration},drawgrid=w=40:h=40:t=2:c=white,scroll=horizontal=0.02"
+    args=["-f","lavfi","-i",src]
+    if audio:
+        args += ["-f","lavfi","-i",f"sine=frequency=440:duration={duration}"]
+    args += ["-c:v","libx264","-pix_fmt","yuv420p"]
+    if audio:
+        args += ["-c:a","aac","-shortest"]
+    _ffmpeg(args+[str(path)])
+
+
 def _png(path, size="360x640", color="0xcc3366"):
     # Force the PNG encoder+image2 muxer even when `path` ends in .mp4 —
     # reference-defects relies on PNG bytes under a video name.

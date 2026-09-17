@@ -12,7 +12,7 @@ from modules.factory.quality import (QualityService, RegionGate,
 from modules.factory.rendering import FastPathRenderer
 from modules.factory.reviews import ReviewPack, required_evidence
 from modules.factory.store import Database
-from modules.factory.testing.fixtures import _color_mp4
+from modules.factory.testing.fixtures import _color_mp4, _moving_mp4
 
 NOW = "2026-09-17T00:00:00Z"
 CLOCK = {"fps": 30, "width": 360, "height": 640}
@@ -30,7 +30,7 @@ def stack(tmp_path):
 
 def _clip(tmp, name, seconds=1.0, rate=30, color="0x3366cc"):
     p = tmp / f"{name}.mp4"
-    _color_mp4(p, seconds, rate=rate, color=color, size="360x640")
+    (_color_mp4 if color == "0x000000" else _moving_mp4)(p, seconds, rate=rate, color=color, size="360x640")
     return p
 
 
@@ -83,8 +83,8 @@ def test_technical_corrupt(stack):
 
 def test_region_gate_intermediates(stack):
     db, qc, tmp = stack
-    same = {"0-30": "aa", "30-60": "bb"}
-    diff = {"0-30": "aa", "30-60": "cc"}        # undeclared change
+    same = {"0-30": "a"*64, "30-60": "b"*64}
+    diff = {"0-30": "a"*64, "30-60": "c"*64}        # undeclared change
     out = qc.gate.compare_intermediates(
         same, diff, [{"start_frame": 0, "end_frame": 30},
                      {"start_frame": 30, "end_frame": 60}])
@@ -132,12 +132,31 @@ def test_audio_region_leak(stack):
 
 
 def test_acceptance_hash_bound(stack):
-    db, qc, tmp = stack
-    final = _render(tmp, "acc", [(_clip(tmp, "a", 1.0), 30),
-                                 (_clip(tmp, "b", 1.0), 30)])
-    qc.inspect("chk-1", final, EXPECTED)
-    out = qc.accept(final, ["chk-1"])
-    assert out["accepted"]
+    # Go through public planning, compilation, rendering, collection and review.
+    from modules.factory.production import ProductionService
+    from modules.factory.composition import CompositionService
+    from modules.factory.rendering import RenderService
+    db,qc,tmp=stack
+    arts=ArtifactStore(tmp/"arts",db)
+    source=arts.intake_file(_clip(tmp,"source",2),provenance="manual",source_key="source",requested_kind="video")
+    plan=ProductionService(db).plan("plan","exp",1,[{"variant":"A","slot":"main","duration_s":2,"request":{}}],
+                                   "manual","import",[2],now=NOW)["plan"]
+    segments=[{"id":"s1","kind":"picture","artifact_id":source.id,"sha256":source.sha256,
+               "in_frame":0,"out_frame":60,"source_in_s":0,"source_out_s":2}]
+    comp=CompositionService(db,arts,tmp/"comps").compile("comp","exp","A","plan",segments,[],CLOCK,
+                           renderer="ffmpeg_fast",plan_hash=plan["plan_hash"],now=NOW)["composition"]
+    render=RenderService(db,arts,tmp/"builds"); render.register("build",comp,now=NOW)
+    out=render.dispatch("build",[{"src":str(arts.path_for(source.id)),"frames":60}],[],[],CLOCK)
+    final=out["path"]; art=render.collect("build")
+    binding=qc.binding(final,"comp",art["artifact_id"])
+    tech=qc.inspect("tech",final,EXPECTED,binding=binding)
+    with pytest.raises(ContractError,match="missing_required_review:creative"):
+        qc.accept(final,["tech"],binding=binding)
+    qc.record_verdict("creative",tech["target_hash"],"creative","pass",binding=binding,reviewer="fixture operator")
+    assert qc.accept(final,["tech","creative"],binding=binding)["accepted"]
+    stale={**binding,"plan_hash":"stale"}
+    with pytest.raises(ContractError,match="stale_composition_binding"):
+        qc.accept(final,["tech","creative"],binding=stale)
 
 
 def test_stale_review_rejected(stack):

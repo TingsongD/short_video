@@ -24,7 +24,7 @@ LOCAL_CAPABILITY_PREFIXES = (
     "@hypit/film@1", "@hypit/media-track@1",
     "@hypit/typography-track@1", "@hypit/timeline-author@1",
     "@hypit/spatial@1", "@hypit/media@1", "@hypit/run-markup@1",
-    "@hypit/svs@1")
+    "@hypit/svs@1", "@hypit/audio-track@1")
 
 
 def audit_imports(svml_text):

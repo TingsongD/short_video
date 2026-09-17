@@ -8,6 +8,7 @@ traceable new revision. Compile errors never touch providers.
 """
 import hashlib
 import json
+import re
 from pathlib import Path
 
 from modules.assemble.hypit_markup import escape_markup_text
@@ -19,17 +20,28 @@ ALLOWED_IMPORTS = {
     "@hypit/media-pipeline@1", "@hypit/media-track@1",
     "@hypit/typography-track@1", "@hypit/film@1",
     "@hypit/render-hyperframes@1", "@hypit/run-markup@1",
-    "@hypit/svs@1", "./style.svs"}
+    "@hypit/svs@1", "@hypit/audio-track@1", "./style.svs"}
 
 # declared renderer capabilities — effects a renderer can express
 RENDERER_EFFECTS = {
-    "hypit": {"cut", "crossfade", "kenburns", "inset", "title",
-              "caption"},
-    "ffmpeg_fast": {"cut", "crossfade", "caption"}}
+    "hypit": {"cut", "crossfade", "kenburns", "caption", "static_image", "text_overlay", "audio_bed"},
+    "ffmpeg_fast": {"cut", "caption", "static_image", "text_overlay", "audio_bed"}}
+
 
 
 def _sec(frames, fps):
     return f"{frames / fps:.3f}s"
+
+
+def _asset_ext(art):
+    probe=json.loads(art["probe"] or "{}")
+    fmt=probe.get("format_name", "")
+    if art["kind"]=="video":
+        return "mp4" if "mp4" in fmt else "webm" if "webm" in fmt else "mkv"
+    if art["kind"]=="audio":
+        return "wav" if "wav" in fmt else "mp3" if "mp3" in fmt else "m4a" if "mp4" in fmt else "flac"
+    codec=next((x.get("codec_name") for x in probe.get("streams",[]) if x.get("codec_type")=="video"),"")
+    return {"png":"png","mjpeg":"jpg","webp":"webp"}.get(codec,"png")
 
 
 class CompositionService:
@@ -49,19 +61,28 @@ class CompositionService:
         captions: [{id,text,start_frame,end_frame,placement}]
         → {"composition": dict, "diagnostics": [...]} — diagnostics
         non-empty ⇒ status failed and NO files are emitted."""
+        clock=dict(clock)
+        if captions:
+            fonts=[clock.get("font_path",""), "/System/Library/Fonts/Supplemental/Arial.ttf",
+                   "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"]
+            font=next((Path(f) for f in fonts if f and Path(f).is_file()),None)
+            if font is None:
+                raise ContractError("caption_font_required","font_path")
+            clock["font_sha256"]=hashlib.sha256(font.read_bytes()).hexdigest()
         fps = clock["fps"]
         diags = self._diagnose(segments, captions, clock, renderer)
         if diags:
             comp = self._persist(comp_id, experiment_id, variant_key,
                                  plan_id, clock, renderer, "failed",
-                                 [], {}, plan_hash, diags, now)
+                                 [], {}, plan_hash, diags, now,
+                                 revision=(self._latest(experiment_id,variant_key) or {}).get("revision",0)+1)
             return {"composition": comp, "diagnostics": diags}
         total_frames = max(
             [s["out_frame"] for s in segments]
             + [c["end_frame"] for c in captions] + [0])
         svml, bindings = self._emit_svml(segments, captions, clock,
                                        total_frames)
-        svs = self._emit_svs()
+        svs = self._emit_svs(segments, fps)
         svrun = ('<?svml using="@hypit/run-markup@1"?>\n'
                  '<svrun version="1">\n'
                  '  <author source="./video.svml"/>\n'
@@ -100,9 +121,11 @@ class CompositionService:
         # materialize bound assets — sources are relative to the svml
         assets_dir = out_dir / "assets"
         assets_dir.mkdir(exist_ok=True)
+        if captions:
+            (assets_dir / "caption.ttf").write_bytes(font.read_bytes())
         for s in segments:
             src = self.artifacts.path_for(s["artifact_id"])
-            ext = "wav" if s["kind"] == "audio" else "mp4"
+            ext = _asset_ext(self.db.uow().artifacts.get(s["artifact_id"]))
             dst = assets_dir / f"{s['id']}.{ext}"
             dst.write_bytes(Path(src).read_bytes())
         comp = self._persist(comp_id, experiment_id, variant_key,
@@ -123,9 +146,13 @@ class CompositionService:
     def _diagnose(self, segments, captions, clock, renderer):
         """Readable compile diagnostics with exact locations."""
         diags = []
+        if not segments or clock.get("fps",0) <= 0 or renderer not in RENDERER_EFFECTS:
+            return [{"code":"invalid_composition","at":"clock/segments","detail":"missing or unsupported"}]
         allowed = RENDERER_EFFECTS.get(renderer, set())
         for s in segments:
             loc = f"segment[{s['id']}]"
+            if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*",s["id"]):
+                diags.append({"code":"invalid_binding_id","at":loc,"detail":s["id"]})
             art = self.db.uow().artifacts.get(s["artifact_id"]) \
                 if s.get("artifact_id") else None
             if art is None:
@@ -137,14 +164,23 @@ class CompositionService:
                               "detail": f"bound sha {s['sha256'][:12]}"
                                         f" != artifact "
                                         f"{art['sha256'][:12]}"})
-            need = s.get("source_out_s", 0) - s.get("source_in_s", 0)
             probe = json.loads(art["probe"] or "{}")
             have = probe.get("duration_s")
-            if have is not None and need > have + 1e-6:
-                diags.append({"code": "insufficient_duration",
-                              "at": loc,
-                              "detail": f"needs {need:.3f}s of "
-                                        f"{have:.3f}s"})
+            start,end=s.get("source_in_s",0),s.get("source_out_s",0)
+            need=(s["out_frame"]-s["in_frame"])/clock["fps"]
+            transition=s.get("transition_out","crossfade" if "crossfade" in s.get("effects",[]) else "cut")
+            if transition=="crossfade":
+                if s.get("transition_frames",0)<=0:
+                    diags.append({"code":"missing_transition_handles","at":loc,"detail":"explicit transition_frames required"})
+                need+=s.get("transition_frames",0)/clock["fps"]
+            if transition not in ("cut","none","") and transition not in allowed:
+                diags.append({"code":"unsupported_effect","at":loc,"detail":transition})
+            if s["in_frame"] < 0 or s["out_frame"] <= s["in_frame"] or start<0:
+                diags.append({"code":"bad_interval","at":loc,"detail":"invalid source or target"})
+            if art["kind"] != "image" and (have is None or end>have+1e-6 or end-start+1e-6<need):
+                diags.append({"code":"insufficient_duration","at":loc,"detail":f"source {start}-{end}, available {have}, need {need}"})
+            if s["kind"]=="picture" and art["kind"] not in ("video","image") or s["kind"]=="audio" and art["kind"]!="audio":
+                diags.append({"code":"media_type_mismatch","at":loc,"detail":art["kind"]})
             for eff in s.get("effects", []):
                 if eff not in allowed:
                     diags.append({"code": "unsupported_effect",
@@ -152,15 +188,22 @@ class CompositionService:
                                   f"{eff} not in {renderer} manifest"})
         pics = sorted((s for s in segments if s["kind"] == "picture"),
                       key=lambda s: s["in_frame"])
-        for a, b in zip(pics, pics[1:]):
-            if b["in_frame"] < a["out_frame"]:
-                diags.append({"code": "overlap", "at":
-                              f"segment[{b['id']}]",
-                              "detail": f"starts {b['in_frame']} before"
-                                        f" {a['id']} ends "
-                                        f"{a['out_frame']}"})
+        cursor=0
+        for pic in pics:
+            if pic["in_frame"] != cursor:
+                diags.append({"code":"picture_coverage_gap_or_overlap","at":f"segment[{pic['id']}]","detail":str(cursor)})
+            cursor=pic["out_frame"]
+        if not pics or cursor!=clock.get("total_frames",cursor):
+            diags.append({"code":"picture_coverage_incomplete","at":"timeline","detail":str(cursor)})
+        if pics and (pics[-1].get("transition_out")=="crossfade" or "crossfade" in pics[-1].get("effects",[])):
+            diags.append({"code":"transition_without_successor","at":"timeline","detail":"last segment"})
+        for audio in (x for x in segments if x["kind"]=="audio"):
+            if audio["out_frame"]>cursor:
+                diags.append({"code":"audio_exceeds_timeline","at":audio["id"],"detail":""})
         for c in captions:
-            if c["end_frame"] <= c["start_frame"]:
+            if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*",c["id"]) or c.get("placement","heading") not in ("heading","full"):
+                diags.append({"code":"invalid_caption_binding","at":c["id"],"detail":""})
+            if not 0 <= c["start_frame"] < c["end_frame"] <= cursor:
                 diags.append({"code": "bad_interval", "at":
                               f"caption[{c['id']}]", "detail": ""})
         return diags
@@ -183,6 +226,7 @@ class CompositionService:
                  '  <import as="media" from="@hypit/media-track@1"/>',
                  '  <import as="typo" '
                  'from="@hypit/typography-track@1"/>',
+                 '  <import as="audio" from="@hypit/audio-track@1"/>',
                  '  <import as="film" from="@hypit/film@1"/>',
                  '  <import as="render" '
                  'from="@hypit/render-hyperframes@1"/>',
@@ -198,53 +242,46 @@ class CompositionService:
                  ' top="74%" right="93%" bottom="86%"/>', '']
         bindings = []
         # explicit asset elements, one per segment binding
-        for s in pics + auds:
-            tag = "Video" if s["kind"] == "picture" else "Audio"
-            ext = "wav" if s["kind"] == "audio" else "mp4"
-            lines.append(f'  <asset:{tag} id="src-{s["id"]}" '
-                         f'src="./assets/{s["id"]}.{ext}"/>')
-            bindings.append({"binding": f"src-{s['id']}",
-                             "role": s["kind"],
-                             "artifact_id": s["artifact_id"],
-                             "sha256": s["sha256"],
-                             "in_frame": s["in_frame"],
-                             "out_frame": s["out_frame"],
-                             "track": ("picture" if s["kind"] ==
-                                       "picture" else "audio")})
-        for s in pics:
-            lines.append(
-                f'  <pipeline:Normalize id="norm-{s["id"]}" '
-                f'source={{src-{s["id"]}}} clock={{clock}} '
-                f'video="primary-moving" audio="none" '
-                f'span-authority="video"/>')
-        lines += ['', '  <media:Track id="footage" '
-                  'timeline={program.timeline} canvas={canvas}>']
-        for s in pics:
-            effects = s.get("effects") or []
-            attrs = (f' playback="{effects[0]}"' if effects and
-                     effects[0] in ("kenburns",) else "")
-            lines.append(
-                f'    <media:Item id="{s["id"]}" '
-                f'media={{norm-{s["id"]}.media}} frame={{full}} '
-                f'appearance={{look.media.full}} '
-                f'start="{_sec(s["in_frame"], fps)}" '
-                f'end="{_sec(s["out_frame"], fps)}"'
-                f'{attrs}/>')
+        for s in pics+auds:
+            art=self.db.uow().artifacts.get(s["artifact_id"])
+            tag={"video":"Video","image":"Image","audio":"Audio"}[art["kind"]]
+            ext=_asset_ext(art)
+            lines.append(f'  <asset:{tag} id="src-{s["id"]}" src="./assets/{s["id"]}.{ext}"/>')
+            bindings.append({**s,"binding":f"src-{s['id']}","role":s["kind"],"track":s["kind"],"media_kind":art["kind"]})
+            source=f"src-{s['id']}"
+            if art["kind"]=="image":
+                duration=(s["out_frame"]-s["in_frame"]+s.get("transition_frames",0))/fps
+                lines.append(f'  <pipeline:StillVideo id="still-{s["id"]}" source={{{source}}} duration="{duration}" clock={{clock}}/>')
+                source=f"still-{s['id']}.video"
+            policy='video="primary-moving" audio="none" span-authority="video"' if s["kind"]=="picture" else 'video="none" audio="default" span-authority="audio"'
+            lines.append(f'  <pipeline:Normalize id="norm-{s["id"]}" source={{{source}}} clock={{clock}} {policy}/>')
+        lines += ['  <media:Track id="footage" timeline={program.timeline} canvas={canvas}>']
+        use_sequence=any(s.get("transition_out")=="crossfade" or "crossfade" in s.get("effects",[]) for s in pics)
+        if use_sequence:
+            lines.append(f'    <media:Sequence id="sequence" frame={{full}} appearance={{look.media.full}} until="{end_s}">')
+        for i,s in enumerate(pics):
+            if use_sequence:
+                tag="Member"; placement=f'at="{_sec(s["in_frame"],fps)}"'
+            else:
+                tag="Item"; placement=f'frame={{full}} start="{_sec(s["in_frame"],fps)}" end="{_sec(s["out_frame"],fps)}"'
+            lines.append(f'    <media:{tag} id="{s["id"]}" media={{norm-{s["id"]}.media}} appearance={{look.media.{s["id"]}}} {placement}>')
+            if "kenburns" in s.get("effects",[]):
+                lines += ['      <media:Sampling at="start" zoom="1"/>','      <media:Sampling at="end" zoom="1.1"/>']
+            lines.append(f'    </media:{tag}>')
+        if use_sequence:
+            for s in pics[:-1]:
+                lines.append(f'    <media:Handoff id="transition-{s["id"]}" from="{s["id"]}" transition={{look.transition.{s["id"]}}}/>')
+            lines.append('    </media:Sequence>')
         lines.append('  </media:Track>')
         if auds:
-            lines += ['', '  <media:Track id="sound" '
-                      'timeline={program.timeline} canvas={canvas}>']
+            lines.append('  <audio:Track id="sound" timeline={program.timeline}>')
             for s in auds:
-                lines.append(
-                    f'    <media:Item id="{s["id"]}" '
-                    f'media={{src-{s["id"]}.media}} frame={{full}} '
-                    f'appearance={{look.media.full}} '
-                    f'start="{_sec(s["in_frame"], fps)}" '
-                    f'end="{_sec(s["out_frame"], fps)}" '
-                    f'source-audio="content"/>')
-            lines.append('  </media:Track>')
+                gain=s.get("gain",10**(s.get("gain_db",0)/20))
+                lines.append(f'    <audio:Item id="{s["id"]}" source={{norm-{s["id"]}.media}} start="{_sec(s["in_frame"],fps)}" end="{_sec(s["out_frame"],fps)}" trim-start="{s.get("source_in_s",0)}s" trim-end="{s["source_out_s"]}s" gain="{gain}"/>')
+            lines.append('  </audio:Track>')
         if captions:
-            lines += ['', '  <typo:Style id="cap" '
+            lines += ['', '  <asset:Font id="caption-font" src="./assets/caption.ttf" weight="400" style="normal"/>',
+                      '  <typo:Style id="cap" font={caption-font} '
                       'recipe={look.text.caption}>',
                       '    <typo:Fill color="#ffffff"/>',
                       '  </typo:Style>',
@@ -282,7 +319,20 @@ class CompositionService:
                   'timeline={program.timeline}/>', '</svml>', '']
         return "\n".join(lines), bindings
 
-    def _emit_svs(self):
+    def _emit_svs(self, segments, fps):
+        recipes=[]
+        pics=[s for s in segments if s["kind"]=="picture"]
+        for s in pics:
+            start=round(s.get("source_in_s",0)*fps)
+            end=round(s.get("source_out_s",0)*fps)
+            art=self.db.uow().artifacts.get(s["artifact_id"])
+            if art["kind"]=="image":
+                start=0; end=s["out_frame"]-s["in_frame"]+s.get("transition_frames",0)
+            recipes.append(f'  media.{s["id"]} {{ stack-order: 0; fit: cover; trim-start: {start}; trim-end: {end}; }}')
+            transition=s.get("transition_out","crossfade" if "crossfade" in s.get("effects",[]) else "cut")
+            transition="cut" if transition in ("none","") else transition
+            frames=s.get("transition_frames",0) if transition!="cut" else 0
+            recipes.append(f'  transition.{s["id"]} {{ operator: {transition}; duration-frames: {frames}; boundary-ratio: 0; audio: cut; }}')
         return ('<?svml using="@hypit/svs@1"?>\n'
                 '<sheet version="1">\n'
                 '  film.main { background: #000000; }\n'
@@ -290,7 +340,7 @@ class CompositionService:
                 '  text.caption { size: 64; weight: 600; '
                 'line-height: 1.2; align: start; '
                 'block-align: center; stack-order: 20; }\n'
-                '</sheet>\n')
+                + "\n".join(recipes) + '\n</sheet>\n')
 
     # -------------------------------------------------------- persist
 
@@ -320,13 +370,12 @@ class CompositionService:
         return comp.to_dict()
 
     def _latest(self, experiment_id, variant_key):
-        """Latest SUCCESSFUL revision — failed compiles persist for
-        audit but never consume a revision number."""
+        """Latest immutable attempt, including a failed compile."""
         rows = self.db.conn.execute(
             "SELECT body FROM records WHERE kind='composition' AND "
             "json_extract(body,'$.experiment_id')=? AND "
             "json_extract(body,'$.variant_key')=? AND "
-            "json_extract(body,'$.status')!='failed' ORDER BY "
+            "1=1 ORDER BY "
             "json_extract(body,'$.revision') DESC LIMIT 1",
             (experiment_id, variant_key)).fetchall()
         return json.loads(rows[0]["body"]) if rows else None

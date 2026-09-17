@@ -12,7 +12,7 @@ All checks use offline providers; no new live spend or publication scope exists.
 | S1 state/restore | passed | 863 tests pass (117.24s); atomic v7→v8 migration fault/retry; restored media/ledger checks; normal CLI shares restored database |
 | S2 effects/budgets | shared-boundary checkpoint passed; adapter/application qualification remains S3/S5 | 875 tests pass (119.62s); 10 effect regressions; scoped atomic reservations/attempts/outbox/capacity; API uncertain retries blocked; per-experiment pause and collection; native provider enforcement verified with adapters in S3 |
 | S3 adapters | passed (offline protocol checkpoint) | 886 tests pass (119.31s); 11 protocol regressions; installed Canvas schema; validated Shopify queries; real isolated Hypit 30-frame export and owned runtime cleanup. See REPAIR-S3-EVIDENCE.json. |
-| S4 media/QC | planned | |
+| S4 media/QC | passed (offline checkpoint) | 903 tests pass (125.61s); 16 media regressions, collected-coverage regression, real 48-frame Hypit timing fixture, actual speech fitting and full interval comparisons. See REPAIR-S4-EVIDENCE.json. |
 | S5 application | planned | |
 | S6 research | planned | |
 | S7 publishing/learning | planned | |
@@ -39,15 +39,15 @@ separate from engineering repairs; historical tests do not sign either gate.
 | R12 | open | |
 | R13 | open | |
 | R14 | open | |
-| R15 | open | |
+| R15 | in_progress | Technical and explicit creative acceptance require current plan/composition/final bindings; default production selector blocks. Application delivery ownership is S5. |
 | R16 | fixed (offline) | Native Drive full-name listing, complete-list detection, descriptive upload copy, exact byte size and MD5/parent parsing. Live delivery remains separately qualified. |
 | R17 | in_progress | Repeated delivery reconciles, expected size is persisted, and uncertain upload never repeats automatically; artifact acceptance and native Drive qualification pending S3/S5. |
-| R18 | open | |
-| R19 | open | |
-| R20 | open | |
-| R21 | open | |
-| R22 | open | |
-| R23 | open | |
+| R18 | fixed (offline) | Shared identity includes provider/model/duration/handles; supported remainders trim explicitly; plan hash includes allocations/quotes. Collected and manual coverage are measured before acceptance. |
+| R19 | fixed (offline) | Source and target offsets, gaps, stills, captions, audio gains/offsets, clocks and full cache identities are enforced. Native Hypit 48-frame fixture verifies crossfade, still, source offset, captions and delayed sound. Unsupported effects return diagnostics. |
+| R20 | fixed (offline) | Real fitted waveform is measured; alignment divides by rate; raw synthesis is separate from fitted cache/approval. New target reuses raw audio and needs its own fit/review. |
+| R21 | fixed (offline) | Decode/resample, fixed sample count, float accumulation, ducking, measured RMS target/headroom and bounded music-loop overlap; regression checks waveform ratios and timing. |
+| R22 | fixed (offline) | Real freeze-to-EOF, frame rate/duration, audio/narration coverage and detector failures checked; moving clean fixtures distinguish intended stills from accidental freezes. |
+| R23 | fixed (offline) | Missing hashes/audio/coverage block; every unchanged video frame is compared and audio evidence is combined; change away from midpoint regression passes. Integrated treatment-region binding remains in S5 application qualification. |
 | R24 | open | |
 | R25 | in_progress | Restore hold now enforced before reservation and dispatch; operator activation and full restore journey remain S5/S8. |
 | R26 | open | |

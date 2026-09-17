@@ -59,7 +59,7 @@ def stack(tmp_path):
     arts = ArtifactStore(tmp_path / "arts", db)
     svc = ProductionService(db, scheduler=sched,
                             executor=Executor(db, provider=provider),
-                            adapter=adapter, artifacts=arts)
+                            adapter=adapter, artifacts=arts, selector=lambda n:"accept")
     return db, sched, provider, adapter, arts, svc
 
 
@@ -77,10 +77,10 @@ def test_expand_over_max_splits_declared():
     assert "declared split" in fit["split_reason"]
 
 
-def test_expand_unrepresentable_needs_manual():
-    fit = expand_take(11.0, [4, 8])   # 8 + remainder 3 unsupported
-    assert fit["status"] == "needs_manual"
-    assert "remainder_3.0s_unsupported" in fit["reason"]
+def test_expand_remainder_is_trimmed():
+    fit = expand_take(11.0, [4,8])
+    assert fit["status"] == "ok"
+    assert fit["allocations"][-1]["over_s"] == 1
 
 
 def test_expand_smallest_covering_duration():
@@ -177,7 +177,7 @@ def test_branch_isolation(stack):
 def test_needs_manual_no_under_length_submit(stack):
     db, sched, prov, adapter, arts, svc = stack
     takes = _takes()
-    takes[0]["duration_s"] = 11.0      # 8+3 → unsupported remainder
+    takes[0]["duration_s"] = 0.0      # invalid target requires manual correction
     out = svc.plan("plan-1", "exp1", 1, takes, "jimeng_canvas",
                    "seedance_2.0_fast_vip", [4, 8], now=NOW)
     assert out["plan"]["stats"]["manual_needed"] >= 1
@@ -200,7 +200,7 @@ def test_manual_replacement_coverage(stack):
               "request": {"prompt": "long", "settings": {},
                           "refs": [], "audio": "a1"}}]
     svc.plan("plan-1", "exp1", 1, takes, "jimeng_canvas",
-             "seedance_2.0_fast_vip", [4, 8], now=NOW)
+             "seedance_2.0_fast_vip", [], now=NOW)
     node = next(k for k, n in svc._nodes("plan-1").items()
                 if n["status"] == "needs_manual")
     # too-short clip rejected
@@ -241,7 +241,7 @@ def test_resume_survives_restart(stack, tmp_path):
     svc2 = ProductionService(db, scheduler=Scheduler(db, worker_id="w2",
                                                      lease_s=300),
                              executor=Executor(db, provider=prov),
-                             adapter=adapter, artifacts=arts)
+                             adapter=adapter, artifacts=arts, selector=lambda n:"accept")
     st = svc2.resume("plan-1")["readiness"]
     assert st["done"] == done_before
     _run_all(svc2)
@@ -261,3 +261,16 @@ def test_five_slot_concurrency(stack):
             claimed.append(j["id"])
     # jimeng_submit capacity is 5 — six+ claims stop at the pool limit
     assert len(claimed) == 5
+
+
+def test_download_rejects_generation_shorter_than_allocation(stack):
+    db,sched,prov,adapter,arts,svc=stack
+    takes=[{'variant':'a','slot':'main','duration_s':8,'request':{'prompt':'fixture'}}]
+    svc.plan('plan-short','exp1',1,takes,'jimeng_canvas','seedance_2.0_fast_vip',[4,8],now=NOW)
+    approve_production(svc,'plan-short');svc.submit('plan-short')
+    outcomes=[]
+    for _ in range(30):
+        result=svc.run_next()
+        if result: outcomes.append(result)
+    assert any(r.get('error')=='insufficient_generated_coverage' for r in outcomes)
+    assert not any(n['status']=='accepted' for n in svc._nodes('plan-short').values())

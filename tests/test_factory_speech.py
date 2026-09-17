@@ -113,9 +113,10 @@ def test_captions_map_through_fit(stack):
     _voiced(speech)
     align.align("seg-1", speech.get, now=NOW)
     seg = speech.get("seg-1")
-    fit = fit_plan(seg["duration_s"], 4.0)
+    seg = speech.fit("seg-1")
+    fit = seg["fit"]
     cs = align.captions("seg-1", speech.get, fit, FPS30,
-                        speech_hash="h", now=NOW)
+                        speech_hash=seg["speech_hash"], now=NOW)
     assert cs.cues and cs.cues[0]["start_frame"] >= 0
     assert all(c["end_frame"] <= 120 for c in cs.cues)
 
@@ -124,7 +125,7 @@ def test_cache_reuse_across_variants(stack):
     """Same text+voice in variant B reuses A's voiced segment."""
     _, _, _, _, speech, _ = stack
     _voiced(speech, seg_id="seg-a", variant="A")
-    speech._set("seg-a", status="fitted")
+    speech.fit("seg-a")
     seg_b = speech.plan_segment("seg-b", "B",
                                 "Stop scrolling, this is it.", VOICE,
                                 IV, now=NOW)
@@ -133,8 +134,8 @@ def test_cache_reuse_across_variants(stack):
     reused = speech.reuse_from_cache("seg-b")
     assert reused["id"] == "seg-a"
     b = speech.get("seg-b")
-    assert b["audio_sha256"] == hit["audio_sha256"] and \
-        b["status"] == "fitted"
+    assert b["audio_sha256"] == hit["raw_audio_sha256"] and \
+        b["status"] == "voiced"
     changed = speech.plan_segment("seg-b2", "B", "Different hook.",
                                   VOICE, IV, now=NOW)
     assert speech.cache_lookup(changed.cache_key) is None
@@ -175,8 +176,8 @@ def test_approve_pins_speech_hash(stack):
     _voiced(speech)
     with pytest.raises(ContractError, match="not_fitted"):
         speech.approve("seg-1", "h2")     # voiced isn't fitted
-    speech._set("seg-1", status="fitted")
-    out = speech.approve("seg-1", "sph-1", reviewer="devin")
-    assert out["status"] == "approved" and out["speech_hash"] == "sph-1"
+    fitted = speech.fit("seg-1")
+    out = speech.approve("seg-1", fitted["speech_hash"], reviewer="devin")
+    assert out["status"] == "approved" and out["speech_hash"] == fitted["speech_hash"]
     with pytest.raises(ContractError, match="revision_mismatch"):
         speech.approve("seg-1", "different")

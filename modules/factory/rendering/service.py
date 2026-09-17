@@ -47,10 +47,15 @@ class RenderService:
         b = self._build(build_id)
         ws = Path(b["workspace"])
         ws.mkdir(parents=True, exist_ok=True)
-        inputs_hash = content_hash(
-            inputs or {"segments": [s.get("src", "") for s in segments],
-                       "captions": [c.get("text", "") for c in captions],
-                       "clock": clock})
+        def bound_media(items):
+            return [{**item,"sha256":hashlib.sha256(Path(item["src"]).read_bytes()).hexdigest()} for item in items]
+        inputs_hash = content_hash({"segments":bound_media(segments), "audio":bound_media(audio),
+                                   "captions":captions,"clock":clock,"extra":inputs,
+                                   "composition":b["composition_hash"],"renderer":b["renderer"],"version":"render.v2"})
+        if b.get("inputs_hash") and b["inputs_hash"] != inputs_hash:
+            raise ContractError("render_input_revision_mismatch", "build_id")
+        if b["status"] in ("succeeded","collected"):
+            return {"status":b["status"],"path":str(ws/"final.mp4"),"sha256":b["output_sha256"]}
         self._set(build_id, status="running", inputs_hash=inputs_hash)
         if b["renderer"] == "ffmpeg_fast":
             try:

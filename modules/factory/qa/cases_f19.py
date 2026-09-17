@@ -73,9 +73,10 @@ def f19_m01(ctx: CaseContext):
         align.align(seg_id, speech.get, now=NOW)
         seg = speech.get(seg_id)
         target_s = (b - a) / 30.0
-        fit = fit_plan(seg["duration_s"], target_s)
+        fitted=speech.fit(seg_id)
+        fit=fitted["fit"]
         total_ok &= fit["fits"]
-        cs = align.captions(seg_id, speech.get, fit, FPS30, now=NOW)
+        cs = align.captions(seg_id, speech.get, fit, FPS30, speech_hash=fitted["speech_hash"], now=NOW)
         captions += cs.cues
     ctx.check("all_segments_fit", total_ok,
               "every segment fits its allocated frames")
@@ -136,7 +137,7 @@ def f19_m03(ctx: CaseContext):
     _, _, speech, align = _stack(ctx, "m03")
     _voice_all(speech, "A")
     for sid, _, _ in SCRIPT:               # pipeline marks fitted
-        speech._set(f"a-{sid}", status="fitted")
+        speech.fit(f"a-{sid}")
     # variant B reuses A's body/cta via cache; hook differs
     seg_ids = {}
     for sid, text, (a, b) in SCRIPT:
@@ -155,7 +156,7 @@ def f19_m03(ctx: CaseContext):
         b = speech.get(f"b-{sid}")
         ctx.check(f"{sid}_identical",
                   a["cache_key"] == b["cache_key"]
-                  and a["audio_sha256"] == b["audio_sha256"]
+                  and a["raw_audio_sha256"] == b["audio_sha256"]
                   and a["voice"] == b["voice"],
                   "same identity → same waveform reused")
     hits = [speech.cache_lookup(speech.get(f"b-{s}")["cache_key"])
@@ -164,8 +165,8 @@ def f19_m03(ctx: CaseContext):
                                  for h in hits),
               "B body/cta reuse A's voiced segments by identity")
     return _result(ctx, "passed",
-                   "only the declared hook changed; body+cta segments "
-                   "are byte-identical reuses of A's audio")
+                   "hook synthesis identity changed; body+cta reuse byte-identical raw synthesis",
+                   limitations=["B still requires its own waveform fitting and explicit review"])
 
 
 def f19_m04(ctx: CaseContext):

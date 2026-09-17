@@ -28,8 +28,8 @@ class ProductionService:
         self.adapter = adapter
         self.artifacts = artifacts
         # selector(work_node) -> "accept"|"reject"|"uncertain"; default
-        # accepts every downloaded work (fake-provider runs)
-        self.selector = selector or (lambda n: "accept")
+        # requires an explicit reviewer; no default approval
+        self.selector = selector or (lambda n: "uncertain")
         self.budget = budget
 
     # ---------------------------------------------------------- build
@@ -70,10 +70,9 @@ class ProductionService:
             if unit:
                 totals[unit] = totals.get(unit, 0) + amount
         plan.total_price = totals
-        plan.plan_hash = content_hash(
-            {k: {"kind": n["kind"], "hash": n.get("request_hash", ""),
-                 "consumers": n["consumers"], "depends": n["depends"]}
-             for k, n in g["nodes"].items()})
+        plan.plan_hash = content_hash({"experiment_id": experiment_id,
+                                       "revision": revision, "nodes": g["nodes"],
+                                       "total_price": totals})
         plan.validate_or_raise()
         with self.db.uow() as u:
             u.records.put(plan)
@@ -194,6 +193,8 @@ class ProductionService:
     def _execute(self, plan_id, node, job=None):
         kind = node["kind"]
         if kind == "picture":
+            if node["status"] in ("manual","downloaded","accepted"):
+                return "reused_validated_asset"
             if node["status"] == "needs_manual":
                 raise ContractError("needs_manual_coverage", "node",
                                     node["node_key"])
@@ -226,9 +227,11 @@ class ProductionService:
                 return "downloaded"
             artifact_ids = []
             atts = self.db.conn.execute(
-                "SELECT id FROM attempts WHERE job_id=? ORDER BY id",
+                "SELECT id FROM attempts WHERE job_id=? ORDER BY attempt_seq",
                 (f"{plan_id}:{pic_key}",)).fetchall()
-            for a in atts:
+            if len(atts) != len(pic["allocations"]):
+                raise ContractError("incomplete_submission_set", "node", pic_key)
+            for allocation,a in zip(pic["allocations"],atts):
                 op = self.executor.poll(a["id"])
                 if op.get("status") in {"failed", "cancelled"}:
                     raise ContractError("remote_terminal_failure", "attempt", a["id"])
@@ -241,6 +244,15 @@ class ProductionService:
                     source_key=f"gen:{a['id']}",
                     source_detail=f"plan:{plan_id}",
                     requested_kind="video")
+                measured=art.probe or {}
+                if (measured.get("duration_s") or 0)+1e-5 < allocation["covers_s"]:
+                    raise ContractError("insufficient_generated_coverage", "artifact", art.id)
+                settings=pic["request"].get("settings",{})
+                resolution=settings.get("resolution",pic["request"].get("resolution"))
+                if resolution in ("720p","1080p"):
+                    video=next((x for x in measured.get("streams",[]) if x.get("codec_type")=="video"),{})
+                    if min(video.get("width",0),video.get("height",0))<int(resolution[:-1]):
+                        raise ContractError("insufficient_generated_resolution", "artifact", art.id)
                 artifact_ids.append(art.id)
             # remote ops finished → the submit-slot hold releases
             with self.db.uow() as u:
@@ -322,7 +334,7 @@ class ProductionService:
             raise ContractError("bad_provenance", "provenance",
                                 row["provenance"])
         probe = json.loads(row["probe"] or "{}")
-        need = max((t["duration_s"] for t in node.get("takes", [])
+        need = max((t["duration_s"] + t.get("handle_s",0) for t in node.get("takes", [])
                     ), default=0)
         if row["kind"] != "video" or row["status"] != "registered":
             raise ContractError("invalid_manual_video", "artifact_id", artifact_id)
