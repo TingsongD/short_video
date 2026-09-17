@@ -79,7 +79,7 @@ Dependencies below define implementation prerequisites, not permission to spend.
 | [F23 — Render execution and output retrieval](viral-video-factory-implementation-modules.md#f23) | F22 | done | run | pending | docs/factory-reports/F23.md; 10 tests (real renders); M02/M03 pass, M01/M04 await review; suite 704 green |
 | [F24 — Technical, creative and changed-region QC](viral-video-factory-implementation-modules.md#f24) | F23, F14 | done | run | pending | docs/factory-reports/F24.md; 12 tests; M02–M04 pass, M01 awaits human review; suite 716 green |
 | [F25 — Verified Google Drive delivery](viral-video-factory-implementation-modules.md#f25) | F24 | done | run | pending | docs/factory-reports/F25.md; 10 tests; M01–M03 pass, M04 live gate; suite 726 green |
-| [F26 — Process ownership and resource cleanup](viral-video-factory-implementation-modules.md#f26) | F25 | planned | not_run | not_applicable | Unassigned; no evidence yet |
+| [F26 — Process ownership and resource cleanup](viral-video-factory-implementation-modules.md#f26) | F25 | done | run | pending | docs/factory-reports/F26.md; 11 tests; M01–M04 pass; suite 737 green |
 | [F27 — Application API and local security](viral-video-factory-implementation-modules.md#f27) | F08, F14, F21, F24, F25, F26 | planned | not_run | not_applicable | Unassigned; no evidence yet |
 | [F28 — Dashboard seed, planner and budget screens](viral-video-factory-implementation-modules.md#f28) | F27 | planned | not_run | not_applicable | Unassigned; no evidence yet |
 | [F29 — Queue, comparison, review and Studio feedback UI](viral-video-factory-implementation-modules.md#f29) | F28 | planned | not_run | not_applicable | Unassigned; no evidence yet |
