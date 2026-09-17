@@ -195,3 +195,9 @@ versus **31m14s** for its original twenty captioned sections (about 52 times
 faster for rendering). Sampled opening, caption and closing frames were reviewed.
 This does not measure cloud-generation acceleration or certify the next film.
 Evidence: `productions/haul-01/review/speed-benchmark-v2/`.
+
+## Explicit shorter productions
+
+A separately authorized shorter production may use its own selection directory and credit ceiling. Set `timeline_frames` on both the selected video and brief; narration fitting, progressive captions, editable Hypit timelines, FFmpeg export and final QC use that exact frame count. Omission preserves the original 5,091-frame default. Every selected product must still appear in order, with gap-free takes and the same review, quote, delivery and cleanup gates. The original batch selection and spending record remain intact.
+
+The user authorized a 674-credit shorter haul after the eleven-video batch stopped. Its separate state is `data/production/msdressly-short-haul-12-20260916`, with five new products and a 2,700-frame (90-second) timeline. Use `--selection-dir` for every command targeting this production. No original batch automation was resumed.

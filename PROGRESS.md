@@ -565,3 +565,69 @@ meets it. Documentation-only change; the last code test run remains 301 passing.
 - **Matching sets & sporty weekends** is [uploaded and verified](https://drive.google.com/file/d/1lJBeCabu_0wtYi-QjByepb58kPgNKaoX/view): 91,258,536 bytes, MD5 `41686efa45b034bc0a6d7aa2d182554a`. No owned workers remain, ports 5184–5188 are free, production Chrome tab closed, system memory pressure reports 72% free.
 - Conservative spend: 1,224 Jimeng and 2,656 ElevenLabs credits, including two image repairs and one video replacement; no additional paid music/analysis. Native speech discrepancies were handled with original narration and inspected detail cutaways. No ambiguous paid resubmission. Full offline suite **342 passed in 28.03s**.
 - Evidence and step-by-step times: `docs/haul-02-speed-validation.md`. Hauls 01 and 02 are done; thirteen remain under the existing funded batch. The next item needs its original brief and a fresh observed balance; this milestone does not claim completion of all fifteen.
+
+### Hauls 03–04 delivered; existing ceiling retained (2026-09-16)
+
+- Haul 03 Blue-and-white everyday and haul 04 Sparkle/night-out are uploaded and checksum-verified in the authorized Drive folder. Delivery links and hashes are in `docs/google-drive-uploads.md`. Both preserve 10 products, 20 sections and 169.7 seconds.
+- Haul 03 used 1,162 Jimeng credits and 3,000 conservative TTS credits, including corrected take 17. Haul 04 used 1,154 Jimeng and 2,947 TTS credits, with no paid visual repairs. Its inspected 1.5-second garment close-up covers a native pronunciation discrepancy while preserving the correct original Jessica speech.
+- All 504/523 caption states were audited. All 31/28 OCR discrepancies were inspected directly and confirmed to be correct pixels. Full decoding and soundtrack comparisons passed; sampled visual and ASR limitations are retained in the final-review receipts. Haul 04 rendering plus technical QC took 31.7 seconds.
+- After each delivery, workers and the production tab were closed, ports 5184–5188 were free, and memory pressure reported 72% free. Four completed videos hold 4,714 Jimeng credits; 8,788 remain under the unchanged 13,502 ceiling. Actual logged-in balance: 8,888 before haul 05.
+- Latest user decision: finish as many complete videos as the existing ceiling funds; do not raise the cap or buy credits. Haul 05 is preparing. Sequential delivery with five concurrent generation slots continues. Briefs through 11 were authored during cloud waits; future briefs have no generation spend. No application-code changes in this continuation; the 342-test offline baseline is retained.
+
+### 2026-09-16 — Haul 05 delivered
+
+Completed and verified Special Occasion Dresses in Drive: https://drive.google.com/file/d/1PRYrEZA0ol-sfftMG6ZgZ5Neesr2MNqY/view . All20clips reviewed; corrected one gown reference and a local variant label. Captions, full decode, duration, soundtrack, Drive checksum and cleanup verified. Five batch videos delivered;5,888 credits spent/reserved,7,614 remaining. Continue sequentially within unchanged ceiling.
+
+### 2026-09-16 — Haul 06 delivered
+
+- Florals and Boho Textures uploaded and verified: https://drive.google.com/file/d/1S7vcrJONU0zbtT93M7V7oJ8wkpdqvDMp/view . Six videos delivered.
+- 1,170 Jimeng credits (1,154 base plus two 8-credit outfit corrections), 2,927 TTS credits. Batch total7,058 /13,502, leaving6,444. No paid video replacements.
+- 521caption states scanned; all65OCR mismatch crops inspected as recognition errors, especially patterned fabric. All six final grids inspected; mix correlation0.9999739, no decode/black-frame failures.169.7s,1080x1920,30fps. Export/QC30.7s, final audit41.6s.
+- Rust blouse print remains denser than reference; documented as representative AI try-on. One35-frame blouse detail cutaway preserves original speech.
+- Drive parent/name/bytes/MD5 verified, workers stopped, production tab closed, ports5184–5188free,70%RAMfree. Continue video7 within unchanged ceiling.
+
+### 2026-09-16 — Haul 07 delivered
+
+Work-to-Dinner: twenty reviewed clips, ten products, 169.7 seconds. Drive verified `1zPrt67JObd5ExnOG4xfTrN1FoXHhgCeE`; 102,343,447 bytes, MD5 `3a53c81dfaee9723cca1d36f66b56603`. 1,156 Jimeng credits including one 8-credit blouse correction; 3,278 conservative TTS credits including two corrected takes. 529 caption states scanned; all 31 OCR differences inspected and actual text correct. Six final grids inspected, full decode and audio correlation 0.99997524 pass. Render 29.1 seconds, final audit 40.5 seconds. Cleanup verified, browser closed, ports 5184–5188 free, 70% memory free. Batch total 8,214; unchanged cap leaves 5,288.
+
+### 2026-09-16 — Haul 08 delivered
+
+Western Details and Playful Prints verified in Drive: https://drive.google.com/file/d/1fDBF8RpCv9DX1MjwU23v--owyNzEr4zl/view .1,160Jimeng credits,3,145conservative TTS credits. Eight delivered;batch total9,374/13,502,remaining4,128. Recovered ambiguous audio upload using same resource UUID, no duplicate generation. All20clips and final inspected;539caption states,full decode,soundtrack correlation0.99997689passed.3-second detail cutaway for native pause drift. Ports freed and production tab closed. Continue haul09 within existing ceiling.
+
+### 2026-09-16 — Haul 09 delivered
+
+Animal Print Outfit Refresh verified in Drive: https://drive.google.com/file/d/1SFaOniIxUTMWDZi7bwa7TaHw8gcIH7NL/view . Twenty reviewed clips, ten products, 169.7 seconds. 1,168 Jimeng credits including one cardigan correction; 2,973 TTS credits. Nine delivered; batch total 10,542/13,502, leaving 2,960. All 539 caption states scanned and all 37 OCR differences inspected as recognition errors; six final grids inspected. Full decode and soundtrack correlation 0.99997651 pass. Drive bytes/MD5/parent/name verified, workers stopped, ports 5184–5188 free, browser tab closed, 73% memory free. Continue video 10 within unchanged ceiling.
+
+### 2026-09-16 — Haul 10 delivered
+
+Cozy Autumn Lounge verified in Drive: https://drive.google.com/file/d/1S0dhCnyInxgfdtOtJkg6NbxZEMG6R4X2/view . Ten products, twenty reviewed clips, 169.7 seconds. 1,162 Jimeng credits including one corrected hoodie image; 3,170 conservative TTS credits including one corrected take. All 544 caption states audited, all 27 OCR discrepancies inspected as recognition errors. Six final grids inspected, full decode and original soundtrack correlation 0.99997726 pass. Drive parent/name/bytes/MD5 verified; workers stopped, production tab closed, ports 5184–5188 free, 73% memory free. Batch total 11,704/13,502; 1,798 remain. Continue video 11 if its complete quote and repair reserve fit.
+
+### 2026-09-16 — Haul 11 delivered; funded batch complete
+
+Statement Jackets and Autumn Layers: [verified Drive final](https://drive.google.com/file/d/1o1fQskQQ4tY6oCLdczjlHs2ISqn2sEz_/view). Ten products, twenty sections, 169.7 seconds, 1080×1920 at 30 fps. All selected clips and six final grids inspected. All 541 caption states scanned; all 53 OCR differences visually resolved as recognition errors. Full decode passed, no black-frame detections, original Jessica v3/music correlation 0.99997533, peak -0.4 dB. Final audit took 30.8 seconds.
+
+Haul 11 consumed a conservative 1,224 Jimeng credits: 1,154 base, two 8-credit outfit corrections and one 54-credit video replacement. The replacement was rejected for garbled native speech; the original opening plus a 5.43-second garment-detail view preserves correct Jessica narration. Three other brief detail cuts cover isolated articulation differences. Minor generated pocket-flap and vest-length differences are recorded in final-review.json. TTS reservation 3,207 credits includes one corrected take. Interrupted audio upload recovered with its original resource UUID, no duplicate paid submission.
+
+Drive parent/name/106,080,494 bytes/MD5 verified at 22:39:48 UTC. MD5 `8d311221e6d9898baba15b5ea91716e1`; SHA-256 `305d4709b560b9a8115af3fc7098edcb2ca5a485081219d41a68425c1d524911`. Workers stopped, production browser tab closed, ports 5184–5188 free, 73% memory free. Local preview is offline.
+
+**Funded stop:** 11 of 15 planned videos delivered. Conservative batch spend 12,928 / 13,502 Jimeng credits, leaving 574 within the approved ceiling. Actual logged-in Jimeng balance observed as 674. Current quote-derived lower bound for another complete video is 1,100 credits before the 200-credit repair reserve; this is a calculation from verified rates, not a haul-12 quote. Videos 12–15 remain unstarted, with zero new generation/TTS submissions for them. No top-ups or ceiling changes. Continuation automation `produce-sequential-msdressly-hauls` paused. Batch TTS reservation total 33,429 / 60,000. Evidence: `data/production/next-15-video-plan-20260915/batch-plan/funded-completion.json`.
+
+
+### 2026-09-16 — Short Haul 12 delivered; Jimeng balance exhausted
+
+The user separately authorized a shorter video using the remaining 674 credits. Delivered [Five Easy Outfits](https://drive.google.com/file/d/1A_eNuhHCm4aTgQV5DCLflV7uHDzex2OD/view): five distinct products, ten sections, exactly 90 seconds / 2,700 frames, 1080×1920 at 30 fps. Products: red gingham-detail mini dress, rose-stripe midi, camouflage tee dress, dusk-blue wide-leg denim jumpsuit, navy polka-dot dress. Original batch ceiling and paused automation remain unchanged. New work is isolated in `data/production/msdressly-short-haul-12-20260916`.
+
+Used all 674 Jimeng credits: 604 base generation, 54 for one corrected clip, and 16 for two accompanying covers. Official logged-in Jimeng membership panel confirmed balance **0**. ElevenLabs Jessica `eleven_v3` used 1,533 TTS credits. The corrected polka-dot take still substitutes “spots” for “dots”; a reviewed 1.33-second garment-detail cutaway covers that phrase while retaining the correct original narration. Minor stripe/hem and dot-density variations are recorded. No further paid jobs remain.
+
+All selected native/aligned footage, three final grids and all 31 caption OCR differences inspected. All 281 caption states show the intended words. Complete decode passed with no black-frame detections; original narration/music correlation 0.99997700, peak -0.4 dB. Render and technical verification took 17.5 seconds; final audit 21.6 seconds.
+
+Drive final verified by name, parent, 54,441,131 bytes and MD5 `b623765adc665adcb58dbb32b4219d53`. Both PNG covers also verified in the authorized folder: [red cover](https://drive.google.com/file/d/1TBjpIEp7VrkKmT5OJumbtjYnE0UHaUf1/view) and [denim cover](https://drive.google.com/file/d/1zoHZO5IJdZ91Q-ZW12e8w25cLPKUtCfh/view). Production workers stopped, production tab closed, ports 5184–5188 free, 71% memory free on final check. Preview offline. Completion evidence: `productions/haul-01/completion-check.json`; combined spending: `combined-credit-ledger.json`.
+
+Short-duration support now derives narration fitting, captions, assembly, frame count and final QC from explicitly declared brief/selection timeline frames, retaining the legacy 5,091-frame default. Frozen schemas and fixtures unchanged. Offline validation: **344 tests passed**.
+
+
+### 2026-09-16 — Vertex video API pilot passed
+
+Tested `gemini-omni-1.1-flash-preview` through Vertex's global Interactions API after the user refreshed the existing Google Cloud OAuth login. A four-second portrait text-to-video test produced 720×1280 H.264 at 24 fps with AAC stereo audio in 48.79 seconds (submission to downloaded response). Full decode and sampled visual checks passed. Usage-derived cost estimate: US$0.409384; Cloud billing not independently verified. One earlier URI-delivery request failed validation before model submission, with empty usage; its receipt is retained and reservation released. The corrected successful job was polled by its original ID.
+
+Final uploaded and verified by parent/name/bytes/MD5: https://drive.google.com/file/d/1TXAztF8J3y1kWtdtIUXjW8_ThYSHzfUd/view . 3,153,441 bytes, MD5 `bcac38390b11dd02b4894fdda4e9cf9e`. Owned workers stopped, ports 5184–5188 free, 69% memory free. No preview server started. Evidence: `data/production/v-vertex-video-pilot-20260916/`; findings: `docs/vertex-video-test.md`. This was a generic text prompt, not a Shopify-reference or seed-imitation quality test. Production adapters/defaults and frozen contracts unchanged; Veo catalog access checked but no Veo generation tested.
