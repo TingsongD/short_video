@@ -26,7 +26,11 @@ class AlignmentService:
                                 "voice the segment first")
         if seg.get("raw_alignment"):
             from ...batch.audio import word_times
-            if "".join(seg["raw_alignment"]["characters"]) != seg["text"]:
+            # The provider aligned the text it was actually GIVEN —
+            # source_text — which may differ in surface form from the
+            # normalized seg["text"] (contractions, numerals).
+            spoken = seg.get("source_text") or seg["text"]
+            if "".join(seg["raw_alignment"]["characters"]) != spoken:
                 raise ContractError("alignment_text_mismatch", "segment_id")
             aligned = word_times(seg["raw_alignment"], 0, 1, 0, seg.get("raw_duration_s",seg["duration_s"]))
             words = [{"w": w["text"], "start_s": w["start"], "end_s": w["end"], "confidence": 1.0} for w in aligned]

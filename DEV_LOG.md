@@ -7,6 +7,52 @@ decisions) is my direct work.
 
 ---
 
+## 2026-09-17 (evening) — Post-repair defect repairs N01–N20
+
+The post-repair review at `c6ffad2` (`docs/factory-reports/REVIEW-POST-REPAIR-2026-09-17.md`)
+confirmed 20 live defects against 952 green tests — proof that a green
+suite did not mean unattended-production readiness. All 20 were repaired
+in five staged waves per `REPAIR-PLAN-2026-09-17.md`, with zero DB
+migrations (additive record fields, adapter-state files, `render.v4`
+hash-material versioning).
+
+- W0 `bab1004` — N02: `worker.tick()` classifies handler outcomes
+  explicitly; unknown result states fail closed and release `local_work:`
+  holds. Unsafe to revert alone.
+- W1 `99bbe88` `c8dbe17` `e46bc21` — N04/N05/N06/N11/N12/N13: atomic
+  Canvas quote merge-write, attempt-scoped Canvas/Vertex operation
+  identity + wire-hash side index, content-bound render inputs, normalized
+  aspect/resolution with conflict rejection, typed Canvas refs.
+- W2 `901d09b` — N03/N09/N10: reconcile resumes remote-succeeded
+  production jobs and unblocks descendants; delivery retry command +
+  transfer-only service re-entry; runner attempt identity + retry_count.
+- W3 `7822430` — N01/N07/N08/N16/N17/N19: publication revalidates creative
+  acceptance at execution; normalized TTS fit/attach with provenance stamp
+  (plus a real alignment defect fixed in audio/alignment.py — provider
+  alignment was checked against normalized, not spoken, text); stale
+  derived-media detection in diff + render hard-stop; pinned product
+  snapshot revisions at authorize; claims validated across all variants;
+  revision-scoped learning (new additive Publication experiment fields).
+- W4 `c739802` — N14/N15/N18/N20: intentional_stills evidence from
+  image-kind plan items (contiguous runs merged); frozen MixService
+  profile per revision pre-mixes narration+music with measured loudness
+  bound as final evidence; research discovery_cache consulted before
+  attempts and written through, coverage counts real calls; readiness
+  60s per-process cache + `?refresh=1`, run off the event loop, dashboard
+  providers load on mount/manual recheck only.
+- W5 — `tests/test_factory_repairs_2026_09_17.py` (21 regression tests
+  asserting repaired contracts), REPAIRS.md probe→test mapping, and
+  `pytest.ini` scoping default collection to `tests/` so bare `pytest`
+  no longer dies on vendor/ deps.
+
+Every original probe was rerun after its fix: all fail on their old
+assertions (the defect is gone), kept at
+`docs/factory-reports/probes/review_post_repair_2026_09_17.py` as the
+audit trail. Offline only — no paid calls, no publishing; live gates and
+the F35 funded-pilot slice remain closed pending explicit authorization.
+
+---
+
 ## 2026-09-17 — Factory repair program (S0–S8)
 
 The independent review at `dae132a` found 43 issue groups. The earlier
@@ -444,3 +490,65 @@ analytics account request was performed. Optional generated music and unqualifie
 reference modes remain unavailable. No live route or legacy G-gate is signed by
 these offline results. The existing operational database, credentials, assets,
 legacy ledger and unrelated working-tree changes were preserved.
+
+## 2026-09-17 — Completed repair checkpoint: work and verification record
+
+**Implementation checkpoint:** `c6ffad2` on `feat/factory`, starting from
+`dae132a`. The sequential S0–S8 repair program has passed its offline checkpoint.
+All 43 review findings have recorded dispositions and regression evidence; this
+does not establish live production qualification or complete the outstanding
+F-module manual acceptance checklists.
+
+### Work completed
+
+| Package | Commit | Changes recorded |
+| --- | --- | --- |
+| S0 — Baseline and containment | `6c0f33a` | Default offline execution, truthful blocked states, structured redaction and deterministic approval timing. |
+| S1 — Durable data and restore | `006f274` | Consistent database location, immutable revisions, forward migrations and verified self-contained backups with fresh-root restore restrictions. |
+| S2 — Effects and spending | `1e3a31a` | Scoped approvals, separate native-unit budgets, atomic reservations and attempts, durable recovery, capacity holds and duplicate prevention. |
+| S3 — Provider contracts | `474f676` | Canvas, Vertex, Hypit, Drive, Shopify and audio protocol corrections; durable receipts and isolated local Hypit qualification. |
+| S4 — Media and acceptance | `fc7fb75` | Timeline timing and coverage, speech fitting/alignment, audio mixing, captions, cache identity and artifact-bound technical/creative acceptance. |
+| S5 — Application workflow | `6628500` | Application bootstrap and independent worker, connected dashboard/domain commands, four-variant local production, verified fake delivery and owned cleanup. |
+| S6 — Research | `b23790b` | Creator-specific comparable baselines, separate follower/baseline scores and scoped research budgeting/recovery. |
+| S7 — Publishing and learning | `f282bce` | Exact publication authority, asynchronous posting receipts, Reporting CSV ingestion, coverage-aware metrics and evidence-bound decisions. |
+| S8 — Integrated qualification | `c6ffad2` | Final route/account safeguards, audio/analysis/product/recovery controls, restore reconciliation, interruption/concurrency/browser checks and corrected acceptance records. |
+
+### Final verification at `c6ffad2`
+
+- Backend: **952 passed** in **268.27 seconds**, with two existing dependency
+  deprecation warnings. Frontend: **28 passed**; production build passed.
+- Public API plus independent worker produced four **30-second / 900-frame**
+  exports and four **169.7-second / 5,091-frame** exports at 30 fps. Fixture
+  reviews, verified fake Drive receipts and owned cleanup completed. These use
+  180×320 test patterns and deterministic audio, not production product footage
+  or natural narration.
+- Real process-interruption tests covered submission, acceptance, download,
+  rendering and upload; restart preserved original operations. Concurrency
+  checks covered five Jimeng slots, one Vertex slot and one local renderer.
+- Browser refresh/two-tab checks and populated migration/restore checks passed.
+  All **29 frozen contract/fixture files** and the legacy spending ledger remained
+  unchanged. Test services stopped; ports **5197, 5198, 5189 and 5202** were free.
+- No native live provider/account calls, paid generation or publication were
+  performed. The operational database, credentials and generated assets were
+  preserved, as were the existing `LONGFORM_PLAN.md` deletion and dashboard
+  build-cache modification.
+
+### Remaining qualification and evidence
+
+Each selected live provider/model/input mode still needs a current scoped budget
+and qualification run, followed by a complete four-variant live experiment with
+verified Drive delivery and cleanup. Publication and elapsed analytics horizons
+have separate gates. Generated music and unqualified reference modes remain
+unavailable; automatic paid cross-provider replacement requires explicit replanning
+and approval. F-module manual sign-off remains open; legacy G-gates are independent.
+
+- [Per-finding implementation and regression evidence](docs/factory-reports/REPAIR-S8-FINDINGS.md)
+- [Final test results and tested source manifest](docs/factory-reports/REPAIR-S8-EVIDENCE.json)
+- [Repair package status](docs/factory-reports/REPAIRS.md)
+- [Operator and recovery guide](docs/factory-operations.md)
+- [Module acceptance tracker](docs/viral-video-factory-module-tracker.md)
+
+This completion record was appended after the implementation checkpoint. It
+records the existing verification results; no code or tests were changed or
+rerun for this documentation update. The repair summary's stale S8 “verification
+in progress” label was also corrected to match the completed evidence.

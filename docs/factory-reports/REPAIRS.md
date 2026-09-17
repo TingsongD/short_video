@@ -16,7 +16,7 @@ All checks use offline providers; no new live spend or publication scope exists.
 | S5 application | first local milestone passed; final fault matrix remains S8 | 916 backend tests; 25 frontend tests/build; real HTTP/independent-worker four × 900-frame exports with distinct treatments, bound reviews, durable fake Drive receipts and verified cleanup. Native Studio opened and closed. See REPAIR-S5-EVIDENCE.json. |
 | S6 research | passed (offline checkpoint) | 922 tests pass; public research plan/approval/budget/worker/evaluation journey. Separate creator histories and strict cohort exclusions. See REPAIR-S6-EVIDENCE.json. |
 | S7 publishing/learning | passed (offline checkpoint) | 932 tests passed; native protocol, exact publication authority, coverage-aware readback and current independent evidence. Public four-export/post/readback/decision journey. See REPAIR-S7-EVIDENCE.json. |
-| S8 qualification | final verification in progress | Real short/long HTTP application journeys, five worker-kill points, six-worker capacity, restore activation, new auxiliary application routes and browser checks. See REPAIR-S8-EVIDENCE.json. |
+| S8 qualification | offline checkpoint passed (`c6ffad2`); live qualification pending | 952 backend tests; 28 frontend tests/build. Real short/long HTTP application journeys, five worker-kill points, six-worker capacity, restore activation, new auxiliary application routes and browser checks. See REPAIR-S8-EVIDENCE.json. |
 
 ## Finding dispositions
 
@@ -99,3 +99,50 @@ All selected live provider/account/model/input modes, real Drive delivery,
 publication and elapsed analytics horizons require their own funded qualification.
 Legacy G-gates remain independent. Historical checkpoint descriptions above are
 retained as dated evidence; later S8 evidence supersedes their pending dependencies.
+
+## Post-repair review repairs (N01–N20, 2026-09-17)
+
+Review: [REVIEW-POST-REPAIR-2026-09-17.md](REVIEW-POST-REPAIR-2026-09-17.md)
+Plan: [REPAIR-PLAN-2026-09-17.md](REPAIR-PLAN-2026-09-17.md)
+Probes (audit trail, assert old bad behavior — expected to FAIL after repair):
+`probes/review_post_repair_2026_09_17.py`
+Permanent regression tests (assert repaired contracts):
+`tests/test_factory_repairs_2026_09_17.py` — 21 tests.
+
+| Issue | Repair commit | Probe | Regression test |
+| --- | --- | --- | --- |
+| N01 publication ignores withdrawn acceptance | 7822430 | test_withdrawn_creative_acceptance_still_publishes | test_withdrawn_acceptance_blocks_publication |
+| N02 failed render marked successful | bab1004 | test_failed_renderer_is_successful_job | test_failed_result_fails_job_and_releases_hold |
+| N03 reconcile doesn't resume production | 901d09b | test_ack_loss_reconcile_leaves_production_failed | test_reconcile_resumes_failed_production |
+| N04 Canvas quote loses receipts | e46bc21 | test_canvas_quote_flush_can_lose_other_worker_receipts | test_canvas_quote_flush_preserves_concurrent_receipts |
+| N05 Canvas attempts share one op | e46bc21 | test_canvas_distinct_attempts_share_one_operation | test_canvas_attempts_get_distinct_operations |
+| N06 Vertex misses saved acceptance | c8dbe17 | test_vertex_cannot_recover_saved_acceptance_by_executor_hash | test_vertex_recovers_saved_acceptance_by_attempt |
+| N07 TTS normalization breaks flow | 7822430 + alignment fix | test_tts_normalization_breaks_real_public_audio_flow | test_tts_normalized_copy_fits_and_attaches |
+| N08 stale derived media | 7822430 | test_treatment_dependency_declaration_allows_stale_speech | test_treatment_stale_derived_media_flagged |
+| N09 no delivery retry after pre-upload failure | 901d09b | test_delivery_failed_before_upload_has_no_application_retry | test_delivery_reentry_delegates_to_retry |
+| N10 local retries replay cached failure | 901d09b | test_repeated_render_failure_is_cached_forever | test_runner_retry_executes_fresh_attempt |
+| N11 restore paths break render identity | 99bbe88 | test_restore_paths_change_render_identity | test_restore_paths_preserve_render_identity |
+| N12 Vertex ignores nested settings | c8dbe17 | test_vertex_nested_settings_ignored | test_vertex_nested_settings_applied_and_conflicts_rejected |
+| N13 Canvas/router refs shape conflict | e46bc21 | test_canvas_reference_shape_conflicts_with_router | test_canvas_typed_reference_contract |
+| N14 stills fail QC | c739802 | test_still_images_rejected_by_production_qc | test_still_images_pass_production_qc |
+| N15 frozen mix never wired | c739802 | (static finding) | test_production_render_uses_frozen_mix |
+| N16 latest snapshot not pin | 7822430 | test_authorization_uses_latest_product_instead_of_pin | test_authorization_uses_pinned_snapshot |
+| N17 claims control-only | 7822430 | test_unsupported_variant_claims_are_accepted | test_variant_claims_are_validated |
+| N18 research bypasses cache | c739802 | test_research_application_bypasses_cache_and_reports_no_calls | test_research_cache_and_truthful_coverage |
+| N19 learning ignores revision | 7822430 | test_new_learning_policy_blocked_by_old_revision_posts | test_new_revision_policy_not_blocked_by_old_posts |
+| N20 readiness checks on refresh | c739802 | (static finding) | test_readiness_cached_and_refresh_bypasses |
+
+### Notes
+
+- No DB migrations: all repairs use additive record-body fields
+  (Publication.experiment_id/experiment_revision), adapter-state files, or
+  hash-material versioning (render.v4).
+- bab1004 (N02) is unsafe to revert alone — it removes the fail-open
+  catch-all that turned arbitrary handler results into silent successes.
+- N07 additionally surfaced an alignment defect: provider character
+  alignment was checked against normalized text instead of the spoken
+  source_text (fixed in modules/factory/audio/alignment.py).
+- pytest.ini now scopes default collection to tests/ — bare `pytest`
+  no longer collects vendor/ suites and dies on their missing deps.
+- Original probe file retained as audit trail; every assertion in it
+  encodes pre-repair behavior and must not be re-greened.
