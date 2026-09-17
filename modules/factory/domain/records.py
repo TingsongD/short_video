@@ -351,6 +351,10 @@ class VariantPlan(Record):
     primary_metric: str = ""
     budget_category: str = "experiment_variations"
     status: str = "draft"
+    segments: list = field(default_factory=list)   # applied plan body
+    dependent_fields: list = field(default_factory=list)  # transitive deps
+    content_hash: str = ""
+    stale_reason: str = ""
 
     def validate(self):
         e = super().validate()
@@ -432,6 +436,7 @@ class PriceAssessment(Record):
     """native_quote (Canvas) or usage_estimate (Vertex). Never both."""
     kind: str = ""                   # native_quote | usage_estimate
     request_hash: str = ""
+    plan_hash: str = ""              # plan revision this quote belongs to
     provider: str = ""
     model: str = ""
     unit: str = ""
