@@ -76,7 +76,7 @@ Dependencies below define implementation prerequisites, not permission to spend.
 | [F20 — Music, sound and shared mix](viral-video-factory-implementation-modules.md#f20) | F19 | done | run | pending | docs/factory-reports/F20.md; 11 tests; M02–M04 pass, M01 awaits human listening review; suite 671 green |
 | [F21 — Unique-work production plan and asset graph](viral-video-factory-implementation-modules.md#f21) | F06, F15, F18, F19, F20 | done | run | pending | docs/factory-reports/F21.md; 12 tests; M01–M04 pass; suite 683 green |
 | [F22 — Hypit composition compiler and asset binding](viral-video-factory-implementation-modules.md#f22) | F13, F14, F21 | done | run | pending | docs/factory-reports/F22.md; 11 tests; M01/M03/M04 pass (real check+plan), M02 awaits pixel review; suite 694 green |
-| [F23 — Render execution and output retrieval](viral-video-factory-implementation-modules.md#f23) | F22 | planned | not_run | not_applicable | Unassigned; no evidence yet |
+| [F23 — Render execution and output retrieval](viral-video-factory-implementation-modules.md#f23) | F22 | done | run | pending | docs/factory-reports/F23.md; 10 tests (real renders); M02/M03 pass, M01/M04 await review; suite 704 green |
 | [F24 — Technical, creative and changed-region QC](viral-video-factory-implementation-modules.md#f24) | F23, F14 | planned | not_run | pending | Unassigned; no evidence yet |
 | [F25 — Verified Google Drive delivery](viral-video-factory-implementation-modules.md#f25) | F24 | planned | not_run | pending | Unassigned; no evidence yet |
 | [F26 — Process ownership and resource cleanup](viral-video-factory-implementation-modules.md#f26) | F25 | planned | not_run | not_applicable | Unassigned; no evidence yet |

@@ -1111,3 +1111,42 @@ class Composition(Record):
             e.append(ContractError("unknown_renderer", "renderer",
                                    self.renderer))
         return e
+
+
+# ------------------------------------------------------------ rendering
+
+RENDER_STATES = {"registered", "running", "succeeded", "failed",
+                 "observer_lost", "collected"}
+
+
+@dataclass
+class RenderBuild(Record):
+    """An owned render execution registered before it runs."""
+    revision: int = 0
+    composition_id: str = ""
+    composition_hash: str = ""
+    variant_key: str = ""
+    renderer: str = ""               # ffmpeg_fast | hypit
+    renderer_version: str = ""
+    workspace: str = ""
+    output_name: str = "final.video"
+    status: str = "registered"
+    remote_build_id: str = ""        # hypit build id (ours = id)
+    inputs_hash: str = ""
+    output_artifact_id: str = ""
+    output_sha256: str = ""
+    progress: dict = field(default_factory=dict)
+    # {completed_sections: [...], current, updated_at}
+    problem: str = ""
+    finished_at: str = ""
+
+    def validate(self):
+        e = super().validate()
+        _id_errors(e, self.composition_id, "composition_id")
+        if self.status not in RENDER_STATES:
+            e.append(ContractError("bad_render_state", "status",
+                                   self.status))
+        if self.renderer not in ("ffmpeg_fast", "hypit"):
+            e.append(ContractError("unknown_renderer", "renderer",
+                                   self.renderer))
+        return e
