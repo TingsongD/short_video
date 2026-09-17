@@ -391,3 +391,75 @@ class FakeSeedSource:
         return {"submit": self.state.doc["counters"]["submit"],
                 "download": self.state.doc["counters"]["download"],
                 "refreshes": self.state.doc["refreshes"]}
+
+
+class FakeDiscovery:
+    """Paid research search fake (F10): paginated results, a persistent
+    credit balance, one credit charged per search call — restarts see
+    the same balance (no automatic top-up)."""
+
+    def __init__(self, name, state_dir, ids, clock, credits=0):
+        self.name = name
+        self.ids = ids
+        self.clock = clock
+        self.state = FakeProviderState(Path(state_dir) / f"{name}.json")
+        self.state.doc.setdefault("credits", credits)
+        self.state.doc.setdefault("result_sets", {})   # "q|p" -> [posts]
+        self.state.doc.setdefault("search_ops", {})
+        self.state.save()
+
+    def set_credits(self, n):
+        self.state.doc["credits"] = n
+        self.state.save()
+
+    def set_results(self, query, page, posts):
+        self.state.doc["result_sets"][f"{query}|{page}"] = posts
+        self.state.save()
+
+    def credits(self):
+        return self.state.doc["credits"]
+
+    # -- provider protocol -------------------------------------------------
+    def submit(self, request):
+        if self.state.doc["credits"] <= 0:
+            raise ProviderError("insufficient_credits", http_status=402)
+        self.state.doc["credits"] -= 1
+        self.state.doc["charges"].append(
+            {"kind": "search", "credits": 1, "at": self.clock.iso(),
+             "query": request.get("query"), "page": request.get("page")})
+        self.state.bump("submit")
+        posts = self.state.doc["result_sets"].get(
+            f"{request.get('query')}|{request.get('page')}", [])
+        op_id = f"{self.name}-search:{self._next_seq()}"
+        op = {"operation_id": op_id, "status": "succeeded",
+              "result": {"posts": posts}, "request": request}
+        self.state.doc["search_ops"][op_id] = op
+        self.state.save()
+        return {k: v for k, v in op.items() if k != "request"}
+
+    def poll(self, operation_id):
+        op = self.state.doc["search_ops"].get(operation_id)
+        if op is None:
+            raise ProviderError("unknown_operation", http_status=404)
+        return {k: v for k, v in op.items() if k != "request"}
+
+    def download(self, operation_id, destination=None):
+        raise ProviderError("not_downloadable", http_status=409)
+
+    def reconcile(self, operation_id=None, request_hash=None):
+        if operation_id:
+            op = self.state.doc["search_ops"].get(operation_id)
+            return dict(op) if op else None
+        return None
+
+    def cancel(self, operation_id):
+        pass
+
+    def _next_seq(self):
+        self.state.doc["seq"] += 1
+        return self.state.doc["seq"]
+
+    def counters(self):
+        return {"submit": self.state.doc["counters"]["submit"],
+                "charges": len(self.state.doc["charges"]),
+                "credits": self.state.doc["credits"]}

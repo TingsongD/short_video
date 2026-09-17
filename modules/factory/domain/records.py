@@ -718,3 +718,21 @@ class Decision(Record):
             e.append(ContractError("bad_conclusion", "conclusion",
                                    self.conclusion))
         return e
+
+
+@dataclass
+class DiscoveryRun(Record):
+    """One research scan: plan, coverage, cohorts and ranked candidates.
+    Every ratio recomputes from the stored inputs."""
+    plan: dict = field(default_factory=dict)
+    status: str = "running"          # running | complete | partial
+    coverage: dict = field(default_factory=dict)   # planned vs received pages
+    candidates: list = field(default_factory=list)
+    cohort: dict = field(default_factory=dict)
+    exported_seed_ids: list = field(default_factory=list)
+
+    def validate(self):
+        e = super().validate()
+        if self.status not in ("running", "complete", "partial"):
+            e.append(ContractError("bad_run_status", "status", self.status))
+        return e

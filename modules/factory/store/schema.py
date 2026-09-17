@@ -1,7 +1,7 @@
 """Ordered migrations. Every DB carries meta.schema_version; an older
 binary refuses a newer database rather than reinterpreting it."""
 
-CURRENT_VERSION = 6
+CURRENT_VERSION = 7
 
 MIGRATIONS = [
     (1, """
@@ -192,5 +192,15 @@ CREATE TABLE scheduler_flags (
 """),
     (6, """
 ALTER TABLE attempts ADD COLUMN retry_state TEXT NOT NULL DEFAULT '{}';
+"""),
+    (7, """
+CREATE TABLE discovery_cache (
+  query_key TEXT NOT NULL,
+  page INTEGER NOT NULL,
+  body TEXT NOT NULL,
+  observed_at TEXT NOT NULL,
+  run_id TEXT NOT NULL,
+  PRIMARY KEY (query_key, page)
+);
 """),
 ]

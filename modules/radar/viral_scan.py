@@ -80,6 +80,21 @@ def prepare(root, run_id, niche_configs, thresholds, *, platforms=None, pages=1,
                 ("breakout_subs_ratio", "max_video_age_days", "cluster_min_channels")}
     if criteria["breakout_subs_ratio"] != 2 or not 1 <= criteria["max_video_age_days"] <= 30:
         raise ViralError("Viral Outliers requires the reviewed >2 rule and a 1–30 day window")
+    # F10 selection modes — explicit, persisted, no hidden follower gate.
+    mode = thresholds.get("selection_mode", "follower")
+    if mode not in ("follower", "baseline", "either", "both"):
+        raise ViralError("selection_mode must be follower|baseline|either|both")
+    criteria["selection_mode"] = mode
+    if "baseline_threshold" in thresholds:
+        bt = thresholds["baseline_threshold"]
+        if not isinstance(bt, (int, float)) or bt <= 0:
+            raise ViralError("baseline_threshold must be positive")
+        criteria["baseline_threshold"] = bt
+    if "cohort_median_views" in thresholds:
+        cm = thresholds["cohort_median_views"]
+        if not isinstance(cm, (int, float)) or cm <= 0:
+            raise ViralError("cohort_median_views must be positive")
+        criteria["cohort_median_views"] = cm
     criteria["platforms"] = platforms
     selected = [{"name": n["name"], "keywords": list(dict.fromkeys(n["keywords"]))}
                 for n in niche_configs]
@@ -134,6 +149,15 @@ def load_plan(root, run_id):
         require(1 <= criteria["max_video_age_days"] <= 30)
         require(type(criteria["cluster_min_channels"]) is int and criteria["cluster_min_channels"] >= 2)
         require(criteria["platforms"] and set(criteria["platforms"]) <= {"youtube", "tiktok"})
+        if "selection_mode" in criteria:
+            require(criteria["selection_mode"] in
+                    ("follower", "baseline", "either", "both"))
+        if "baseline_threshold" in criteria:
+            require(isinstance(criteria["baseline_threshold"], (int, float))
+                    and criteria["baseline_threshold"] > 0)
+        if "cohort_median_views" in criteria:
+            require(isinstance(criteria["cohort_median_views"], (int, float))
+                    and criteria["cohort_median_views"] > 0)
         by_niche = {n["name"]: n["keywords"] for n in plan["niches"]}
         for job in jobs:
             body = job["body"]

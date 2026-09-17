@@ -114,14 +114,32 @@ def normalize(row, now, thresholds):
     if followers is None or followers <= 0:
         reasons.append("missing_positive_followers")
     ratio = views / followers if views is not None and followers else None
-    ratio_pass = followers_outlier(views, followers, thresholds["breakout_subs_ratio"])
-    if ratio is not None and not ratio_pass:
-        reasons.append("views_to_followers_not_above_threshold")
+    # Selection modes (F10): follower keeps the historical strict >2 gate;
+    # baseline uses a caller-supplied measured cohort median at an
+    # inclusive threshold; either/both combine them. The mode comes from
+    # the persisted plan criteria — never a hidden follower-only gate.
+    mode = thresholds.get("selection_mode", "follower")
+    baseline_threshold = thresholds.get("baseline_threshold", 5.0)
+    cohort_median = thresholds.get("cohort_median_views")
+    baseline_ratio = (views / cohort_median
+                      if views is not None and cohort_median else None)
+    follower_pass = followers_outlier(
+        views, followers, thresholds["breakout_subs_ratio"])
+    baseline_pass = (baseline_ratio is not None
+                     and baseline_ratio >= baseline_threshold)
+    ratio_pass = {"follower": follower_pass,
+                  "baseline": baseline_pass,
+                  "either": follower_pass or baseline_pass,
+                  "both": follower_pass and baseline_pass}[mode]
+    if not ratio_pass:
+        reasons.append(f"below_{mode}_threshold")
     observation = {
         "provider": "viral-outliers", "provider_post_id": row.get("id"),
         "platform": platform, "source_url": source, "views": views,
         "followers": followers, "denominator_source": denominator_source,
         "views_to_followers": ratio, "ratio_pass": ratio_pass,
+        "baseline_multiple": baseline_ratio,
+        "selection_mode": mode,
         "observed_at": now.isoformat(), "reasons": reasons,
     }
     if reasons:
@@ -134,7 +152,9 @@ def normalize(row, now, thresholds):
         "channel_id": f"{platform}:{creator_id}",
         "channel_title": str(first(profile, "display_name", "displayName") or creator),
         "title": title.strip(), "views": views, "followers": followers,
-        "channel_avg": 0.0, "multiplier": 0.0, "baseline_available": False,
+        "channel_avg": float(cohort_median) if cohort_median else 0.0,
+        "multiplier": round(baseline_ratio, 2) if baseline_ratio else 0.0,
+        "baseline_available": bool(cohort_median),
         "subs_ratio": ratio, "published_at": pub.isoformat().replace("+00:00", "Z"),
         "format_guess": guess_format(title), "platform": platform,
         "source_url": source, "provider": "viral-outliers",

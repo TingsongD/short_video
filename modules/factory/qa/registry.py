@@ -60,7 +60,7 @@ MODULES = {
 # Modules whose service code exists. Grows as phases land; a case can only
 # run when its module is in this set.
 IMPLEMENTED = {"F00", "F01", "F02", "F03", "F04", "F05", "F06", "F07",
-               "F08", "F09"}
+               "F08", "F09", "F10"}
 
 LIVE_CASES = {  # cases that can only qualify under funded/connected scope
     "F16-M04", "F17-M04", "F25-M04", "F31-M04", "F32-M04",
@@ -109,6 +109,10 @@ EXPECTED = {
     "F09-M02": "thumbnail download → needs_source_media; import action named",
     "F09-M03": "interrupted transfer resumes same attempt; analysis unblocks",
     "F09-M04": "private/unsupported/expired targets refused or refreshed",
+    "F10-M01": "100× followers, 50× mean+median baseline, seed excluded",
+    "F10-M02": "only 20,001 passes >2; all 4 modes use declared denominators",
+    "F10-M03": "missing ratios null; small/stale cohorts flagged+explained",
+    "F10-M04": "partial coverage explicit; cache survives restart; no top-up",
 }
 
 
@@ -120,12 +124,13 @@ def _default_expected(module, n):
 def all_cases():
     """The full 144-case registry; impl callables attach in case modules."""
     from . import (cases_f01, cases_f02, cases_f03, cases_f04,
-                   cases_f05, cases_f06, cases_f07, cases_f08, cases_f09)
+                   cases_f05, cases_f06, cases_f07, cases_f08, cases_f09,
+                   cases_f10)
     impls = {**cases_f01.implementations(), **cases_f02.implementations(),
              **cases_f03.implementations(), **cases_f04.implementations(),
              **cases_f05.implementations(), **cases_f06.implementations(),
              **cases_f07.implementations(), **cases_f08.implementations(),
-             **cases_f09.implementations()}
+             **cases_f09.implementations(), **cases_f10.implementations()}
     specs = {}
     for mid in MODULES:
         for n in range(1, 5):

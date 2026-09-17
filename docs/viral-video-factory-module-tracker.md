@@ -63,7 +63,7 @@ Dependencies below define implementation prerequisites, not permission to spend.
 | [F07 — Submission recovery and retry policy](viral-video-factory-implementation-modules.md#f07) | F06 | passed | in_progress | not_applicable | Devin; [report](factory-reports/F07.md); 16 tests green in 479-suite; M01–M04 agent-verified |
 | [F08 — Events, timing and observability](viral-video-factory-implementation-modules.md#f08) | F06, F07 | passed | in_progress | not_applicable | Devin; [report](factory-reports/F08.md); 11 tests green in 490-suite; M01–M04 agent-verified |
 | [F09 — Seed registry and source acquisition](viral-video-factory-implementation-modules.md#f09) | F04, F05 | passed | in_progress | not_applicable | Devin; [report](factory-reports/F09.md); 23 tests green in 513-suite; M01–M04 agent-verified |
-| [F10 — Outlier discovery and baseline evidence](viral-video-factory-implementation-modules.md#f10) | F09, F05 | planned | not_run | pending | Unassigned; no evidence yet |
+| [F10 — Outlier discovery and baseline evidence](viral-video-factory-implementation-modules.md#f10) | F09, F05 | passed | in_progress | not_applicable | Devin; [report](factory-reports/F10.md); 16 tests green in 529-suite; M01–M04 agent-verified |
 | [F11 — Shopify product and media snapshots](viral-video-factory-implementation-modules.md#f11) | F04, F05 | planned | not_run | pending | Unassigned; no evidence yet |
 | [F12 — Reference analysis and blueprint review](viral-video-factory-implementation-modules.md#f12) | F09, F05, F06 | planned | not_run | pending | Unassigned; no evidence yet |
 | [F13 — Reusable format and template authoring](viral-video-factory-implementation-modules.md#f13) | F12 | planned | not_run | not_applicable | Unassigned; no evidence yet |
