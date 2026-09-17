@@ -81,7 +81,7 @@ Dependencies below define implementation prerequisites, not permission to spend.
 | [F25 — Verified Google Drive delivery](viral-video-factory-implementation-modules.md#f25) | F24 | done | run | pending | docs/factory-reports/F25.md; 10 tests; M01–M03 pass, M04 live gate; suite 726 green |
 | [F26 — Process ownership and resource cleanup](viral-video-factory-implementation-modules.md#f26) | F25 | done | run | pending | docs/factory-reports/F26.md; 11 tests; M01–M04 pass; suite 737 green |
 | [F27 — Application API and local security](viral-video-factory-implementation-modules.md#f27) | F08, F14, F21, F24, F25, F26 | done | run | pending | docs/factory-reports/F27.md; 14 tests; M01–M04 pass; suite 751 green |
-| [F28 — Dashboard seed, planner and budget screens](viral-video-factory-implementation-modules.md#f28) | F27 | planned | not_run | not_applicable | Unassigned; no evidence yet |
+| [F28 — Dashboard seed, planner and budget screens](viral-video-factory-implementation-modules.md#f28) | F27 | done | run | pending | docs/factory-reports/F28.md; 15 vitest tests; tsc+build green; M01–M04 await operator; suite 751 |
 | [F29 — Queue, comparison, review and Studio feedback UI](viral-video-factory-implementation-modules.md#f29) | F28 | planned | not_run | not_applicable | Unassigned; no evidence yet |
 | [F30 — Local installation, services and backup/restore](viral-video-factory-implementation-modules.md#f30) | F29 | planned | not_run | not_applicable | Unassigned; no evidence yet |
 | [F31 — Manual and authorized automated publishing](viral-video-factory-implementation-modules.md#f31) | F27, F25 | planned | not_run | pending | Unassigned; no evidence yet |

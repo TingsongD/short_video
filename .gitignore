@@ -26,3 +26,7 @@ vendor/
 
 # OS
 .DS_Store
+
+# F28 dashboard build artifacts
+apps/factory-dashboard/node_modules/
+apps/factory-dashboard/dist/
