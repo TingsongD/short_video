@@ -568,3 +568,72 @@ class FakeShopify:
                 if m["id"] == media_id:
                     return m
         return None
+
+
+class FakeAnalyzer(FakeProvider):
+    """Scripted multimodal analyzer (F12): accepts an analysis request
+    (artifact sha + probed features), succeeds on poll, and returns the
+    scripted payload for that sha — or a duration-fitted default.
+    Faults: 'malformed-analysis' → succeeds with an invalid payload;
+    standard FakeProvider faults (accept-then-timeout etc.) all apply."""
+
+    def __init__(self, name, state_dir, ids, clock, scripts=None):
+        super().__init__(name, state_dir, ids, clock, unit="usd_micros")
+        self.scripts = scripts or {}
+
+    def poll(self, operation_id):
+        op = self.state.doc["operations"].get(operation_id)
+        scripted = None
+        if op is not None and op.get("request"):
+            sha = op["request"].get("artifact_sha256")
+            scripted = self.scripts.get(sha)
+        out = super().poll(operation_id)
+        if out.get("status") == "succeeded" and \
+                "malformed-analysis" in out.get("faults", []):
+            out["result"] = {"analysis": {"beats": [{"role": "nonsense"}]}}
+            op = self.state.doc["operations"][operation_id]
+            op["result"] = out["result"]
+            self.state.save()
+        elif out.get("status") == "succeeded":
+            req = self.state.doc["operations"][operation_id]["request"]
+            out["result"]["analysis"] = scripted or self._default(req)
+            self.state.doc["operations"][operation_id][
+                "result"]["analysis"] = out["result"]["analysis"]
+            self.state.save()
+        return out
+
+    def submit(self, request, faults=(), price=None):
+        # keep the request body on the op so poll can script per-sha —
+        # including when the ack is lost after acceptance
+        try:
+            op = super().submit(request, faults=faults, price=price)
+        except Exception:
+            for stored in self.state.doc["operations"].values():
+                if stored.get("request") is None:
+                    stored["request"] = request
+            self.state.save()
+            raise
+        if isinstance(op, dict) and "operation_id" in op:
+            stored = self.state.doc["operations"][op["operation_id"]]
+            stored["request"] = request
+            self.state.save()
+        return op
+
+    @staticmethod
+    def _default(request):
+        """Duration-fitted 3-beat default when no script matches."""
+        dur = float(request.get("duration_s") or 10.0)
+        marks = [dur * f for f in (0.15, 0.75)]
+        return {
+            "beats": [
+                {"id": "b1", "role": "hook", "start_s": 0.0,
+                 "end_s": marks[0], "visual_event": "opener",
+                 "confidence": "uncertain"},
+                {"id": "b2", "role": "body", "start_s": marks[0],
+                 "end_s": marks[1], "visual_event": "main",
+                 "confidence": "uncertain"},
+                {"id": "b3", "role": "cta", "start_s": marks[1],
+                 "end_s": dur, "visual_event": "closer",
+                 "confidence": "uncertain"}],
+            "transcript": [], "music": {"role": "unknown"},
+            "uncertainty": ["default_script"]}
