@@ -13,7 +13,7 @@ from ..execution.policy import ExecutionPolicy
 
 from ..domain.money import Money
 from ..testing.fakes import ProviderError
-from .base import GenerationAdapter
+from .base import GenerationAdapter, normalized_setting
 from .state import receipt_locked
 
 MAX_INLINE_BYTES = 64 * 1024 * 1024
@@ -140,7 +140,8 @@ class VertexAdapter(GenerationAdapter):
             raise ProviderError('input_mode_not_qualified')
         if duration not in cap.get("durations_s", []):
             raise ProviderError("unsupported_duration")
-        aspect, resolution = request.get("aspect") or "9:16", request.get("resolution") or "720p"
+        aspect, resolution = (normalized_setting(request, "aspect", "9:16"),
+                              normalized_setting(request, "resolution", "720p"))
         if aspect not in cap.get("aspects", []) or resolution not in cap.get("resolutions", []):
             raise ProviderError("unsupported_settings")
         return {"model": model, "background": True, "input": [{"type": "text", "text": request["prompt"]}],
@@ -226,6 +227,9 @@ class VertexAdapter(GenerationAdapter):
         if not isinstance(iid, str) or not iid or "/" in iid:
             raise ProviderError("invalid_response")
         op = {"operation_id": iid, "request_hash": rh, "model": m,
+              "wire_hash": hashlib.sha256(json.dumps(
+                  request if isinstance(request, dict) else request.to_dict(),
+                  sort_keys=True, default=str).encode()).hexdigest(),
               "project": self.project, "location": self.location, "status": "accepted"}
         self.state["ops"][iid] = op
         self.state["submissions"][key].update(operation_id=iid, status="accepted")
@@ -291,6 +295,16 @@ class VertexAdapter(GenerationAdapter):
 
     @receipt_locked
     def reconcile(self, operation_id=None, request_hash=None):
+        # Attempt identity first: the executor binds it through the
+        # dispatch context, and `submissions` maps it to the operation —
+        # this is how a saved acceptance survives a restart.
+        binding = current_effect.get()
+        if binding and binding.get("attempt_id"):
+            prior = self.state["submissions"].get(binding["attempt_id"])
+            if prior is not None:
+                if prior.get("operation_id"):
+                    return self.observe(prior["operation_id"])
+                return None
         if operation_id:
             try:
                 return self.observe(operation_id)
@@ -300,7 +314,7 @@ class VertexAdapter(GenerationAdapter):
                 raise
         if request_hash:
             for op in self.state["ops"].values():
-                if op["request_hash"] == request_hash:
+                if request_hash in (op["request_hash"], op.get("wire_hash")):
                     return self.observe(op["operation_id"])
         return None
 

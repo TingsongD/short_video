@@ -7,6 +7,17 @@ from ..domain.errors import ContractError
 from ..testing.fakes import ProviderError
 
 
+def normalized_setting(request, name, default=None):
+    """One canonical read for settings that callers may supply either
+    at the top level or nested under `settings`. Both present with
+    different values is a conflict — never a silent choice."""
+    top = request.get(name)
+    nested = (request.get("settings") or {}).get(name)
+    if top is not None and nested is not None and top != nested:
+        raise ProviderError("conflicting_settings")
+    return top if top is not None else (nested if nested is not None else default)
+
+
 class GenerationAdapter:
     """Interface, not a base for reuse: each adapter owns its payloads."""
     name = ""
