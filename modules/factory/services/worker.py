@@ -8,6 +8,17 @@ from ..execution.effects import EffectService
 from ..store.uow import utcnow
 from ..testing.fakes import ProviderError
 
+# Result-state contract for tick(): a handler may only complete a job
+# through an explicitly successful outcome — or by returning data with no
+# status at all. Anything unrecognized is a failure, never a silent
+# success.
+DEFERRED = {'running', 'observer_lost', 'pending', 'unknown'}
+SUCCEEDED = {'rendered', 'verified', 'complete', 'succeeded', 'downloaded',
+             'submitted', 'reviewed', 'reused_validated_asset', 'manual',
+             'collected', 'accepted', 'released', 'ok', 'done'}
+FAILED = {'failed', 'conflict', 'unverified', 'cancelled',
+          'no_remote_trace', 'error'}
+
 
 class ApplicationWorker:
     def __init__(self, services):
@@ -28,21 +39,30 @@ class ApplicationWorker:
                     result=self.execute(command['kind'],command['input'],job)
                 else:
                     result=self.production(job)
-            if result.get('status')=='awaiting_review':
+            outcome = result.get('status')
+            if outcome == 'awaiting_review':
                 self.scheduler.transition(job['id'],job['fencing_token'],'awaiting_review')
                 with self.s.db.uow() as u:
                     u.conn.execute('DELETE FROM capacity_holds WHERE job_id=?',(job['id'],))
-            elif result.get('status') in ('running','observer_lost','pending','unknown'):
-                self.scheduler.defer(job['id'],job['fencing_token'],result['status'])
-            else:
+            elif outcome in DEFERRED:
+                self.scheduler.defer(job['id'],job['fencing_token'],outcome)
+            elif outcome is None or outcome in SUCCEEDED:
                 self.s.commands.finish(job['id'],result)
                 self.scheduler.complete(job['id'],job['fencing_token'])
+            else:
+                reason = outcome if outcome in FAILED else 'unrecognized_result_state:'+str(outcome)
+                self.scheduler.fail(job['id'],job['fencing_token'],reason)
+                with self.s.db.uow() as u:
+                    u.conn.execute('DELETE FROM meta WHERE key=?',('local_work:'+job['id'],))
+                    u.events.append('factory','command_failed',{'job_id':job['id'],'error':reason})
             return {'job_id':job['id'], **result}
         except ContractError as error:
             if error.code in ('remote_unfinished','capacity_full','retry_backoff'):
                 self.scheduler.defer(job['id'],job['fencing_token'],error.code)
             else:
                 self.scheduler.fail(job['id'],job['fencing_token'],error.code)
+                with self.s.db.uow() as u:
+                    u.conn.execute('DELETE FROM meta WHERE key=?',('local_work:'+job['id'],))
             with self.s.db.uow() as u:
                 u.events.append('factory','command_blocked',{'job_id':job['id'],'error':error.code,'detail':error.detail})
             return {'job_id':job['id'],'status':'blocked','error':error.code,'detail':error.detail}
@@ -51,10 +71,13 @@ class ApplicationWorker:
             # remains an unresolved attempt and is reconciled by its identity.
             retryable=error.transient and error.code in ('download_transport_failed','poll_failed')
             self.scheduler.fail(job['id'],job['fencing_token'],error.code,retryable=retryable)
+            with self.s.db.uow() as u:
+                u.conn.execute('DELETE FROM meta WHERE key=?',('local_work:'+job['id'],))
             return {'job_id':job['id'],'status':'retry' if retryable and job['retry_count']<5 else 'failed','error':error.code}
         except Exception as error:
             self.scheduler.fail(job['id'],job['fencing_token'],'handler_error:'+type(error).__name__)
             with self.s.db.uow() as u:
+                u.conn.execute('DELETE FROM meta WHERE key=?',('local_work:'+job['id'],))
                 u.events.append('factory','command_failed',{'job_id':job['id'],'error':type(error).__name__})
             # Keep a safe typed failure; tests may enable raising for diagnostics.
             if self.s.config.get('raise_worker_errors'): raise
