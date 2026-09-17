@@ -7,6 +7,105 @@ decisions) is my direct work.
 
 ---
 
+## 2026-09-16 → 2026-09-17 — Viral Video Factory build: F00–F34 (35 commits)
+
+**Session outcome:** the durable factory documented in
+`docs/viral-video-factory-handover.md` is implemented end to end —
+F00 baseline through F34 failure drills. Suite **852 passed /
+0 failed**, fully offline. All commits `feat/factory` branch. The only
+remaining module is F35 (funded pilot / release handoff), whose live
+parts need explicit spend authorisation.
+
+### 1. What was built (by wave)
+
+- **F00–F08 — foundations** (`f01` QA harness, fakes, fault injection;
+  domain contracts + immutable revisions + typed money; SQLite store
+  WAL/UoW/outbox/backup; artifact registry with probe + dedupe;
+  prices/budgets/reservations/settlement; dependency scheduler with
+  global capacities, leases, fencing; executor with submission
+  recovery/retry/cancellation; events, telemetry, redaction, replay).
+- **F09–F14 — intelligence** (seed registry + source acquisition;
+  outlier discovery with real cohort medians; Shopify product/media
+  snapshots; audiovisual reference analysis → timed blueprints;
+  reusable format templates; frozen experiment control/treatment
+  planning with declared change regions).
+- **F15–F20 — providers + media** (shared generation contract +
+  routing; Jimeng Canvas adapter with argv-level persistent fake CLI;
+  Google Vertex adapter with OAuth boundary, exact pilot payload,
+  HTTP-200 terminal-error parsing; reference packs; TTS/fit/alignment/
+  captions; music beds + shared mix).
+- **F21–F26 — production** (unique-work asset graph: shared work
+  generated once, variant isolation, priced DAG; deterministic
+  SVML/SVS/SVRun compiler gated by real `hypit check`/`plan`; render
+  builds with section cache; technical + changed-region QC bound to
+  output hashes; verified Drive delivery — intent-first, remote-first
+  dedupe, content reconcile; identity-safe cleanup).
+- **F27–F30 — surface** (FastAPI app: idempotent mutations, revision
+  CAS, SSE replay, ranged media, local security; React/Vite dashboard
+  with 15 vitest cases; monitoring/compare/review/delivery/studio
+  screens; operations module: doctor/start/stop/drain/backup/restore).
+- **F31–F33 — publication + learning** (manual + authorised automated
+  publishing — public only on confirmed `published_at`; legacy
+  `upload_post` defect fixed via new multipart adapter; analytics
+  readback with coverage-aware unknown-vs-zero semantics; frozen
+  decision policies, reproducible revisioned decisions, independent-
+  seed promotion counting, hypothesis library).
+- **F34 — failure drills** (new `tests/test_factory_e2e.py`, 14
+  integrated drills).
+
+### 2. F34 drill evidence (J01/J03/J04)
+
+- **J01** seed→4 outputs offline: 6 shared + 3 unique picture works;
+  only declared slots differ.
+- **J03** crash-restart: kill after provider acceptance → reconcile
+  finds the same remote id, zero duplicate submissions; kill after
+  upload ack-loss → one remote upload total, verified.
+- **J04** both provider routes: Jimeng totals in `jimeng_credits`,
+  Vertex in `usd_micros`, 9 fake interactions.
+- Plus: publication lost-ack → one post; budget cap enforced; global
+  capacities across workers; stage timings attributed
+  (`queue_wait_s`/`dispatch_s`); render cache parity by exact frame
+  count; urllib hard-blocked through the whole flow; owned cleanup
+  leaves unrelated processes; legacy entry points intact.
+
+### 3. Defects the drills caught (fixed)
+
+- **Vertex route never ran**: `GenerationAdapter` lacked the
+  executor-facing `poll` — added as an `observe` alias on the base so
+  both routes share one remote-lifecycle surface.
+- **`remote_unfinished` deadlock**: a still-running remote op failed
+  the download job permanently, stranding the capacity-1 Vertex hold —
+  now retryable (job returns to `ready`, re-polled).
+- **Vertex requests missed `model`**: plan-level model was priced but
+  not injected into takes — fake correctly returned `model_not_found`.
+
+### 4. Context day: 2026-09-15 (live pilots, pre-factory)
+
+Recorded for continuity (commit-subject level): Vertex OAuth + Lyria/
+narration verified; ElevenLabs API verified; Jimeng Canvas node-identity
++ timeout fixes with approved pilot results; Shopify intake + Jimeng
+product-reference pilot; Viral Outliers integration with approved
+credit batch; Drive access + delivered assets. These pilots produced
+the wire contracts F16/F17/F25 later encoded as fakes.
+
+### Verification (at log time)
+
+- `pytest tests -q` → **852 passed, 2 warnings** (~106s), no network.
+- Per-module reports: `docs/factory-reports/F00…F34.md`; tracker:
+  `docs/viral-video-factory-module-tracker.md`.
+
+### Open items handed forward
+
+| # | Item | Needs |
+|---|---|---|
+| F35 | Funded pilot, release scope, engineer handoff | explicit spend authorisation for live slices; offline packaging can proceed without it |
+| F34-M01/M03 | Operator UI journey + browser-disconnect pressure | human review |
+| F31-M04 | Live post verification | authorised real publish |
+| F32-M04 | Live analytics horizons | real post + 48h/7d/28d coverage |
+| Prior S3–S5/V1–V3 | Keys, cron fire, verify-at-live | unchanged from 09-14 |
+
+---
+
 ## 2026-09-14 — Planning → Wave 0 → K3 build → 2 review passes → 2 patch rounds
 
 **Session outcome:** full system built and reviewed; 4 real bugs found and
