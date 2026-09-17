@@ -1666,3 +1666,105 @@ class FakePublisher:
     def public_post_count(self):
         return sum(1 for p in self.doc["posts"].values()
                    if p["status"] == "public")
+
+
+class FakeAnalytics:
+    """Fake YouTube analytics world (F32): validates that callers only
+    use supported endpoint/metric combinations — the wire contract is
+    the test surface.
+
+    `transport(request)` where request = {"url","headers"}.
+    Fixtures: `stats` (data api), `analytics_rows`, `reach_rows`
+    (day-dimensioned), `channel_doc` for the median route.
+    Faults: oauth_expired, analytics_down, reach_down, data_down,
+    delayed (empty rows until cleared).
+    """
+
+    def __init__(self, stats=None, analytics_rows=None, reach_rows=None,
+                 channel_doc=None, faults=None):
+        self.stats = stats or {"viewCount": "2400", "likeCount": "91",
+                               "commentCount": "12"}
+        # columns: day + sorted(PULL_METRICS) = day, averageViewDuration,
+        # averageViewPercentage, comments, likes, subscribersGained, views
+        self.analytics_rows = analytics_rows if analytics_rows is not \
+            None else [["2026-09-17", 18.5, 61.0, 4, 9, 3, 1000],
+                       ["2026-09-18", 17.0, 58.0, 3, 7, 2, 1400]]
+        self.reach_rows = reach_rows if reach_rows is not None else [
+            ["2026-09-17", 38500, 6.2], ["2026-09-18", 30000, 5.8]]
+        self.channel_doc = channel_doc or {
+            "uploads": "UU-x", "ids": ["a", "b", "c"],
+            "views": [1000, 1500, 2000]}
+        self.faults = set(faults or [])
+        self.requests = []
+
+    def transport(self, req):
+        from urllib.parse import urlparse, parse_qs
+        self.requests.append(req)
+        url = req["url"]
+        p = urlparse(url)
+        q = {k: v[0] for k, v in parse_qs(p.query).items()}
+        if "oauth_expired" in self.faults and \
+                ("analytics" in p.netloc or "reporting" in p.netloc):
+            return {"status": 401, "body": {"error": "token_expired"}}
+        if "youtubeanalytics" in p.netloc:
+            if "analytics_down" in self.faults:
+                return {"status": 503, "body": {"error": "down"}}
+            metrics = set((q.get("metrics") or "").split(","))
+            from ..analytics.client import ANALYTICS_PER_VIDEO
+            bad = metrics - ANALYTICS_PER_VIDEO
+            if bad:
+                return {"status": 400,
+                        "body": {"error":
+                                 f"unsupported_metrics:{sorted(bad)}"}}
+            if not req["headers"].get("Authorization"):
+                return {"status": 401, "body": {"error": "no_oauth"}}
+            cols = ["day"] + sorted(metrics)
+            rows = ([] if "delayed" in self.faults
+                    else self.analytics_rows)
+            return {"status": 200,
+                    "body": {"columnHeaders": [{"name": c}
+                                               for c in cols],
+                             "rows": rows}}
+        if "youtubereporting" in p.netloc:
+            if "reach_down" in self.faults:
+                return {"status": 503, "body": {"error": "down"}}
+            if q.get("reportType") != "channel_reach_basic_a1":
+                return {"status": 400,
+                        "body": {"error": "unknown_report_type"}}
+            metrics = set((q.get("metrics") or "").split(","))
+            from ..analytics.client import REACH_METRICS
+            bad = metrics - REACH_METRICS
+            if bad:
+                return {"status": 400,
+                        "body": {"error":
+                                 f"unsupported_metrics:{sorted(bad)}"}}
+            if not req["headers"].get("Authorization"):
+                return {"status": 401, "body": {"error": "no_oauth"}}
+            cols = ["day"] + sorted(metrics)
+            rows = ([] if "delayed" in self.faults else self.reach_rows)
+            return {"status": 200,
+                    "body": {"columnHeaders": [{"name": c}
+                                               for c in cols],
+                             "rows": rows}}
+        if "data_down" in self.faults:
+            return {"status": 503, "body": {"error": "down"}}
+        if "/channels" in p.path:
+            uploads = self.channel_doc.get("uploads")
+            items = ([] if not uploads else [{
+                "contentDetails": {"relatedPlaylists":
+                                   {"uploads": uploads}}}])
+            return {"status": 200, "body": {"items": items}}
+        if "/playlistItems" in p.path:
+            items = [{"contentDetails": {"videoId": v}}
+                     for v in self.channel_doc.get("ids", [])]
+            return {"status": 200, "body": {"items": items}}
+        if "/videos" in p.path:
+            ids = (q.get("id") or "").split(",")
+            if len(ids) > 1:                       # median listing
+                views = self.channel_doc.get("views", [])
+                items = [{"statistics": {"viewCount": str(v)}}
+                         for v in views[:len(ids)]]
+            else:
+                items = [{"statistics": dict(self.stats)}]
+            return {"status": 200, "body": {"items": items}}
+        return {"status": 404, "body": {"error": "unknown_endpoint"}}

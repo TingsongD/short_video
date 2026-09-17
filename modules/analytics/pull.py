@@ -43,11 +43,15 @@ class AnalyticsClient:
         return items[0].get("statistics", {}) if items else {}
 
     def analytics_rows(self, yt_video_id, start_date, end_date):
-        """Views/AVD/impressions/CTR for one video over a window."""
+        """Views/AVD/subs for one video over a window. F32 fix: the
+        generic `impressions,ctr` pair was never a supported per-video
+        metric set — thumbnail reach lives on the Reporting API
+        `channel_reach_basic_a1` report (see the factory client)."""
         q = urllib.parse.urlencode({
             "ids": "channel==MINE",
             "startDate": start_date, "endDate": end_date,
-            "metrics": "views,averageViewDuration,impressions,ctr,subscribersGained",
+            "metrics": "views,averageViewDuration,averageViewPercentage,"
+                       "subscribersGained",
             "filters": f"video=={yt_video_id}",
         })
         data = self.transport(f"{ANALYTICS_API}?{q}")
@@ -73,7 +77,16 @@ class AnalyticsClient:
 
     def channel_median_views(self, handle="", max_items=25):
         """Median viewCount of our channel's recent uploads (Data API, key
-        auth). Verdict/promotion baseline (B3). Returns 0.0 when unavailable."""
+        auth). Verdict/promotion baseline (B3). Legacy contract: returns
+        0.0 when unavailable — see channel_median_views_observed() for
+        the explicit unknown form."""
+        value, _reason = self.channel_median_views_observed(
+            handle, max_items)
+        return value if value is not None else 0.0
+
+    def channel_median_views_observed(self, handle="", max_items=25):
+        """(median|None, reason) — an unavailable baseline is unknown,
+        never a measured zero."""
         from modules.radar.metrics import channel_median
         q = urllib.parse.urlencode({"part": "contentDetails",
                                     "forHandle": handle.lstrip("@"),
@@ -81,11 +94,11 @@ class AnalyticsClient:
         data = self.transport(f"{CHANNELS_API}?{q}")
         items = data.get("items") or []
         if not items:
-            return 0.0
+            return None, "channel_not_found"
         uploads = (items[0].get("contentDetails", {})
                    .get("relatedPlaylists", {}).get("uploads"))
         if not uploads:
-            return 0.0
+            return None, "uploads_playlist_missing"
         q = urllib.parse.urlencode({"part": "contentDetails", "playlistId": uploads,
                                     "maxResults": min(max_items, 50), "key": self.yt_api_key})
         data = self.transport(f"{PLAYLIST_API}?{q}")
@@ -93,10 +106,12 @@ class AnalyticsClient:
                for it in data.get("items", [])
                if it.get("contentDetails", {}).get("videoId")][:max_items]
         if not ids:
-            return 0.0
+            return None, "no_recent_uploads"
         q = urllib.parse.urlencode({"part": "statistics", "id": ",".join(ids),
                                     "key": self.yt_api_key})
         data = self.transport(f"{DATA_API}?{q}")
         views = [int(v.get("statistics", {}).get("viewCount", 0))
                  for v in data.get("items", [])]
-        return channel_median(views)
+        if not views:
+            return None, "no_statistics"
+        return channel_median(views), "ok"

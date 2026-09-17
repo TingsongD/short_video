@@ -960,12 +960,19 @@ class Publication(Record):
 class MetricSnapshot(Record):
     """One pull of metrics for a publication. Missing ≠ zero."""
     publication_id: str = ""
+    post_id: str = ""                # platform post pulled
+    horizon: str = ""                # 48h|7d|28d|manual|<custom>
+    query_version: str = ""
+    timezone: str = "UTC"
     metric_definitions: dict = field(default_factory=dict)
     requested_period: dict = field(default_factory=dict)
     actual_coverage: dict = field(default_factory=dict)
     source: str = ""                 # data_api|analytics_api|reporting_api|manual
     observed_at: str = ""
     metrics: dict = field(default_factory=dict)   # name -> number|None
+    availability: dict = field(default_factory=dict)  # name -> reason
+    raw: dict = field(default_factory=dict)       # untouched responses
+    attempts: int = 1                # retries reuse this snapshot
     completeness: str = "complete"   # complete|partial|pending|failed
     missing_reason: str = ""
 

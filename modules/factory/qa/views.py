@@ -14,6 +14,7 @@ VIEW_MODULE = {
     "events": "F08", "budgets": "F05", "provider-calls": "F01",
     "reviews": "F24", "deliveries": "F25", "publications": "F31",
     "metrics": "F32", "resources": "F26", "health": "F30",
+    "decisions": "F33",
 }
 
 

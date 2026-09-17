@@ -85,7 +85,7 @@ Dependencies below define implementation prerequisites, not permission to spend.
 | [F29 — Queue, comparison, review and Studio feedback UI](viral-video-factory-implementation-modules.md#f29) | F28 | done | run | pending | docs/factory-reports/F29.md; 23 vitest + 7 studio tests; M01–M04 await operator; suite 758 |
 | [F30 — Local installation, services and backup/restore](viral-video-factory-implementation-modules.md#f30) | F29 | done | run | pending | docs/factory-reports/F30.md + docs/factory-operations.md; 18 ops tests; M01–M04 pass; suite 776 |
 | [F31 — Manual and authorized automated publishing](viral-video-factory-implementation-modules.md#f31) | F27, F25 | done | run | pending | docs/factory-reports/F31.md; 27 tests; M01–M03 pass, M04 awaits live post; suite 803 |
-| [F32 — Analytics readback and coverage](viral-video-factory-implementation-modules.md#f32) | F31 | planned | not_run | pending | Unassigned; no evidence yet |
+| [F32 — Analytics readback and coverage](viral-video-factory-implementation-modules.md#f32) | F31 | done | run | pending | docs/factory-reports/F32.md; 19 tests; M01–M03 pass, M04 awaits live horizon; suite 821 |
 | [F33 — Experiment decisions and learning library](viral-video-factory-implementation-modules.md#f33) | F32 | planned | not_run | not_applicable | Unassigned; no evidence yet |
 | [F34 — Failure drills and performance qualification](viral-video-factory-implementation-modules.md#f34) | F30, F33 | planned | not_run | not_applicable | Unassigned; no evidence yet |
 | [F35 — Funded pilot, release and engineer handoff](viral-video-factory-implementation-modules.md#f35) | F34 | planned | not_run | pending | Unassigned; no evidence yet |
