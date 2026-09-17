@@ -238,10 +238,18 @@ def produce_stages(idea_id, ctx):
     return sequence[:STAGE_ORDER_PRODUCE.index(stop_after) + 1]
 
 
-def _pull_window(client, rec):
+def _pull_window(client, rec, horizon_hours=48):
     """One analytics pull -> readback window dict (same shape as M10 CLI)."""
     yt_id = rec["platform_video_ids"].get("youtube")
-    start, end = "2005-01-01", datetime.now(timezone.utc).date().isoformat()
+    from datetime import timedelta
+    from zoneinfo import ZoneInfo
+    if not rec.get('published_at'):raise ValueError('publication time required')
+    origin=datetime.fromisoformat(rec['published_at'].replace('Z','+00:00'))
+    limit=origin+timedelta(hours=horizon_hours)
+    if datetime.now(timezone.utc)<limit:raise ValueError('readback horizon is not due')
+    local=origin.astimezone(ZoneInfo('America/Los_Angeles'));end_local=limit.astimezone(ZoneInfo('America/Los_Angeles'))
+    exact=all(x.hour==x.minute==x.second==x.microsecond==0 for x in (local,end_local))
+    start,end=local.date().isoformat(),(end_local-timedelta(microseconds=1)).date().isoformat()
     stats = client.analytics_rows(yt_id, start, end)
     return {
         "pulled_at": datetime.now(timezone.utc).isoformat().replace(
@@ -252,6 +260,8 @@ def _pull_window(client, rec):
         "impressions": int(stats.get("impressions", 0)),
         "retention_points": client.retention(yt_id, start, end),
         "subs_gained": int(stats.get("subscribersGained", 0)),
+        'availability':{'views':'ok' if 'views' in stats else 'unavailable','avg_view_duration_s':'ok' if 'averageViewDuration' in stats else 'unavailable','thumbnail_ctr':'reporting_route_required','thumbnail_impressions':'reporting_route_required'},
+        'window_kind':'exact_rolling' if exact else 'source_calendar',
     }
 
 
@@ -275,7 +285,7 @@ def readback_stages(ctx):
     def pull():
         state["pulled"] = []
         for rec, doc, name in state["due"]:
-            w = _pull_window(ctx["analytics_client"], rec)
+            w = _pull_window(ctx["analytics_client"], rec,windows.window_hours(hours)[name])
             state["pulled"].append((rec, doc, name, w))
 
     def record():

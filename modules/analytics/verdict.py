@@ -8,6 +8,12 @@ def verdict(window, video_len_s, baseline_median_views, cfg):
     """window: one readback windows{} entry. Returns 'win'|'loss'|'pending'."""
     if not window:
         return "pending"
+    import math
+    if type(baseline_median_views) not in (int,float) or not math.isfinite(baseline_median_views) or baseline_median_views<=0:
+        return 'pending'
+    availability=window.get('availability',{})
+    if any(availability.get(k,'ok') not in ('ok','verified_manual') for k in ('views','avg_view_duration_s')) or window.get('window_kind') in ('lifetime','source_calendar','unavailable'):
+        return 'pending'
     views = window.get("views", 0)
     avd = window.get("avg_view_duration_s")
     views_win = views >= cfg["win_views_multiplier"] * baseline_median_views

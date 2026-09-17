@@ -59,13 +59,19 @@ class LearningService:
                       promote_min_independent_experiments=2, now=""):
         """Bind the policy BEFORE any publication for the experiment."""
         now = now or _now()
+        from ..analytics.service import HORIZONS,NORMALIZED
+        if horizon not in HORIZONS or primary_metric not in NORMALIZED or primary_metric=='public_views' or exposure_metric not in NORMALIZED or exposure_metric=='public_views' or comparison_rule not in ('any','all'):
+            raise ContractError('invalid_decision_policy','metric/horizon/rule')
+        if type(promote_min_independent_experiments) is not int or promote_min_independent_experiments<2:raise ContractError('invalid_promotion_threshold','threshold')
+        er=self._record('experimentrevision','exp:'+experiment_id)
+        if not er or er['revision']!=revision:raise ContractError('stale_revision','experiment')
         for pub in self._all("publication"):
             body = json.loads(pub["body"])
             vp = self._record("variantplan",
                               body.get("variant_plan_id", ""))
             if vp and json.loads(vp["body"]).get(
                     "experiment_id") == experiment_id and \
-                    body.get("status") in ("public", "scheduled"):
+                    body.get("status") not in ("failed",):
                 raise ContractError(
                     "policy_after_publication", "experiment_id",
                     experiment_id)
@@ -88,7 +94,7 @@ class LearningService:
             experiment_id, revision,
             policy_version, primary_metric, horizon, exposure_metric,
             min_exposure, practical_lift, guardrails or {},
-            comparison_rule)
+            comparison_rule,promote_min_independent_experiments)
         pol.validate_or_raise()
         with self.db.uow() as u:
             u.records.put(pol)
@@ -113,9 +119,11 @@ class LearningService:
         if pol is None:
             raise ContractError("policy_not_frozen", "experiment_id",
                                 experiment_id)
-        horizon = horizon or pol["horizon"]
+        if horizon and horizon!=pol['horizon']:raise ContractError('frozen_horizon','horizon')
+        horizon = pol['horizon']
+        from ..analytics.service import HORIZONS
         variants = self._variants(experiment_id, revision)
-        if not variants:
+        if {v['variant_key'] for v in variants}!=set('ABCD'):
             raise ContractError("no_variants", "experiment_id",
                                 experiment_id)
         control_key = "A"
@@ -131,18 +139,26 @@ class LearningService:
                 entry["coverage"] = "missing"
             else:
                 entry["coverage"] = snap["completeness"]
-                entry["metrics"] = snap["metrics"]
+                entry['metrics']={k:v for k,v in snap['metrics'].items() if snap.get('availability',{}).get(k) in ('ok','verified_manual')}
+                entry['window']={'query_version':snap.get('query_version'),'timezone':snap.get('timezone'),
+                    'hours':snap.get('requested_period',{}).get('horizon_hours'),'kind':snap.get('requested_period',{}).get('window_kind'),
+                    'definitions':snap.get('metric_definitions',{}),'source':snap.get('source')}
+                entry['snapshot_revision']=snap.get('revision',0)
+                if entry['window']['kind']!='exact_rolling' or entry['window']['hours']!=HORIZONS[horizon]:entry['coverage']='incompatible_window'
             per_variant[vp["variant_key"]] = entry
             if snap:
                 evidence.append(snap["id"])
 
+        post_ids=[(v.get('post_id'),v.get('publication_id')) for v in per_variant.values()]
+        if len({x[0] for x in post_ids if x[0]})!=len(per_variant):
+            for v in per_variant.values():v['coverage']='missing_or_duplicate_post'
         comparisons, conclusion, winner, limitations = \
             self._evaluate(pol, per_variant, control_key)
         inputs_hash = _hash(
             pol["content_hash"], horizon,
             {k: {"snap": v.get("snapshot_id", ""),
                  "cov": v["coverage"],
-                 "m": v.get("metrics", {})}
+                 "m": v.get("metrics", {}),"window":v.get("window"),"snapshot_revision":v.get("snapshot_revision"),"post_id":v.get("post_id")}
              for k, v in sorted(per_variant.items())})
         did = f"dec-{experiment_id}-r{revision}-{horizon}"
         priors = self._decision_chain(did)
@@ -183,13 +199,15 @@ class LearningService:
         if missing:
             return [], "waiting_for_data", "", limitations + [
                 f"incomplete coverage: {sorted(missing)}"]
-        exposure = sum(
-            (v.get("metrics", {}).get(pol["exposure_metric"])
-             or v.get("metrics", {}).get("views") or 0)
-            for v in per_variant.values())
-        if exposure < pol["min_exposure"]:
-            return [], "insufficient_exposure", "", limitations + [
-                f"exposure {exposure} < min {pol['min_exposure']}"]
+        import math
+        windows={json.dumps(v.get('window'),sort_keys=True) for v in per_variant.values()}
+        if len(windows)!=1:return [],'waiting_for_data','',limitations+['incompatible observation windows or source definitions']
+        for key,v in per_variant.items():
+            exposure=v.get('metrics',{}).get(pol['exposure_metric'])
+            if type(exposure) not in (int,float) or not math.isfinite(exposure) or exposure<pol['min_exposure']:
+                return [],'insufficient_exposure','',limitations+[f"{key}: {pol['exposure_metric']}={exposure}; each arm requires {pol['min_exposure']}"]
+        if any(type(v.get('metrics',{}).get(metric)) not in (int,float) or not math.isfinite(v['metrics'][metric]) or v['metrics'][metric]<0 for v in per_variant.values()):
+            return [],'waiting_for_data','',limitations+['primary metric unavailable or invalid']
         a = per_variant.get(control_key, {})
         a_val = (a.get("metrics") or {}).get(metric)
         if not a_val:
@@ -219,7 +237,7 @@ class LearningService:
                 all_nonpositive = False
             if not gfail and lift > best:
                 best, winner = lift, key
-        if winner and best >= pol["practical_lift"]:
+        if winner and best > 0 and best >= pol["practical_lift"]:
             if pol["comparison_rule"] == "all":
                 ok = all(c.get("lift") is not None and
                          c["lift"] >= pol["practical_lift"] and
@@ -254,13 +272,14 @@ class LearningService:
         seeds = set()
         for row in self._all("decision"):
             d = json.loads(row["body"])
-            if d.get("conclusion") != "provisional_winner":
-                continue
-            er = self._record("experimentrevision",
-                              f"{d['experiment_id']}-r"
-                              f"{d['experiment_revision']}")
-            if er is None:
-                continue
+            if d.get('conclusion')!='provisional_winner' or self._superseded(row['id']):continue
+            er=self._record('experimentrevision','exp:'+d['experiment_id'])
+            if er is None or er['revision']!=d['experiment_revision']:continue
+            # A decision over old snapshots cannot remain independent evidence.
+            pol=self.policy(d['experiment_id'],d['experiment_revision'])
+            if not pol or pol['horizon']!=d['horizon']:continue
+            current=self.decide(d['experiment_id'],d['experiment_revision'])
+            if current['id']!=d['id'] or current['conclusion']!='provisional_winner':continue
             body = json.loads(er["body"])
             if body.get("template_ref") == template_ref and \
                     body.get("seed_id"):
@@ -271,7 +290,12 @@ class LearningService:
         """Promote a reusable format only on INDEPENDENT experiments.
         Returns the promotion outcome with its limitation attached."""
         seeds = self.independent_experiments(template_ref)
-        need = min_independent or 2
+        policies=[]
+        for row in self._all('decisionpolicy'):
+            p=json.loads(row['body']);er=self._record('experimentrevision','exp:'+p['experiment_id'])
+            if er and json.loads(er['body']).get('template_ref')==template_ref:
+                policies.append(p['promote_min_independent_experiments'])
+        need=max([2,min_independent or 2,*policies])
         if len(seeds) >= need:
             status = "proven"
         elif seeds:
@@ -372,24 +396,24 @@ class LearningService:
                 out.append(b)
         return out
 
-    def _publication_for(self, variant_plan_id):
-        for row in self._all("publication"):
-            b = json.loads(row["body"])
-            if b.get("variant_plan_id") == variant_plan_id:
-                return b
-        return None
+    def _publication_for(self,variant_plan_id):
+        found=[json.loads(r['body']) for r in self._all('publication') if json.loads(r['body']).get('variant_plan_id')==variant_plan_id and json.loads(r['body']).get('status')=='public' and not json.loads(r['body']).get('deleted_at')]
+        return found[0] if len(found)==1 else None
 
-    def _snapshot(self, publication_id, horizon):
-        row = self._record("metricsnapshot",
-                           f"snap-{publication_id}-{horizon}")
-        return json.loads(row["body"]) if row else None
+    def _snapshot(self,publication_id,horizon):
+        rows=self.db.conn.execute("SELECT body FROM records WHERE kind='metricsnapshot' AND json_extract(body,'$.publication_id')=? AND json_extract(body,'$.horizon')=? ORDER BY json_extract(body,'$.observed_at') DESC,revision DESC",(publication_id,horizon)).fetchall()
+        bodies=[json.loads(r['body']) for r in rows]
+        return max(bodies,key=lambda b:(datetime.fromisoformat(b['observed_at'].replace('Z','+00:00')),b.get('revision',0))) if bodies else None
 
     def _decision_chain(self, base_id):
         """All decision records in the base_id chain, oldest first."""
         rows = [r for r in self._all("decision")
                 if r["id"] == base_id or
                 r["id"].startswith(f"{base_id}-v")]
-        return rows
+        def number(r):
+            suffix=r['id'][len(base_id):]
+            return int(suffix[2:]) if suffix.startswith('-v') else 0
+        return sorted(rows,key=number)
 
     def _record(self, kind, rid):
         return self.db.uow().records.get(kind, rid)
@@ -400,12 +424,12 @@ class LearningService:
                 "SELECT * FROM records WHERE kind=? "
                 "ORDER BY id, revision", (kind,)).fetchall()
 
-    def _supersede(self, prior_row, new_id):
-        body = json.loads(prior_row["body"])
-        body["superseded_by"] = new_id
+    def _superseded(self,decision_id):
+        row=self.db.conn.execute("SELECT value FROM meta WHERE key=?",('superseded:'+decision_id,)).fetchone()
+        return json.loads(row[0]) if row else None
+
+    def _supersede(self,prior_row,new_id):
+        # Supersession is a relation; the original decision bytes remain immutable.
         with self.db.uow() as u:
-            u.conn.execute(
-                "UPDATE records SET body=? WHERE kind='decision' AND "
-                "id=? AND revision=?",
-                (json.dumps(body), prior_row["id"],
-                 prior_row["revision"]))
+            u.conn.execute('INSERT INTO meta(key,value) VALUES(?,?)',('superseded:'+prior_row['id'],json.dumps(new_id)))
+            u.events.append('decision:'+prior_row['id'],'superseded',{'by':new_id})

@@ -359,3 +359,24 @@ Evidence: 32 targeted tests; full offline suite **922 passed** in 152.75 seconds
 unchanged. `REPAIR-S6-EVIDENCE.json` records scope and the official search protocol.
 No external research call, generation or purchase occurred. Live research remains
 unqualified; this checkpoint does not sign production or legacy G-gates.
+
+## Safe repair S7 — publication, readback and learning (2026-09-17)
+
+Parent revision `b23790b`. Native Upload Post requests now retain asynchronous
+identity and distinguish per-platform public posts from upload completion. Exact
+registered bytes, destination, metadata and action bind immutable publication
+authority. The application requires accepted finals and verified delivery/cleanup.
+
+YouTube reach uses Reporting job/report discovery and bounded CSV ingestion.
+Metric-specific coverage, weighted denominators, Pacific source days and exact
+horizon eligibility govern comparison; lifetime counters remain separate. Learning
+requires exposure for every arm, the frozen horizon and current independent
+experiments. Supersession preserves original decision records. Legacy missing
+baselines and pending observations cannot generate promotion evidence.
+
+Four original negative probes reproduced before repair. 81 focused tests passed;
+full offline suite: **932 passed in 175.52s**, two dependency warnings. The public
+application journey produced real local exports, collected fixture reviews and
+fake delivery, then four exactly authorized fake posts, source reports and a
+frozen-policy decision. No real posts, account calls, paid generation or live
+analytics qualification occurred. Evidence: REPAIR-S7-EVIDENCE.json.

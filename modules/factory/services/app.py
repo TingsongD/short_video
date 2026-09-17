@@ -17,7 +17,7 @@ ALLOWED_UPLOAD_TYPES = {"mp4", "mov", "webm", "png", "jpg", "jpeg", "mp3", "wav"
 COLLECTIONS = {"seeds":"seed", "blueprints":"referenceblueprint", "templates":"formattemplate",
     "products":"productsnapshot", "experiments":"experimentrevision", "variants":"variantplan",
     "plans":"productionplan", "compositions":"composition", "reviews":"review", "deliveries":"delivery",
-    "publications":"publication", "decisions":"decision",'research':'discoveryrun','effect_plans':'effectplan'}
+    "publications":"publication", "decisions":"decision",'research':'discoveryrun','effect_plans':'effectplan','metrics':'metricsnapshot','policies':'decisionpolicy'}
 
 
 class FactoryServices:
@@ -318,8 +318,8 @@ class FactoryServices:
         return self.commands.enqueue('delivery',command,experiment_id=variant['experiment_id'],revision=expected_revision,
              phase='deliver',identity=did)
 
-    def record_publication(self,variant_id,platform,account_id):
-        raise ContractError('publication_route_unqualified','publication','Complete the publishing qualification gate')
+    def record_publication(self,variant_id,body,revision):
+        return self.require('publication_work').plan(variant_id,body,revision)
 
     def experiment_results(self,eid):
         exp=self._current(eid); variants=[]

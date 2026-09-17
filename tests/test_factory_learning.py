@@ -28,7 +28,7 @@ def _experiment(db, eid="exp-1", seed="seed-1", rev=1,
     with db.uow() as u:
         u.records.put(ExperimentRevision(
             schema_version="experiment_revision.v1",
-            id=f"{eid}-r{rev}", created_at=NOW, experiment_id=eid,
+            id=f"exp:{eid}", created_at=NOW, experiment_id=eid,
             revision=rev, status="accepted", seed_id=seed,
             template_ref=template, content_hash=f"h-{eid}-{rev}"))
         for vk in "ABCD":
@@ -45,22 +45,26 @@ def _experiment(db, eid="exp-1", seed="seed-1", rev=1,
 def _publish(db, eid, vals, horizon="48h"):
     """Register a manual post + snapshot per variant.
     vals: {variant: {metric: value}} — {} means no snapshot."""
+    from modules.factory.testing.fakes import FakePublisher
+    from modules.factory.integrations.publisher import UploadPostPublisher
+    remote=FakePublisher()
     pub_svc = PublishingService(
-        db, accounts={"youtube:acct-main": "acct-main"})
+        db, publisher=UploadPostPublisher(transport=remote.transport,verifier=remote.verify_post),accounts={"youtube:acct-main": "acct-main"})
     for vk, metrics in vals.items():
         pid = f"pub-{eid}-{vk.lower()}"
+        remote.plant_post(f'yt-{pid}')
         pub_svc.register_manual(
             pid, variant_plan_id=f"vp-{eid}-{vk.lower()}",
             final_sha256=SHA, platform="youtube",
             account_id="acct-main", remote_post_id=f"yt-{pid}",
-            published_at="2026-09-10T09:00:00+00:00", verify=False)
+            published_at="2026-09-10T09:00:00+00:00", verify=True)
         if metrics is None:
             continue
         snap = MetricSnapshot(
             schema_version="metric_snapshot.v1",
             id=f"snap-{pid}-{horizon}", created_at=NOW,
             publication_id=pid, post_id=f"yt-{pid}", horizon=horizon,
-            query_version="f32.v1",
+            query_version="f32.v2",requested_period={'horizon_hours':48,'window_kind':'exact_rolling'},source='verified fixture',
             metrics=metrics,
             availability={k: "ok" for k in metrics},
             completeness="complete", observed_at=NOW)
@@ -236,7 +240,8 @@ def test_new_data_revises_decision(db):
     assert d2["conclusion"] == "provisional_winner"
     assert d2["winner"] == "D"
     old = db.uow().records.get("decision", d1["id"])
-    assert json.loads(old["body"])["superseded_by"] == d2["id"]
+    assert json.loads(old['body'])['superseded_by']==''
+    assert svc._superseded(d1['id'])==d2['id']
 
 
 # ------------------------------------------------ independent count --

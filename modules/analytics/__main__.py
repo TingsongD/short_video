@@ -48,8 +48,16 @@ def main(argv=None):
         yt_api_key=sec.get("YOUTUBE_API_KEY", ""),
         oauth_token_path=sec.get("YT_ANALYTICS_TOKEN", ""),
     )
-    start = "2005-01-01"
-    end = datetime.now(timezone.utc).date().isoformat()
+    from datetime import timedelta
+    from zoneinfo import ZoneInfo
+    from modules.factory.analytics.service import HORIZONS
+    record=next((r for r in load_records() if r['video_id']==args.video_id and r.get('platform_video_ids',{}).get('youtube')==args.youtube_id),None)
+    if not record or not record.get('published_at'):p.error('Verified publication time is required for a timed readback')
+    t0=datetime.fromisoformat(record['published_at'].replace('Z','+00:00'));due=t0+timedelta(hours=HORIZONS[args.window])
+    if datetime.now(timezone.utc)<due:p.error('The requested readback horizon is not due')
+    local=t0.astimezone(ZoneInfo('America/Los_Angeles'));last=due.astimezone(ZoneInfo('America/Los_Angeles'))
+    exact=all(t.hour==t.minute==t.second==t.microsecond==0 for t in (local,last))
+    start=local.date().isoformat();end=(last-timedelta(microseconds=1)).date().isoformat()
     stats = client.analytics_rows(args.youtube_id, start, end)
     window = {
         "pulled_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
@@ -59,6 +67,8 @@ def main(argv=None):
         "impressions": int(stats.get("impressions", 0)),
         "retention_points": client.retention(args.youtube_id, start, end),
         "subs_gained": int(stats.get("subscribersGained", 0)),
+        'availability':{'views':'ok' if 'views' in stats else 'unavailable','avg_view_duration_s':'ok' if 'averageViewDuration' in stats else 'unavailable','thumbnail_ctr':'reporting_route_required','thumbnail_impressions':'reporting_route_required'},
+        'window_kind':'exact_rolling' if exact else 'source_calendar',
     }
     doc = load_or_new(args.video_id)
     record_window(doc, args.window, window, args.video_len_s, cfg)

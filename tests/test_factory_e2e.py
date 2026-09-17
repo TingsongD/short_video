@@ -334,20 +334,10 @@ def test_j08_restore_fresh_root_gate_then_reconcile(tmp_path):
 def test_publication_lost_ack_one_post(tmp_path):
     db = Database(tmp_path / "f.db")
     remote = FakePublisher(faults={"lost_ack"})
-    svc = PublishingService(
-        db, effects=FixtureEffects(db, Executor(db)), accounts={"youtube:acct-main": "acct-main"},
-        publisher=UploadPostPublisher(
-            api_key="k", user="acct-main",
-            transport=remote.transport))
-    from modules.factory.domain.records import Authorization
-    with db.uow() as u:
-        u.records.put(Authorization(
-            schema_version="authorization.v1", id="a1",
-            created_at=NOW, scope_hash="s",
-            publication_authorized=True, status="authorized"))
-    svc.plan("pub-1", variant_plan_id="vp-1", final_sha256="ab" * 32,
-             platform="youtube", account_id="acct-main",
-             authorization_id="a1")
+    from test_factory_publishing import _svc,_auth,_plan
+    svc=_svc(db,remote)
+    _auth(db)
+    _plan(svc)
     v = tmp_path / "v.mp4"
     v.write_bytes(b"v")
     svc.publish("pub-1", video_path=str(v), now=NOW)

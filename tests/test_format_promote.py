@@ -67,8 +67,8 @@ def test_win_resets_loss_streak():
     assert e["status"] != "retired"  # streak restarted at 1
 
 
-def test_pending_verdict_counts_video_not_streak():
+def test_pending_verdict_does_not_count_as_promotion_evidence():
     e = _entry()
     update_entry(e, _rb("pending"), CFG)
-    assert e["our_stats"]["videos"] == 1
+    assert e["our_stats"]["videos"] == 0
     assert e["our_stats"]["consecutive_losses"] == 0

@@ -110,8 +110,8 @@ class AnalyticsClient:
         q = urllib.parse.urlencode({"part": "statistics", "id": ",".join(ids),
                                     "key": self.yt_api_key})
         data = self.transport(f"{DATA_API}?{q}")
-        views = [int(v.get("statistics", {}).get("viewCount", 0))
-                 for v in data.get("items", [])]
+        views = [int(v['statistics']['viewCount'])
+                 for v in data.get("items", []) if v.get('statistics',{}).get('viewCount') is not None]
         if not views:
             return None, "no_statistics"
         return channel_median(views), "ok"

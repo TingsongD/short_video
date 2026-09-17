@@ -20,7 +20,7 @@ from .client import (ANALYTICS_PER_VIDEO, AnalyticsTransportError,
                      REACH_METRICS)
 
 HORIZONS = {"48h": 48, "7d": 168, "28d": 672}
-QUERY_VERSION = "f32.v1"
+QUERY_VERSION = "f32.v2"
 
 PULL_METRICS = {"views", "averageViewDuration",
                 "averageViewPercentage", "subscribersGained",
@@ -56,15 +56,16 @@ def _day(dt):
 
 
 class ReadbackService:
-    def __init__(self, db, client):
+    def __init__(self, db, client,clock=None):
         self.db = db
         self.client = client
+        self.clock=clock or _now
 
     # -------------------------------------------------------- due --
 
     def due(self, publication_id, now=""):
         """Horizon states derived from the ACTUAL published_at."""
-        now = now or _now()
+        now = now or self.clock()
         pub = self._pub(publication_id)
         if not pub or pub["status"] != "public" or \
                 not pub.get("published_at"):
@@ -95,7 +96,7 @@ class ReadbackService:
     def collect(self, publication_id, horizon, now=""):
         """Pull all three routes for one due horizon; store raw +
         normalized snapshot. Idempotent per (pub, horizon, version)."""
-        now = now or _now()
+        now = now or self.clock()
         if horizon not in HORIZONS:
             raise ContractError("unknown_horizon", "horizon", horizon)
         pub = self._pub(publication_id)
@@ -107,7 +108,14 @@ class ReadbackService:
         if _parse(now) < due_at:
             raise ContractError("horizon_not_due", "horizon", horizon)
         post_id = pub["remote_post_id"]
-        start, end = _day(t0), _day(due_at)
+        from zoneinfo import ZoneInfo
+        zone=ZoneInfo('America/Los_Angeles')
+        local_start=t0.astimezone(zone);local_end=due_at.astimezone(zone)
+        exact=all(x.hour==x.minute==x.second==x.microsecond==0 for x in (local_start,local_end))
+        start=_day(local_start);end=_day(local_end-timedelta(microseconds=1))
+        expected_days=[];cursor=local_start.date()
+        while cursor<=datetime.fromisoformat(end).date():
+            expected_days.append(cursor.isoformat());cursor+=timedelta(days=1)
         sid = self._snap_id(publication_id, horizon)
         existing = self._snap(publication_id, horizon)
         attempts = (existing or {}).get("attempts", 0) + 1
@@ -132,9 +140,25 @@ class ReadbackService:
             raw["reach_error"] = str(e)
             failures.append("reporting_api")
 
-        coverage = self._coverage(raw)
+        # Preserve raw protocol replies; normalization uses only the requested
+        # source days. A lifetime Data API counter is never a timed metric.
+        coverage = self._coverage(raw,start,end)
+        coverage['expected_days']=expected_days
+        coverage['exact_horizon']=exact
+        coverage['metrics']={}
+        for name,(route,col) in NORMALIZED.items():
+            body=raw.get(route) or {};cols=body.get('columns',[]) if isinstance(body,dict) else []
+            days=[]
+            if col in cols and 'day' in cols:
+                days=sorted({r[cols.index('day')] for r in body.get('rows',[]) if len(r)==len(cols) and start<=r[cols.index('day')]<=end and r[cols.index(col)] is not None})
+            coverage['metrics'][name]={'days':days,'complete':route!='data' and days==expected_days,'window':'lifetime' if route=='data' else 'source_calendar'}
+        normalized=dict(raw)
+        for route in ('analytics','reach'):
+            if isinstance(raw.get(route),dict):
+                body=raw[route];cols=body.get('columns',[])
+                if 'day' in cols:normalized[route]={**body,'rows':[r for r in body.get('rows',[]) if len(r)==len(cols) and start<=r[cols.index('day')]<=end]}
         for name, (route, col) in NORMALIZED.items():
-            value, reason = self._extract(raw, route, col)
+            value, reason = self._extract(normalized, route, col)
             metrics[name] = value
             availability[name] = reason
         if failures:
@@ -144,9 +168,11 @@ class ReadbackService:
         elif coverage["days"] == 0:
             completeness = "pending"
             reason = "no_rows_yet"
-        elif coverage["end"] < end:
+        elif any(not coverage['metrics'][m]['complete'] or availability[m]!='ok' for m in NORMALIZED if m!='public_views'):
             completeness = "partial"
             reason = "coverage_short_of_horizon"
+        elif not exact:
+            completeness='partial';reason='source_calendar_not_exact_horizon'
         else:
             completeness = "complete"
             reason = ""
@@ -156,13 +182,16 @@ class ReadbackService:
             created_at=(existing or {}).get("created_at", now),
             publication_id=publication_id, post_id=post_id,
             horizon=horizon, query_version=QUERY_VERSION,
-            timezone=pub.get("timezone", "UTC"),
+            timezone="America/Los_Angeles",
             metric_definitions={
                 "analytics_metrics": sorted(PULL_METRICS),
                 "reach_metrics": sorted(REACH_METRICS),
-                "reach_report": "channel_reach_basic_a1"},
+                "reach_report": "channel_reach_basic_a1",'public_views':'lifetime_at_observation',
+                'thumbnail_ctr':'impression-weighted percent','avg_view_duration_s':'view-weighted seconds',
+                'avg_view_pct':'view-weighted percent'},
             requested_period={"start": start, "end": end,
-                              "horizon_hours": HORIZONS[horizon]},
+                              "horizon_hours": HORIZONS[horizon],'window_kind':'exact_rolling' if exact else 'source_calendar',
+                              'published_at':t0.isoformat(),'due_at':due_at.isoformat()},
             actual_coverage=coverage,
             source="data_api+analytics_api+reporting_api",
             observed_at=now, metrics=metrics,
@@ -195,28 +224,30 @@ class ReadbackService:
             return None, "metric_not_returned"
         if not rows:
             return None, "no_rows_yet"
-        vals = [r[cols.index(col)] for r in rows
-                if r[cols.index(col)] is not None]
-        if not vals:
-            return None, "all_rows_null"
-        non_additive = {"averageViewDuration", "averageViewPercentage",
-                        "video_thumbnail_impressions_ctr",
-                        "audienceWatchRatio"}
-        if col in non_additive:
-            return sum(vals) / len(vals), "ok"  # mean over covered days
-        return sum(vals), "ok"                  # additive metrics
+        import math
+        idx=cols.index(col)
+        if any(len(r)!=len(cols) for r in rows):return None,'malformed_rows'
+        vals=[r[idx] for r in rows]
+        if all(v is None for v in vals):return None,'all_rows_null'
+        if any(type(v) not in (int,float) or not math.isfinite(v) or v<0 for v in vals):return None,'incomplete_or_invalid_rows'
+        weight={'averageViewDuration':'views','averageViewPercentage':'views','video_thumbnail_impressions_ctr':'video_thumbnail_impressions'}.get(col)
+        if weight:
+            if weight not in cols:return None,'denominator_missing'
+            weights=[r[cols.index(weight)] for r in rows]
+            if any(type(w) not in (int,float) or not math.isfinite(w) or w<0 for w in weights):return None,'denominator_missing'
+            total=sum(weights)
+            if total==0:return None,'zero_denominator'
+            return sum(v*w for v,w in zip(vals,weights))/total,'ok'
+        return sum(vals),'ok'
 
-    def _coverage(self, raw):
-        days = set()
-        for key in ("analytics", "reach"):
-            body = raw.get(key) or {}
-            for row in body.get("rows", []):
-                if row and row[0]:
-                    days.add(row[0])
-        days = sorted(days)
-        return {"start": days[0] if days else "",
-                "end": days[-1] if days else "",
-                "days": len(days)}
+    def _coverage(self,raw,start='',end='9999-99-99'):
+        routes={}
+        for key in ('analytics','reach'):
+            body=raw.get(key) or {};cols=body.get('columns',[]);days=[]
+            if 'day' in cols:days=sorted({r[cols.index('day')] for r in body.get('rows',[]) if len(r)==len(cols) and start<=r[cols.index('day')]<=end})
+            routes[key]={'days':days,'start':days[0] if days else '', 'end':days[-1] if days else ''}
+        common=sorted(set(routes['analytics']['days']) & set(routes['reach']['days']))
+        return {'start':common[0] if common else '', 'end':common[-1] if common else '', 'days':len(common),'routes':routes}
 
     # ---------------------------------------------------- baseline --
 
@@ -285,7 +316,11 @@ class ReadbackService:
                 entries.append({"publication_id": pid,
                                 "status": snap["completeness"],
                                 "metrics": snap["metrics"]})
-        comparable = all(e["status"] == "complete" for e in entries)
+        signatures=[]
+        for pid in publication_ids:
+            snap=self._snap(pid,horizon)
+            if snap:signatures.append((snap['query_version'],snap['timezone'],snap.get('requested_period',{}).get('horizon_hours'),snap.get('requested_period',{}).get('window_kind'),json.dumps(snap.get('metric_definitions',{}),sort_keys=True)))
+        comparable = bool(entries) and all(e['status']=='complete' for e in entries) and len(set(signatures))==1 and signatures[0][3]=='exact_rolling'
         return {"horizon": horizon, "comparable": comparable,
                 "descriptive": True,
                 "note": "observational, not a causal A/B claim",
@@ -297,7 +332,8 @@ class ReadbackService:
         return self._snap(publication_id, horizon)
 
     def _snap_id(self, publication_id, horizon):
-        return f"snap-{publication_id}-{horizon}"
+        from ..domain.records import content_hash
+        return 'snap-'+content_hash([publication_id,horizon,QUERY_VERSION])[:32]
 
     def _snap(self, publication_id, horizon):
         row = self.db.uow().records.get(
@@ -314,18 +350,9 @@ class ReadbackService:
             with self.db.uow() as u:
                 u.records.put(snap)
             return
-        # same (publication, horizon, version) → update in place;
-        # a retry is never a new independent sample
-        body = snap.to_dict() if hasattr(snap, "to_dict") else \
-            snap.__dict__
-        import dataclasses
-        body = dataclasses.asdict(snap)
-        with self.db.uow() as u:
-            u.conn.execute(
-                "UPDATE records SET body=?, updated_at=? WHERE "
-                "kind='metricsnapshot' AND id=? AND revision=?",
-                (json.dumps(body), snap.observed_at, snap.id,
-                 row["revision"]))
+        # A retry is another immutable observation revision, not a new sample.
+        snap.revision=row['revision']+1
+        with self.db.uow() as u:u.records.put(snap)
 
     def _event(self, publication_id, kind, body):
         with self.db.uow() as u:

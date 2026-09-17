@@ -924,11 +924,13 @@ class Delivery(Record):
 
 @dataclass
 class Publication(Record):
+    artifact_id: str = ""
     variant_plan_id: str = ""
     final_sha256: str = ""
     platform: str = ""
     account_id: str = ""
     request_id: str = ""
+    job_id: str = ""
     remote_post_id: str = ""
     post_url: str = ""
     status: str = "requested"        # requested|uploading|scheduled|draft|
@@ -948,7 +950,7 @@ class Publication(Record):
     def validate(self):
         e = super().validate()
         states = {"requested", "uploading", "processing", "scheduled",
-                  "draft", "public", "failed", "unknown"}
+                  "draft", "public", "failed", "unknown", "unverified"}
         if self.status not in states:
             e.append(ContractError("bad_publication_status", "status",
                                    self.status))
@@ -964,6 +966,7 @@ class Publication(Record):
 @dataclass
 class MetricSnapshot(Record):
     """One pull of metrics for a publication. Missing ≠ zero."""
+    revision: int = 0
     publication_id: str = ""
     post_id: str = ""                # platform post pulled
     horizon: str = ""                # 48h|7d|28d|manual|<custom>
@@ -1013,9 +1016,11 @@ class DecisionPolicy(Record):
             for f in ("primary_metric", "horizon", "policy_version"):
                 if not getattr(self, f):
                     e.append(ContractError("missing_field", f))
-            if self.min_exposure < 0 or self.practical_lift < 0:
+            import math
+            if type(self.min_exposure) is not int or self.min_exposure < 0 or type(self.practical_lift) not in (int,float) or not math.isfinite(self.practical_lift) or self.practical_lift < 0:
                 e.append(ContractError("invalid_policy_value",
                                        "min_exposure|practical_lift"))
+            if any(type(v) not in (int,float) or not math.isfinite(v) or v<0 for v in self.guardrails.values()):e.append(ContractError('invalid_guardrail','guardrails'))
         return e
 
 

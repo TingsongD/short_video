@@ -107,7 +107,7 @@ def _run_readback(tmp_path, views, baseline, avd=25.0, video_id="v-b3-1"):
         "video_id": video_id,
         "platform_video_ids": {"youtube": f"yt-{video_id}"},
         "title": "t", "caption": "c", "hashtags": ["#x"],
-        "published_at": "2026-08-01T00:00:00Z",  # all 3 windows due
+        "published_at": "2026-08-01T07:00:00Z",  # Pacific midnight; all three exact windows due
         "format_id": "fmt-test", "idea_id": "idea-test",
         "niche": "psychology_facts", "variant_index": 1,
         "video_len_s": 30,

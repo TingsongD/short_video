@@ -4,6 +4,8 @@ from modules.factory.execution import Executor
 states, idempotency, cadence/timezone, ambiguous publish, OAuth
 expiry, actual post verification."""
 import json
+import hashlib
+from datetime import datetime,timedelta,timezone
 
 import pytest
 
@@ -16,7 +18,7 @@ from modules.factory.store import Database
 from modules.factory.testing.fakes import FakePublisher
 
 NOW = "2026-09-17T12:00:00+00:00"
-SHA = "ab" * 32
+SHA = hashlib.sha256(b'v').hexdigest()
 
 
 @pytest.fixture
@@ -40,10 +42,12 @@ def _svc(db, pub=None, users=None, max_per_day=2):
         accounts[f"youtube:{u}"] = u
     remote = pub or FakePublisher()
     adapter = UploadPostPublisher(api_key="k", user="acct-main",
-                                  transport=remote.transport)
-    return PublishingService(db, publisher=adapter, effects=FixtureEffects(db, Executor(db)),
+                                  transport=remote.transport,verifier=remote.verify_post)
+    svc=PublishingService(db, publisher=adapter, effects=FixtureEffects(db, Executor(db)),
                              accounts=accounts,
                              max_per_day=max_per_day)
+    svc.fixture_remote=remote
+    return svc
 
 
 def _plan(svc, pid="pub-1", **kw):
@@ -53,7 +57,17 @@ def _plan(svc, pid="pub-1", **kw):
                           "hashtags": ["a"]},
                 authorization_id="auth-1")
     args.update(kw)
-    return svc.plan(pid, **args)
+    p=svc.plan(pid, **args)
+    row=svc.db.uow().records.get('authorization',args['authorization_id']) if args.get('authorization_id') else None
+    raw=json.loads(row['body']) if row else {}
+    if raw.get('status')=='authorized' and raw.get('publication_authorized') and (not raw.get('valid_until') or raw['valid_until']>NOW):
+        from modules.factory.execution.effects import EffectService
+        intent=json.loads(svc.db.uow().records.get('publicationintent','intent:'+pid)['body'])
+        auth=Authorization(schema_version='authorization.v1',id='approve:'+pid,created_at=NOW,scope_hash=intent['plan_hash'],status='authorized',publication_authorized=True,
+            allowed_providers=['upload_post'],allowed_models={'upload_post':['upload']},valid_until=(datetime.now(timezone.utc)+timedelta(hours=1)).isoformat(),authorizing_action='fixture operator')
+        EffectService(svc.db).approve(auth,'publicationintent',intent['id'],[dict(key='publish',kind='publication',provider='upload_post',model='upload',account=p.account_id,request=intent['request'])],[])
+        svc.authorize(pid,auth.id)
+    return p
 
 
 # ------------------------------------------------------------- plan --
@@ -111,7 +125,7 @@ def test_upload_sends_bytes_fields_and_idempotency(db, tmp_path):
     pub = FakePublisher()
     svc = _svc(db, pub)
     _auth(db)
-    _plan(svc)
+    _plan(svc,final_sha256=hashlib.sha256(b"\x00\x01realvideobytes").hexdigest())
     video = tmp_path / "final.mp4"
     video.write_bytes(b"\x00\x01realvideobytes")
     svc.publish("pub-1", video_path=str(video), now=NOW)
@@ -125,16 +139,11 @@ def test_upload_sends_bytes_fields_and_idempotency(db, tmp_path):
     assert str(tmp_path) not in json.dumps(req["fields"])
 
 
-def test_accessible_url_instead_of_bytes(db):
-    pub = FakePublisher()
-    svc = _svc(db, pub)
-    _auth(db)
-    _plan(svc, media_url="https://cdn.example.com/f.mp4")
-    svc.publish("pub-1", now=NOW)
-    req = pub.sent[0]
-    assert req["file"] is None
-    assert req["fields"]["video_url"] == \
-        "https://cdn.example.com/f.mp4"
+def test_service_requires_verified_final_bytes_for_remote_url(db):
+    pub=FakePublisher();svc=_svc(db,pub);_auth(db)
+    _plan(svc,media_url='https://cdn.example.com/f.mp4')
+    with pytest.raises(ContractError,match='final_bytes_required'):svc.publish('pub-1',now=NOW)
+    assert not pub.sent
 
 
 def test_adapter_requires_user_platforms_and_key():
@@ -233,7 +242,7 @@ def test_same_key_same_payload_dedups(db, tmp_path):
                      platforms=("youtube",), visibility="public",
                      user="acct-main",
                      idempotency_key=svc.get("pub-1")["idempotency_key"],
-                     extra_fields={"hashtags": "a"})
+                     extra_fields={"hashtags": "a","timezone":"UTC"})
     assert again["request_id"] == svc.get("pub-1")["request_id"]
     svc.reconcile("pub-1")
     svc.reconcile("pub-1")
@@ -311,10 +320,11 @@ def test_unreachable_status_keeps_unknown(db, tmp_path):
 # --------------------------------------------------------- cadence --
 
 def _public_post(svc, pid, day):
+    svc.fixture_remote.plant_post(f'yt-{pid}',published_at=day)
     svc.register_manual(
         pid, variant_plan_id="vp-x", final_sha256="cd" * 32,
         platform="youtube", account_id="acct-main",
-        remote_post_id=f"yt-{pid}", published_at=day, verify=False)
+        remote_post_id=f"yt-{pid}", published_at=day, verify=True)
 
 
 def test_cadence_blocks_before_submission(db, tmp_path):

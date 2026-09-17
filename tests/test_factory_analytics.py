@@ -13,7 +13,7 @@ from modules.factory.publishing.service import PublishingService
 from modules.factory.store import Database
 from modules.factory.testing.fakes import FakeAnalytics, FakePublisher
 
-T0 = "2026-09-10T09:00:00+00:00"          # publication time
+T0 = "2026-09-10T07:00:00+00:00"          # publication time
 T48 = "2026-09-12T10:00:00+00:00"         # past 48h due
 T7D = "2026-09-17T10:00:00+00:00"         # past 7d due
 SHA = "ab" * 32
@@ -25,12 +25,13 @@ def db(tmp_path):
 
 
 def _publication(db, pid="pub-1", post="yt-1"):
-    svc = PublishingService(
-        db, accounts={"youtube:acct-main": "acct-main"})
+    from modules.factory.integrations.publisher import UploadPostPublisher
+    remote=FakePublisher();remote.plant_post(post,published_at=T0)
+    svc = PublishingService(db,publisher=UploadPostPublisher(transport=remote.transport,verifier=remote.verify_post),accounts={"youtube:acct-main":"acct-main"})
     svc.register_manual(
         pid, variant_plan_id="vp-1", final_sha256=SHA,
         platform="youtube", account_id="acct-main",
-        remote_post_id=post, published_at=T0, verify=False)
+        remote_post_id=post, published_at=T0, verify=True)
 
 
 def _svc(db, fake=None):
@@ -69,11 +70,12 @@ def test_queries_hit_supported_routes_only(db):
     urls = [r["url"] for r in fake.requests]
     analytics = [u for u in urls if "youtubeanalytics" in u]
     reach = [u for u in urls if "youtubereporting" in u]
-    assert len(analytics) == 1 and len(reach) == 1
+    assert len(analytics) == 1 and len(reach) == 3
     assert "impressions" not in analytics[0] and "ctr" not in \
         analytics[0].replace("ClickThrough", "")
-    assert "channel_reach_basic_a1" in reach[0]
-    assert "video_thumbnail_impressions" in reach[0]
+    assert reach[0].endswith('/v1/jobs')
+    assert '/jobs/job-reach/reports' in reach[1]
+    assert '/media/' in reach[2]
     authed = [r for r in fake.requests
               if "analytics" in r["url"] or "reporting" in r["url"]]
     assert all(r["headers"].get("Authorization") for r in authed)
@@ -109,14 +111,13 @@ def test_collect_stores_raw_and_normalized(db):
     svc, _ = _svc(db)
     snap = svc.collect("pub-1", "48h", now=T48)
     assert snap.metrics["views"] == 2400            # summed day rows
-    assert snap.metrics["avg_view_duration_s"] == pytest.approx(17.75)
+    assert snap.metrics["avg_view_duration_s"] == pytest.approx((18.5*1000+17*1400)/2400)
     assert snap.metrics["thumbnail_impressions"] == 68500
-    assert snap.metrics["thumbnail_ctr"] == pytest.approx(6.0)
+    assert snap.metrics["thumbnail_ctr"] == pytest.approx((38500*6.2+30000*5.8)/68500)
     assert snap.metrics["public_views"] == 2400     # data api
     assert snap.raw["analytics"]["rows"]            # raw preserved
-    assert snap.requested_period == {"start": "2026-09-10",
-                                     "end": "2026-09-12",
-                                     "horizon_hours": 48}
+    assert snap.requested_period['start']=='2026-09-10' and snap.requested_period['end']=='2026-09-11'
+    assert snap.requested_period['window_kind']=='exact_rolling'
 
 
 def test_zero_is_zero_missing_is_unknown(db):
@@ -233,7 +234,7 @@ def test_pending_retry_not_a_new_sample(db):
     svc.collect("pub-1", "48h", now=T48)
     svc.collect("pub-1", "48h", now="2026-09-13T00:00:00+00:00")
     rows = db.uow().conn.execute(
-        "SELECT COUNT(*) c FROM records WHERE kind='metricsnapshot'"
+        "SELECT COUNT(DISTINCT id) c FROM records WHERE kind='metricsnapshot'"
     ).fetchone()
     assert rows["c"] == 1
 

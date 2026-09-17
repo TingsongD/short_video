@@ -20,6 +20,11 @@ def apply_readback(entry, readback):
         "our_stats", {"videos": 0, "wins": 0, "avg_multiplier": 0}
     )
     stats.setdefault("consecutive_losses", 0)
+    if readback.get('verdict') not in ('win','loss') or not readback.get('baseline_median_views',0):
+        return entry
+    windows=readback.get('windows',{})
+    if not windows or any(w.get('window_kind') in ('lifetime','source_calendar','unavailable') or w.get('availability',{}).get('views','ok')!='ok' for w in windows.values()):
+        return entry
     m = _mult(readback)
     n = stats["videos"]
     stats["avg_multiplier"] = round(

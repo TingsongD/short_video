@@ -1485,17 +1485,12 @@ class FakePublisher:
         path = req["path"]
         if req["method"] == "POST" and path == "/api/upload":
             return {"status": 200, "body": self._upload(req)}
-        if req["method"] == "GET" and path.startswith("/api/upload/status"):
+        if req["method"] == "GET" and path.startswith("/api/uploadposts/status"):
             return {"status": 200, "body": self._status(path)}
-        if path.startswith("/api/posts/"):
-            ref = path.rsplit("/", 1)[-1]
-            if req["method"] == "GET":
-                return {"status": 200, "body": self._get_post(ref)}
-            if req["method"] == "PATCH":
-                return {"status": 200, "body": self._patch_post(
-                    ref, req["fields"])}
-            if req["method"] == "DELETE":
-                return {"status": 200, "body": self._delete_post(ref)}
+        if path in ('/api/uploadposts/posts/edit','/api/uploadposts/posts/unpublish'):
+            body=req['json'];ref=body['post_id']
+            result=self._patch_post(ref,body) if path.endswith('/edit') else self._delete_post(ref)
+            return {'status':200,'body':{'success':result.get('status')!='not_found',**result}}
         return {"status": 404, "body": {"error": "unknown_path"}}
 
     # ----------------------------------------------------- upload --
@@ -1503,7 +1498,7 @@ class FakePublisher:
     def _upload(self, req):
         from ..integrations.publisher import PublishTransportError
         fields = req["fields"]
-        for need in ("user", "platform[]"):
+        for need in ("user", "platform[]", "request_id", "async_upload"):
             if not fields.get(need):
                 raise PublishTransportError(
                     f"missing required field {need}", 400)
@@ -1525,23 +1520,23 @@ class FakePublisher:
             return {"request_id": prior, "status": job["steps"]
                     [min(job["i"], len(job["steps"]) - 1)]}
         self.doc["seq"] += 1
-        rid = f"req-{self.doc['seq']:04d}"
+        rid = fields['request_id']
         steps = (["processing", "public"] if "sync_terminal"
                  in self.faults else list(self.default_steps))
-        if fields.get("schedule_date"):
+        if fields.get("scheduled_date"):
             steps = ["accepted", "scheduled"]
-        elif fields.get("visibility") == "draft":
+        elif fields.get('privacyStatus') in ('private','unlisted'):
             steps = ["accepted", "draft"]
         self.doc["jobs"][rid] = {
             "request_id": rid, "key": key, "payload": payload,
             "fields": fields,
             "file_bytes": len(req["file"]["bytes"]) if req["file"] else 0,
-            "video_url": fields.get("video_url", ""),
+            "video_url": fields.get("video", ""),
             "steps": steps, "i": 0}
         self.doc["by_key"][key] = rid
         if "lost_ack" in self.faults:
             raise PublishTransportError("lost_response")
-        return {"request_id": rid, "status": steps[0]}
+        return {'request_id':rid,'status':{'accepted':'pending'}.get(steps[0],steps[0]),**({'job_id':rid} if fields.get('scheduled_date') else {})}
 
     def _status(self, path):
         from ..integrations.publisher import PublishTransportError
@@ -1554,7 +1549,7 @@ class FakePublisher:
             if rid is None:
                 return {"status": "not_found"}
             return self._job_body(self.doc["jobs"][rid], advance=False)
-        job = self.doc["jobs"].get(params.get("request_id", ""))
+        job = self.doc["jobs"].get(params.get("request_id", params.get("job_id", "")))
         if job is None:
             return {"status": "not_found"}
         return self._job_body(job, advance=True)
@@ -1563,15 +1558,13 @@ class FakePublisher:
         if advance and job["i"] < len(job["steps"]) - 1:
             job["i"] += 1
         status = job["steps"][job["i"]]
-        body = {"request_id": job["request_id"], "status": status}
-        if status == "public":
-            post = self._ensure_post(job)
-            body.update(post_url=post["url"],
-                        remote_post_id=post["id"],
-                        published_at=post["published_at"],
-                        visibility=post["visibility"])
-        if status == "scheduled":
-            body["scheduled_at"] = job["fields"].get("schedule_date", "")
+        body = {'request_id':job['request_id'],'status':{'accepted':'pending','public':'completed','draft':'completed','scheduled':'pending'}.get(status,status),'results':[]}
+        if status in ('public','draft'):
+            post=self._ensure_post(job)
+            body['results']=[{'platform':post['platform'],'success':True,'video_id':post['id'],
+                'post_url':post['url'],'upload_timestamp':post['published_at'],
+                'privacyStatus':job['fields'].get('privacyStatus','public')}]
+        if status=='scheduled':body['job_id']=job['request_id']
         return body
 
     def _ensure_post(self, job):
@@ -1634,6 +1627,12 @@ class FakePublisher:
         self.doc["posts"][pid] = post
         return pid
 
+    def verify_post(self,ref):
+        p=self._get_post(ref)
+        if p.get('status')=='not_found':return None
+        return {'remote_post_id':p['id'],'post_url':p['url'],'account_id':p['account'],
+                'platform':p['platform'],'visibility':p['visibility'],'status':p['status'],'published_at':p['published_at']}
+
     def public_post_count(self):
         return sum(1 for p in self.doc["posts"].values()
                    if p["status"] == "public")
@@ -1658,10 +1657,10 @@ class FakeAnalytics:
         # columns: day + sorted(PULL_METRICS) = day, averageViewDuration,
         # averageViewPercentage, comments, likes, subscribersGained, views
         self.analytics_rows = analytics_rows if analytics_rows is not \
-            None else [["2026-09-17", 18.5, 61.0, 4, 9, 3, 1000],
-                       ["2026-09-18", 17.0, 58.0, 3, 7, 2, 1400]]
+            None else [["2026-09-10", 18.5, 61.0, 4, 9, 3, 1000],
+                       ["2026-09-11", 17.0, 58.0, 3, 7, 2, 1400]]
         self.reach_rows = reach_rows if reach_rows is not None else [
-            ["2026-09-17", 38500, 6.2], ["2026-09-18", 30000, 5.8]]
+            ["2026-09-10", 38500, 6.2], ["2026-09-11", 30000, 5.8]]
         self.channel_doc = channel_doc or {
             "uploads": "UU-x", "ids": ["a", "b", "c"],
             "views": [1000, 1500, 2000]}
@@ -1689,6 +1688,7 @@ class FakeAnalytics:
                                  f"unsupported_metrics:{sorted(bad)}"}}
             if not req["headers"].get("Authorization"):
                 return {"status": 401, "body": {"error": "no_oauth"}}
+            self._video=q.get('filters','video==yt-1').split('==')[-1]
             cols = ["day"] + sorted(metrics)
             rows = ([] if "delayed" in self.faults
                     else self.analytics_rows)
@@ -1699,24 +1699,18 @@ class FakeAnalytics:
         if "youtubereporting" in p.netloc:
             if "reach_down" in self.faults:
                 return {"status": 503, "body": {"error": "down"}}
-            if q.get("reportType") != "channel_reach_basic_a1":
-                return {"status": 400,
-                        "body": {"error": "unknown_report_type"}}
-            metrics = set((q.get("metrics") or "").split(","))
-            from ..analytics.client import REACH_METRICS
-            bad = metrics - REACH_METRICS
-            if bad:
-                return {"status": 400,
-                        "body": {"error":
-                                 f"unsupported_metrics:{sorted(bad)}"}}
-            if not req["headers"].get("Authorization"):
-                return {"status": 401, "body": {"error": "no_oauth"}}
-            cols = ["day"] + sorted(metrics)
-            rows = ([] if "delayed" in self.faults else self.reach_rows)
-            return {"status": 200,
-                    "body": {"columnHeaders": [{"name": c}
-                                               for c in cols],
-                             "rows": rows}}
+            if not req['headers'].get('Authorization'):return {'status':401,'body':{}}
+            if p.path=='/v1/jobs':return {'status':200,'body':{'jobs':[{'id':'job-reach','reportTypeId':'channel_reach_basic_a1'}]}}
+            if p.path=='/v1/jobs/job-reach/reports':
+                return {'status':200,'body':{'reports':[{'id':'report-fixture','createTime':'2026-09-13T00:00:00Z','downloadUrl':'https://youtubereporting.googleapis.com/v1/media/fixture'}]}}
+            if p.path=='/v1/media/fixture':
+                import csv,io
+                out=io.StringIO();writer=csv.writer(out)
+                writer.writerow(['date','channel_id','video_id','video_thumbnail_impressions','video_thumbnail_impressions_ctr'])
+                for row in [] if 'delayed' in self.faults else self.reach_rows:
+                    writer.writerow([row[0].replace('-',''),'channel-fixture',getattr(self,'_video','yt-1'),*row[1:]])
+                return {'status':200,'body':out.getvalue()}
+            return {'status':400,'body':{'error':'invalid_reporting_route'}}
         if "data_down" in self.faults:
             return {"status": 503, "body": {"error": "down"}}
         if "/channels" in p.path:

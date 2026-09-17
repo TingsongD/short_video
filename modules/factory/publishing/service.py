@@ -18,7 +18,15 @@ from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 from ..domain.errors import ContractError
-from ..domain.records import Publication
+from ..domain.records import Publication, Record, content_hash
+from dataclasses import dataclass,field
+
+@dataclass
+class PublicationIntent(Record):
+    plan_hash:str=''
+    request:dict=field(default_factory=dict)
+    experiment_id:str=''
+    experiment_revision:int=0
 from ..integrations.publisher import (ACCEPTED, TERMINAL,
                                       PublishTransportError)
 
@@ -56,7 +64,7 @@ class PublishingService:
              platform, account_id, metadata=None, visibility="public",
              scheduled_at="", tz="UTC", media_url="",
              horizon_policy=None, authorization_id="", now="",
-             automated=True):
+             automated=True,artifact_id='',experiment_id='',experiment_revision=0):
         """Persist the publication intent — no transport call yet."""
         now = now or _now()
         if automated and platform not in PUBLISHABLE:
@@ -78,14 +86,24 @@ class PublishingService:
                         media_url=media_url, timezone=tz,
                         horizon_policy=dict(horizon_policy or {}),
                         manual=not automated)
+        p.artifact_id=artifact_id
         p.validate_or_raise()
         with self.db.uow() as u:
             u.records.put(p)
+            request=self.request(p.to_dict())
+            u.records.put(PublicationIntent(schema_version='publication_intent.v1',id='intent:'+publication_id,created_at=now,
+                plan_hash=content_hash(request),request=request,experiment_id=experiment_id,experiment_revision=experiment_revision))
             u.events.append(f"publication:{publication_id}",
                             "publication_planned",
                             {"platform": platform,
                              "account_id": account_id})
         return p
+
+    def request(self,p):
+        return {'publication_id':p['id'],'artifact_id':p.get('artifact_id',''),'final_sha256':p['final_sha256'],
+            'platform':p['platform'],'account_id':p['account_id'],'provider_user':self.accounts.get(p['platform']+':'+p['account_id'],''),
+            'metadata':p.get('metadata') or {},'visibility':p.get('visibility'),'scheduled_at':p.get('scheduled_at'),
+            'timezone':p.get('timezone','UTC'),'horizon_policy':p.get('horizon_policy') or {},'action':'publish'}
 
     def authorize(self, publication_id, authorization_id, now=""):
         """Bind an Authorization record that has
@@ -101,6 +119,7 @@ class PublishingService:
             raise ContractError("publication_not_authorized",
                                 "authorization_id", authorization_id)
         self._set(publication_id, authorization_id=authorization_id)
+        self._check_authorization(self._get(publication_id),now or _now())
         return {"authorization_id": authorization_id}
 
     # ----------------------------------------------------- publish --
@@ -117,26 +136,27 @@ class PublishingService:
         if self.publisher is None:
             raise ContractError("no_publisher", "platform",
                                 p["platform"])
-        self._check_authorization(p, now)
         if p["status"] in ("public", "draft", "scheduled"):
             return {"status": p["status"], "request_id": p.get("request_id", "")}
-        if p.get("attempt_id"):
+        if p.get("attempt_id") and self.executor._attempt(p['attempt_id'])['status']!='prepared':
             return self.reconcile(publication_id, now=now)
+        self._check_authorization(p, now)
+        from pathlib import Path
+        if not video_path or not Path(video_path).is_file():raise ContractError('final_bytes_required','artifact')
+        with Path(video_path).open('rb') as media: digest=hashlib.file_digest(media,'sha256').hexdigest()
+        if digest!=p['final_sha256']:raise ContractError('final_bytes_changed','artifact')
         if self.effects is None:
             raise ContractError("authority_required", "publication")
-        request = {"publication_id": publication_id, "final_sha256": p["final_sha256"],
-                   "platform": p["platform"], "account_id": p["account_id"],
-                   "metadata": p.get("metadata") or {}, "visibility": p.get("visibility"),
-                   "scheduled_at": p.get("scheduled_at"), "action": "publish"}
+        request = self.request(p)
         with self.db.uow():
             self._check_cadence(p, now)
             aid = self.effects(request, f"publish:{publication_id}", "publication", "upload_post", "upload")
             self.executor.require_request(aid, request)
-            self._set(publication_id, attempt_id=aid, status="uploading", dispatch_started_at=now)
+            self._set(publication_id, attempt_id=aid, request_id=p['idempotency_key'],status="uploading", dispatch_started_at=now)
         meta = p.get("metadata") or {}
         def upload():
             resp = self.publisher.upload(
-                video_path=video_path, video_url=p.get("media_url", ""),
+                video_path=video_path,
                 title=meta.get("title", ""),
                 description=meta.get("description", ""),
                 platforms=(p["platform"],),
@@ -145,8 +165,7 @@ class PublishingService:
                 user=self.accounts.get(
                     f"{p['platform']}:{p['account_id']}", ""),
                 idempotency_key=p["idempotency_key"],
-                extra_fields={"hashtags": ",".join(
-                    meta.get("hashtags", []))})
+                extra_fields={"hashtags": ",".join(meta.get("hashtags", [])), 'timezone':p.get('timezone','UTC')})
             return dict(resp, operation_id=resp["request_id"])
         try:
             resp = self.executor.submit(aid, upload)
@@ -163,7 +182,10 @@ class PublishingService:
 
     def _apply(self, publication_id, resp, now):
         status = resp.get("status", "accepted")
+        if status=='public' and self._get(publication_id).get('visibility')!='public':status='draft'
         fields = {"request_id": resp.get("request_id", "")}
+        if resp.get('job_id'):fields['job_id']=resp['job_id']
+        fields['platform_results']=resp.get('platform_results',[])
         if status in ACCEPTED:
             fields["status"] = ("processing" if status == "processing"
                                 else "uploading")
@@ -198,10 +220,10 @@ class PublishingService:
             return {"status": "requested", "action": "safe_to_resubmit"}
         try:
             if p.get("request_id"):
-                resp = self.publisher.status(p["request_id"])
+                resp = self.publisher.status(p["request_id"],platform=p['platform'],job_id=p.get('job_id',''))
             else:
                 found = self.publisher.find_by_idempotency_key(
-                    p["idempotency_key"])
+                    p["idempotency_key"],platform=p['platform'])
                 if found is None:
                     self._set(publication_id, status="unknown", last_error="no_remote_trace")
                     return {"status": "unknown", "action": "reconcile_or_review_evidence"}
@@ -211,6 +233,11 @@ class PublishingService:
             return {"status": "unknown",
                     "action": "retry_reconcile_later"}
         remote = resp.get("status", "unknown")
+        if p.get('visibility')!='public' and remote=='public':remote='draft'
+        if p.get('scheduled_at') and remote in ('accepted','queued','processing'):remote='scheduled'
+        if p.get('attempt_id'):
+            state='succeeded' if remote in ('public','draft','scheduled') else 'failed' if remote=='failed' else 'unknown' if remote=='unknown' else 'accepted'
+            self.executor._attach_remote(p['attempt_id'],p.get('request_id') or p['idempotency_key'],state,'publication_observed')
         if remote == "public":
             self._set(publication_id, status="public",
                       request_id=resp.get("request_id",
@@ -223,10 +250,7 @@ class PublishingService:
                         {"post_url": resp.get("post_url", "")})
             return {"status": "public",
                     "post_url": resp.get("post_url", "")}
-        if remote in ("not_found",):
-            self._set(publication_id, status="requested",
-                      last_error="no_remote_effect")
-            return {"status": "requested", "action": "safe_to_resubmit"}
+        if remote in ('not_found',):remote='unknown'
         local = {"accepted": "uploading", "queued": "uploading",
                  "uploading": "uploading",
                  "processing": "processing"}.get(remote, remote)
@@ -273,21 +297,20 @@ class PublishingService:
             if post.get("status") != "public":
                 raise ContractError("post_not_public",
                                     "remote_post_id", remote_post_id)
-            if post.get("account_id") and \
-                    post["account_id"] != self.accounts.get(
+            if post.get("account_id") != self.accounts.get(
                         f"{platform}:{account_id}"):
                 raise ContractError("post_wrong_account",
                                     "remote_post_id", remote_post_id)
+            if post.get('platform')!=platform or post.get('remote_post_id')!=remote_post_id or not post.get('published_at') or not post.get('post_url','').startswith('https://'):
+                raise ContractError('post_identity_unverified','remote_post_id')
         p = Publication(
             schema_version="publication.v1", id=publication_id,
             created_at=now, variant_plan_id=variant_plan_id,
             final_sha256=final_sha256, platform=platform,
-            account_id=account_id, status="public",
+            account_id=account_id, status="public" if post else 'unverified',
             remote_post_id=remote_post_id,
-            post_url=(post or {}).get("post_url",
-                                      f"https://youtu.be/"
-                                      f"{remote_post_id}"),
-            published_at=published_at,
+            post_url=(post or {}).get("post_url",''),
+            published_at=(post or {}).get('published_at',''),
             visibility=visibility or (post or {}).get("visibility",
                                                      "public"),
             idempotency_key=_key(publication_id, final_sha256,
@@ -322,7 +345,7 @@ class PublishingService:
         p = self._get(publication_id)
         if not p or not p.get("remote_post_id"):
             raise ContractError("no_remote_post", "id", publication_id)
-        self._post_action(p, "update_metadata", metadata, lambda: self.publisher.update_post(p["remote_post_id"], metadata))
+        self._post_action(p, "update_metadata", metadata, lambda: self.publisher.update_post(p['remote_post_id'], metadata,platform=p['platform'],user=self.accounts[p['platform']+':'+p['account_id']]))
         self._set(publication_id, metadata={
             **(p.get("metadata") or {}), **metadata})
         self._event(publication_id, "metadata_updated",
@@ -336,7 +359,7 @@ class PublishingService:
         p = self._get(publication_id)
         if not p or not p.get("remote_post_id"):
             raise ContractError("no_remote_post", "id", publication_id)
-        self._post_action(p, "delete", {}, lambda: self.publisher.delete_post(p["remote_post_id"]))
+        self._post_action(p, "delete", {}, lambda: self.publisher.delete_post(p['remote_post_id'],platform=p['platform'],user=self.accounts[p['platform']+':'+p['account_id']]))
         self._set(publication_id, deleted_at=now)
         self._event(publication_id, "post_deleted", {})
         return {"status": "deleted", "deleted_at": now}
@@ -355,7 +378,7 @@ class PublishingService:
 
     def _account(self, platform, account_id):
         key = f"{platform}:{account_id}"
-        if self.accounts and key not in self.accounts:
+        if key not in self.accounts:
             raise ContractError("unknown_account", "account_id", key)
         if self.accounts and not self.accounts[key]:
             raise ContractError("account_not_linked", "account_id", key)
@@ -374,9 +397,15 @@ class PublishingService:
             raise ContractError("publication_not_authorized",
                                 "authorization_id", aid)
         until = auth.get("valid_until")
-        if until and until <= now:
+        if until and datetime.fromisoformat(until.replace('Z','+00:00')) <= datetime.fromisoformat(now.replace('Z','+00:00')):
             raise ContractError("authorization_expired",
                                 "authorization_id", aid)
+        from ..execution.effects import EffectService
+        effect=EffectService(self.db,clock=lambda:datetime.fromisoformat(now.replace('Z','+00:00')))
+        scoped=effect._scope(aid)
+        op=scoped.binding['operations'].get('publish',{})
+        if scoped.binding['kind']!='publicationintent' or scoped.binding['id']!='intent:'+p['id'] or op.get('request')!=self.request(p) or op.get('account')!=p['account_id']:
+            raise ContractError('publication_scope_mismatch','authorization_id')
 
     def _check_cadence(self, p, now):
         """Block BEFORE submission if the (platform, account) already

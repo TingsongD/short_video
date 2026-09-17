@@ -15,7 +15,7 @@ All checks use offline providers; no new live spend or publication scope exists.
 | S4 media/QC | passed (offline checkpoint) | 903 tests pass (125.61s); 16 media regressions, collected-coverage regression, real 48-frame Hypit timing fixture, actual speech fitting and full interval comparisons. See REPAIR-S4-EVIDENCE.json. |
 | S5 application | first local milestone passed; final fault matrix remains S8 | 916 backend tests; 25 frontend tests/build; real HTTP/independent-worker four × 900-frame exports with distinct treatments, bound reviews, durable fake Drive receipts and verified cleanup. Native Studio opened and closed. See REPAIR-S5-EVIDENCE.json. |
 | S6 research | passed (offline checkpoint) | 922 tests pass; public research plan/approval/budget/worker/evaluation journey. Separate creator histories and strict cohort exclusions. See REPAIR-S6-EVIDENCE.json. |
-| S7 publishing/learning | planned | |
+| S7 publishing/learning | passed (offline checkpoint) | 932 tests passed; native protocol, exact publication authority, coverage-aware readback and current independent evidence. Public four-export/post/readback/decision journey. See REPAIR-S7-EVIDENCE.json. |
 | S8 qualification | planned | |
 
 ## Finding dispositions
@@ -56,17 +56,17 @@ separate from engineering repairs; historical tests do not sign either gate.
 | R29 | fixed (offline) | API mutation, domain records, durable job and response commit atomically; action binds expected revision and upload content hash. External calls only occur in workers. |
 | R30 | fixed (offline) | Read-only Admin price scalar and full variant/media pagination; bounded media fetch and redirects. Four queries passed schema validation; offline multi-page/redirect tests. |
 | R31 | in_progress | Durable synchronous receipts and artifacts replace in-memory operations; verified search adapter and actual source-media analysis boundary added. Research cache/cohort decisions remain S6; app wiring S5. |
-| R32 | open | |
-| R33 | open | |
-| R34 | open | |
-| R35 | open | |
-| R36 | open | |
+| R32 | fixed (offline) | Native asynchronous multipart contract, per-platform results and stable client request identity. |
+| R33 | fixed (offline) | Exact immutable final bytes/destination/action; verified delivery and cleanup required; manual declarations remain unverified. |
+| R34 | fixed (offline) | Reporting job/report pagination, trusted bounded CSV downloads and source filtering. |
+| R35 | fixed (offline) | Weighted metrics, per-metric full coverage, source timezone and explicit rolling-window eligibility. |
+| R36 | fixed (offline) | Frozen horizon, per-arm exposure, actual experiment identity and immutable numeric decision history. |
 | R37 | fixed | Rebranch preserves prior variants; composition history retained; persisted template references resolve |
 | R38 | in_progress | Nested credentials redacted before durable events and replay; live transport/API audit remains |
 | R39 | open | |
 | R40 | fixed | Approval grant/check share injected time; 7 approval tests pass |
 | R41 | in_progress | Pinned model enforced; live routing requires qualified catalog and active authority; unresolved or successfully completed originals cannot trigger paid fallback. Adapter qualification remains S3. |
-| R42 | open | |
+| R42 | fixed (offline) | Unknown baseline/metrics, pending evidence and nonexact windows cannot promote legacy formats. |
 | R43 | fixed (offline) | Imports stream to bounded temporary files and probing leaves event loop; media validates registered identity and streams 64-KiB ranges; production long work runs independently. |
 
 ## S2 implementation notes

@@ -55,6 +55,10 @@ class ApplicationWorker:
 
     def execute(self,kind,body,job):
         s=self.s
+        if kind=='publish':return s.publication_work.execute(body,job)
+        if kind=='publication_observe':return {'publication':s.publishing.reconcile(body['publication_id'])}
+        if kind=='readback':return {'snapshot':s.require('readback').collect(body['publication_id'],body['horizon']).to_dict()}
+        if kind=='decision':return {'decision':s.learning.decide(body['experiment_id'],body['revision'])}
         if kind=='effect':return s.effect_work.execute(body,job)
         if kind=='research_evaluate':
             from ..discovery.service import DiscoveryService

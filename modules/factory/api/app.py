@@ -301,8 +301,55 @@ def create_app(services, session_token=None):
         body = await json_command(request)
         status, resp = mutation(request, body, lambda: (201, {
             "publication": services.record_publication(
-                variant_id, body["platform"], body["account_id"])}))
+                variant_id, body, expected_rev(request))}))
         return JSONResponse(resp, status_code=status)
+
+    @app.get('/api/publications/{publication_id}')
+    async def publication_detail(publication_id:str):return services.detail('publication',publication_id)
+
+    @app.post('/api/publications/{publication_id}/authorize')
+    async def publication_authorize(publication_id:str,request:Request):
+        body=await json_command(request)
+        status,resp=mutation(request,body,lambda:(200,services.require('publication_work').authorize(publication_id,body)))
+        return JSONResponse(resp,status_code=status)
+
+    @app.post('/api/publications/{publication_id}/run',status_code=202)
+    async def publication_run(publication_id:str,request:Request):
+        body=await json_command(request)
+        status,resp=mutation(request,body,lambda:(202,services.require('publication_work').queue(publication_id)))
+        return JSONResponse(resp,status_code=status)
+
+    @app.post('/api/publications/{publication_id}/observe',status_code=202)
+    async def publication_observe(publication_id:str,request:Request):
+        body=await json_command(request)
+        services.detail('publication',publication_id)
+        status,resp=mutation(request,body,lambda:(202,services.require('commands').enqueue('publication_observe',{'publication_id':publication_id},phase='collect')))
+        return JSONResponse(resp,status_code=status)
+
+    @app.post('/api/publications/{publication_id}/readbacks',status_code=202)
+    async def readback(publication_id:str,request:Request):
+        body=await json_command(request);services.require('readback');services.detail('publication',publication_id)
+        from ..analytics.service import HORIZONS
+        if body.get('horizon') not in HORIZONS:raise ContractError('unknown_horizon','horizon')
+        status,resp=mutation(request,body,lambda:(202,services.commands.enqueue('readback',{'publication_id':publication_id,'horizon':body['horizon']},phase='collect')))
+        return JSONResponse(resp,status_code=status)
+
+    @app.post('/api/experiments/{experiment_id}/policy',status_code=201)
+    async def policy(experiment_id:str,request:Request):
+        body=await json_command(request);revision=expected_rev(request);services._current(experiment_id,revision,True)
+        def freeze():
+            if not body.get('reviewer'):raise ContractError('reviewer_required','reviewer')
+            fields={k:v for k,v in body.items() if k in ('policy_version','primary_metric','horizon','min_exposure','practical_lift','exposure_metric','guardrails','comparison_rule','promote_min_independent_experiments')}
+            if not {'policy_version','primary_metric','horizon'}<=fields.keys():raise ContractError('policy_required','policy')
+            return 201,{'policy':services.require('learning').freeze_policy(experiment_id,revision,**fields).to_dict()}
+        status,resp=mutation(request,body,freeze)
+        return JSONResponse(resp,status_code=status)
+
+    @app.post('/api/experiments/{experiment_id}/decisions',status_code=202)
+    async def decision(experiment_id:str,request:Request):
+        body=await json_command(request);revision=expected_rev(request);services._current(experiment_id,revision,True)
+        status,resp=mutation(request,body,lambda:(202,services.require('commands').enqueue('decision',{'experiment_id':experiment_id,'revision':revision},phase='collect')))
+        return JSONResponse(resp,status_code=status)
 
     @app.post("/api/variants/{variant_id}/studio",status_code=202)
     async def studio_open(variant_id:str,request:Request):

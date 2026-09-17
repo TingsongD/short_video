@@ -152,3 +152,48 @@ qualified. Fixtures use disk receipts and fake credit balances. The source proto
 is [Viral Outliers search](https://viraloutliers.com/docs/skills/api/search-viral-outlier-posts):
 creator history uses the same search endpoint's exact handle filter, all-time range
 and descending publication date. It does not assume a profile response envelope.
+
+## Publication and learning repair workflow
+
+Freeze `/api/experiments/{id}/policy` before planning any publications. It defines
+the primary metric, 48h/7d/28d horizon, minimum exposure **per variant**, guardrails
+and minimum independent experiments for promotion. All four variants share it.
+
+A reviewed final must already have verified delivery and cleanup. Create its
+`/api/variants/{id}/publications` intent with the current revision, exact check IDs,
+platform/account and metadata. `/api/publications/{id}/authorize` explicitly binds
+its final hash, destination, action and expiry. `/run` queues a durable publication;
+`/observe` reconciles its existing provider identity. An uncertain reply never
+becomes a new upload. Manual declarations remain unverified until a platform
+verifier confirms post identity, destination and actual publication time.
+
+The adapter sends actual file bytes, a client request ID and async parameters,
+then reads the documented per-platform results. Completed aggregates can contain
+skipped platforms; they do not prove that the selected platform published.
+See [Upload Post video](https://docs.upload-post.com/api/upload-video/) and
+[status](https://docs.upload-post.com/api/upload-status/). Metadata edits and
+unpublishing are separate effects using their respective JSON endpoints, with
+separate exact-action authorization; see [edit](https://docs.upload-post.com/api/edit-post/)
+and [unpublish](https://docs.upload-post.com/api/unpublish-post/).
+
+`/api/publications/{id}/readbacks` queues a read of the selected due horizon.
+YouTube thumbnail reach lists existing reporting jobs, paginates their reports,
+and downloads/filters CSV files by video and day. Newer files replace the same
+reported channel/video/day observation. An absent job is explicit missing data;
+job creation is a separate authorized setup action. See [Reporting jobs](https://developers.google.com/youtube/reporting/v1/reference/rest/v1/jobs/create)
+and [report discovery](https://developers.google.com/youtube/reporting/v1/reference/rest/v1/jobs.reports/list).
+
+Reach uses `channel_reach_basic_a1`, impression-weighted percentage CTR, and
+metric-specific coverage. Source days are America/Los_Angeles calendar days;
+DST and publication offsets matter. A calendar aggregate that cannot represent
+the exact frozen rolling horizon remains partial; it cannot produce a winner.
+Lifetime public views are labelled separately. See [reach report](https://developers.google.com/youtube/reporting/v1/reports/channel_reports),
+[metric definitions](https://developers.google.com/youtube/reporting/v1/reports/metrics)
+and [day semantics](https://developers.google.com/youtube/reporting/v1/reports/dimensions).
+
+`/api/experiments/{id}/decisions` compares current verified posts, compatible
+coverage/query definitions and per-arm exposure. New evidence creates a new
+immutable decision; supersession is a separate relation. Four siblings count as
+one experiment. A superseded or stale winner cannot promote a template. All
+rankings remain observational. Live posting and elapsed readbacks remain separate
+qualification gates; offline fixtures do not authorize them.

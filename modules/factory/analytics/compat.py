@@ -13,13 +13,14 @@ def legacy_window(snapshot):
     m = snapshot.get("metrics", {})
     return {
         "pulled_at": snapshot.get("observed_at", ""),
-        "views": int(m["views"] or 0),
-        "avg_view_duration_s": float(m["avg_view_duration_s"] or 0),
-        "ctr": float(m["thumbnail_ctr"] or 0) / 100,
-        "impressions": int(m["thumbnail_impressions"] or 0),
+        "views": int(m.get("views") or 0),
+        "avg_view_duration_s": float(m.get("avg_view_duration_s") or 0),
+        "ctr": float(m.get("thumbnail_ctr") or 0) / 100,
+        "impressions": int(m.get("thumbnail_impressions") or 0),
         "retention_points": [],
-        "subs_gained": int(m["subs_gained"] or 0),
-        "availability": dict(snapshot.get("availability", {})),
+        "subs_gained": int(m.get("subs_gained") or 0),
+        "availability": {k:snapshot.get('availability',{}).get(k,'unavailable') for k in ('views','avg_view_duration_s','thumbnail_ctr','thumbnail_impressions','subs_gained')},
+        'window_kind':snapshot.get('requested_period',{}).get('window_kind','unavailable'),
     }
 
 

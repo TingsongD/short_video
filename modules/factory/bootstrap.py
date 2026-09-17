@@ -22,7 +22,7 @@ from .studio.service import StudioService
 from .services.app import FactoryServices
 
 
-def bootstrap(root, *, providers=None, drive=None, settings=None):
+def bootstrap(root, *, providers=None, drive=None, settings=None,publisher=None,analytics_client=None):
     root=Path(root).resolve(); data=data_root(root); data.mkdir(parents=True,exist_ok=True)
     config=load_config(root)['values']
     settings={**{'mode':config.get('FACTORY_EXECUTION_MODE','offline'), 'drive_folder_id':config.get('DRIVE_FOLDER_ID','')}, **(settings or {})}
@@ -47,6 +47,14 @@ def bootstrap(root, *, providers=None, drive=None, settings=None):
     services.studio.launcher=LocalStudioLauncher(registry,data/'studio')
     from .services.effect_work import EffectWork
     services.effect_work=EffectWork(services)
+    from .publishing.service import PublishingService
+    from .analytics.service import ReadbackService
+    from .learning.service import LearningService
+    from .services.publication_work import PublicationWork
+    services.publishing=PublishingService(db,publisher=publisher,accounts=settings.get('publication_accounts',{}),executor=executor,max_per_day=settings.get('posts_per_day',2))
+    services.readback=ReadbackService(db,analytics_client) if analytics_client is not None else None
+    services.learning=LearningService(db)
+    services.publication_work=PublicationWork(services)
     if drive is not None:
         from .delivery.service import DeliveryService
         services.delivery=DeliveryService(db,drive,artifacts,executor=executor)

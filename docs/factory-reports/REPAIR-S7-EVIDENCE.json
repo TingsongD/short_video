@@ -1,0 +1,31 @@
+{
+  "package": "S7",
+  "parent_revision": "b23790b",
+  "implementation_revision": "the focused S7 commit containing this evidence",
+  "status": "passed_offline_checkpoint",
+  "negative_probes": "All four initial protocol/math/exposure/horizon probes failed before repair; /tmp/factory-s7-red.log",
+  "targeted": "81 passed; 22.07s; /tmp/factory-s7-regression-final.log",
+  "application": "Public seed/import/render/review/delivery workflow followed by four scoped fake posts, source report readbacks and a frozen-policy decision. Four actual local exports; no manufactured final artifacts. /tmp/factory-s7-journey.log",
+  "full_suite": "932 passed, 2 dependency warnings in 175.52s; /tmp/factory-s7-full-final.log",
+  "findings": [
+    "R32",
+    "R33",
+    "R34",
+    "R35",
+    "R36",
+    "R42"
+  ],
+  "evidence": [
+    "Native async request identity, video/scheduled_date fields and per-platform result parsing",
+    "Actual bytes and exact immutable final/destination/action approval; manual declarations stay unverified",
+    "Reporting job/report pagination and bounded CSV ingestion with video/day filtering and trusted download hosts",
+    "Weighted metrics, denominator availability, metric-specific coverage, Pacific source days, lifetime separation, immutable snapshot revisions",
+    "Per-arm exposure, frozen horizons, compatible observations, current independent experiment identities, numeric decision revisions and immutable supersession",
+    "Legacy timed queries and missing-baseline/pending-promotion guards"
+  ],
+  "limits": [
+    "No real posts or analytics account calls",
+    "Live publication and elapsed horizons need separate qualification",
+    "Source calendar reports cannot prove arbitrary rolling horizons; these remain partial"
+  ]
+}
