@@ -40,15 +40,19 @@ hash-material versioning).
   attempts and written through, coverage counts real calls; readiness
   60s per-process cache + `?refresh=1`, run off the event loop, dashboard
   providers load on mount/manual recheck only.
-- W5 — `tests/test_factory_repairs_2026_09_17.py` (21 regression tests
-  asserting repaired contracts), REPAIRS.md probe→test mapping, and
-  `pytest.ini` scoping default collection to `tests/` so bare `pytest`
-  no longer dies on vendor/ deps.
+- W5 `e9a7b82` `b2c64a8` — `tests/test_factory_repairs_2026_09_17.py`
+  (21 regression tests asserting repaired contracts), the
+  source_text-vs-normalized alignment fix surfaced by the N07 test,
+  REPAIRS.md probe→test mapping, `pytest.ini` scoping default collection
+  to `tests/` so bare `pytest` no longer dies on vendor/ deps, and the
+  review report/plan/probes committed as the audit trail.
 
-Every original probe was rerun after its fix: all fail on their old
+Verification: full backend suite **973 passed** (313.83s, offline,
+no paid calls), dashboard **28 passed** + production build green. Every
+original probe was rerun after its fix: all 19 fail on their old
 assertions (the defect is gone), kept at
 `docs/factory-reports/probes/review_post_repair_2026_09_17.py` as the
-audit trail. Offline only — no paid calls, no publishing; live gates and
+audit trail. Offline only — no publishing; live gates and
 the F35 funded-pilot slice remain closed pending explicit authorization.
 
 ---
