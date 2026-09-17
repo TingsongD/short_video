@@ -30,18 +30,21 @@ export default function App() {
   const [studioVariant,setStudioVariant]=useState(""); const [studioSessions,setStudioSessions]=useState<Row[]>([]);
   const studioSession=studioSessions.find(x=>x.owner===studioVariant && x.state==='open');
   const refresh=useCallback(async()=>{
-    const [collections,q,h,p,studios]=await Promise.all([
+    // Provider readiness is intentionally NOT part of the hot refresh —
+    // checks can spawn subprocesses; load on mount and manual recheck.
+    const [collections,q,h,studios]=await Promise.all([
       Promise.all(names.map(async n=>[n,(await call<{items:Row[]}>("GET",`/api/collections/${n}`)).items] as const)),
-      call<{items:{jobs:Row[]}}>("GET","/api/collections/queue"),api.health(),api.providers(),call<{items:Row[]}>("GET","/api/studio/sessions")]);
-    setStudioSessions(studios.items);setData(Object.fromEntries(collections));setJobs(q.items.jobs);setHealth(h);setProviders(p);
+      call<{items:{jobs:Row[]}}>("GET","/api/collections/queue"),api.health(),call<{items:Row[]}>("GET","/api/studio/sessions")]);
+    setStudioSessions(studios.items);setData(Object.fromEntries(collections));setJobs(q.items.jobs);setHealth(h);
     if(experimentId) setSelected(await api.results(experimentId));
   },[experimentId]);
+  const loadProviders=useCallback(async(force=false)=>{setProviders(await api.providers(force));},[]);
   useEffect(()=>{window.localStorage.setItem("selected-experiment",experimentId);setSelected(null);
     let stream:EventSource|undefined; let disposed=false;
-    session().then(refresh).then(()=>{if(!disposed)stream=events("factory",()=>{refresh().catch(e=>setError(String(e)));});}).catch(e=>setError(String(e)));
+    session().then(refresh).then(()=>loadProviders()).then(()=>{if(!disposed)stream=events("factory",()=>{refresh().catch(e=>setError(String(e)));});}).catch(e=>setError(String(e)));
     const timer=setInterval(()=>refresh().catch(e=>setError(String(e))),5000);
     return ()=>{disposed=true;stream?.close();clearInterval(timer);};
-  },[refresh,experimentId]);
+  },[refresh,loadProviders,experimentId]);
   async function act(fn:()=>Promise<unknown>,message="Saved") {setBusy(true);setError("");try{const r=await fn();setNotice(message);await refresh();return r;}catch(e){setError(e instanceof Error?e.message:String(e));}finally{setBusy(false);}}
   function requireReviewer(){if(!reviewer.trim())throw new Error("Enter your reviewer name first.");return reviewer.trim();}
   const seeds=data.seeds||[];const seed=seeds.find(x=>x.id===seedId);
@@ -112,7 +115,7 @@ export default function App() {
       {studioSession&&<button onClick={()=>act(()=>call('POST',`/api/studio/${studioSession.session_id}/close`,{body:{}}))}>Close owned Studio</button>}
       <label>Time in seconds <input value={at} onChange={e=>setAt(e.target.value)}/></label><label>Proposed edit <textarea value={comment} onChange={e=>setComment(e.target.value)}/></label><button onClick={()=>act(()=>call('POST',`/api/variants/${studioVariant}/comments`,{rev:selected?.revision,body:{at_s:Number(at),text:comment}}),'Change proposed; no generation started')}>Save proposed change</button>
     </section>}
-    {tab==='Providers'&&<ProvidersScreen providers={providers}/>}
+    {tab==='Providers'&&<ProvidersScreen providers={providers} onRecheck={()=>act(()=>loadProviders(true),'Readiness re-checked')}/>}
     {['Products','Budgets','Research','Analysis','Audio','Publishing','Learning'].includes(tab)&&<OperationsScreen section={tab} data={data} selected={selected} reviewer={reviewer} act={act}/>}
     </fieldset>
   </main>;

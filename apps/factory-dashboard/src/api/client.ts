@@ -97,8 +97,8 @@ export async function call<T>(
 
 export const api = {
   health: () => call<Record<string, unknown>>("GET", "/api/health"),
-  providers: () =>
-    call<Record<string, ProviderReadiness>>("GET", "/api/providers"),
+  providers: (refresh = false) =>
+    call<Record<string, ProviderReadiness>>("GET", `/api/providers${refresh ? "?refresh=1" : ""}`),
   getSeed: (id: string) => call<Record<string, unknown>>("GET", `/api/seeds/${id}`),
   results: (id: string) =>
     call<Record<string, unknown>>("GET", `/api/experiments/${id}/results`),

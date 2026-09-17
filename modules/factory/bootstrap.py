@@ -61,6 +61,8 @@ def bootstrap(root, *, providers=None, drive=None, settings=None,publisher=None,
     from .analytics.service import ReadbackService
     from .learning.service import LearningService
     from .services.publication_work import PublicationWork
+    from .audio.mix import MixService
+    services.mix=MixService(db,artifacts)
     services.publishing=PublishingService(db,publisher=publisher,accounts=settings.get('publication_accounts',{}),executor=executor,max_per_day=settings.get('posts_per_day',2))
     services.readback=ReadbackService(db,analytics_client) if analytics_client is not None else None
     services.learning=LearningService(db)

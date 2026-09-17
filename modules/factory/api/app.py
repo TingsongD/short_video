@@ -68,8 +68,10 @@ def create_app(services, session_token=None):
         return services.health()
 
     @app.get("/api/providers")
-    async def providers():
-        return services.providers_readiness()
+    async def providers(request: Request):
+        # Readiness can spawn subprocesses — never on the event loop.
+        force = request.query_params.get('refresh') == '1'
+        return await run_in_threadpool(services.providers_readiness, force)
 
     @app.get("/api/seeds/{seed_id}")
     async def get_seed(seed_id: str):

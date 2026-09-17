@@ -1,5 +1,6 @@
 """Independent durable application worker. Closing the browser cannot cancel it."""
 import json
+import math
 import time
 from pathlib import Path
 from ..domain.errors import ContractError
@@ -97,21 +98,31 @@ class ApplicationWorker:
         if kind=='effect':return s.effect_work.execute(body,job)
         if kind=='research_evaluate':
             from ..discovery.service import DiscoveryService
-            pool=[];histories={}
+            pool=[];histories={};planned=[];received=[];per_query={};actual_calls=0;page_size=20
             for pid in body['plan_ids']:
                 plan=s.effect_work.get(pid)
                 if plan['kind']!='research':raise ContractError('invalid_research_plan','plan_id')
                 for operation in plan['operations']:
                     saved=s.commands.get(pid+':'+operation['key'])
                     if saved['status']!='succeeded':raise ContractError('research_unfinished','job')
-                    posts=saved['command']['result']['result'].get('posts',[])
-                    if operation['request']['kind']=='creator_history':
+                    res=saved['command']['result'];posts=res['result'].get('posts',[])
+                    req=operation['request'];label=req.get('query') or req.get('handle','')
+                    page_size=req.get('page_size',page_size)
+                    planned.append((label,req.get('page',1)))
+                    per_query.setdefault(label,[]).append(req.get('page',1))
+                    if posts:received.append((label,req.get('page',1)))
+                    # Coverage is the count of real provider calls — a
+                    # cache-hit operation made none.
+                    if not res.get('cache_hit'):actual_calls+=1
+                    if req['kind']=='creator_history':
                         for post in posts:histories.setdefault((post.get('platform'),post.get('creator_id')),[]).append(post)
                     else:pool.extend(posts)
             for p in pool:histories.setdefault((p.get('platform'),p.get('creator_id')),[])
             policy=body.get('policy',{})
             svc=DiscoveryService(s.db,s.seeds,s.executor,None)
-            result=svc._finish(body['run_id'],[],0,0,policy.get('mode','either'),policy.get('baseline_threshold',5),policy.get('follower_threshold',2),[],[],{},pool,None,True,history_by_creator=histories)
+            svc._calls=actual_calls
+            queries=sorted(per_query)
+            result=svc._finish(body['run_id'],queries,max((len(v) for v in per_query.values()),default=1),page_size,policy.get('mode','either'),policy.get('baseline_threshold',5),policy.get('follower_threshold',2),planned,received,per_query,pool,None,True,history_by_creator=histories)
             return {'status':'complete','discovery':result.to_dict()}
         if kind=='analyze':
             return {'blueprint':s.analysis.import_observations(body['seed_id'],body['observations'],body['reviewer']).to_dict()}
@@ -322,6 +333,34 @@ class ApplicationWorker:
                   'source_in_s':music.get('source_in_s',0),'source_out_s':music.get('source_in_s',0)+variant.target_frames/fps,'gain':music.get('gain',.1)}
             segments.append(item); audio.append({**item,'src':str(path)})
         if not audio: raise ContractError('audio_required','experiment','Import or synthesize the reviewed audio')
+        # Frozen-profile mix (F20): narration+music are pre-mixed into
+        # ONE deterministic artifact — measured loudness, duck envelope
+        # and clip policy are bound evidence, not ad-hoc FFmpeg gains.
+        profile_id=f'mix-{exp.experiment_id}-r{exp.revision}'
+        if not s.mix.get(profile_id):
+            s.mix.freeze(profile_id,exp.experiment_id,music.get('artifact_id',''),{
+                'music_gain_db':20*math.log10(max(music.get('gain',.1),1e-6)),
+                'duck':{'enabled':bool(music.get('artifact_id')),'amount_db':12,'fps':fps,
+                        'regions':[{'start_frame':n['start_frame'],'end_frame':n['end_frame']} for n in narration]},
+                'clip_policy':'prevent'},now=utcnow())
+        tracks=[]
+        for a in audio:
+            kind='music' if a['id']=='music' else 'speech'
+            t={'kind':kind,'offset_s':a['in_frame']/fps,
+               'gain_db':20*math.log10(max(a.get('gain',1),1e-6)) if a.get('gain',1)!=1 else None,
+               'trim_to_allocation':kind=='music'}
+            if t['gain_db'] is None: t.pop('gain_db')
+            if a.get('source_in_s',0)>0:
+                from ..audio import pcm
+                samples=pcm.decode(a['src'],pcm.RATE,1)
+                t.update(samples=samples[round(a['source_in_s']*pcm.RATE):round(a.get('source_out_s',a['source_in_s']+(a['out_frame']-a['in_frame'])/fps)*pcm.RATE)],sample_rate=pcm.RATE)
+            else:
+                t['artifact_id']=a['artifact_id']
+            tracks.append(t)
+        mixed=s.mix.mix(profile_id,tracks,variant.target_frames/fps,artifact_name=f'{plan["id"]}:{key}')
+        audio=[{'id':'mixed','kind':'audio','artifact_id':mixed['artifact_id'],'sha256':mixed['sha256'],
+                'src':str(s.artifacts.verified_path(mixed['artifact_id'])),'in_frame':0,'out_frame':variant.target_frames,
+                'source_in_s':0,'source_out_s':variant.target_frames/fps,'gain':1}]
         source_art=s.db.uow().artifacts.get(pictures[0]['artifact_id']); probe=json.loads(source_art['probe'])
         video=next(x for x in probe['streams'] if x['codec_type']=='video')
         clock={'fps':fps,'width':video['width'],'height':video['height'],'total_frames':variant.target_frames}
@@ -343,9 +382,23 @@ class ApplicationWorker:
             if result['status'] not in ('succeeded','collected'): return result
         build=s.rendering._build(bid)
         final={'artifact_id':build['output_artifact_id'],'sha256':build['output_sha256']} if build['status']=='collected' else s.rendering.collect(bid,now=utcnow())
-        final.update(composition_id=cid,build_id=bid)
+        final.update(composition_id=cid,build_id=bid,
+            mix={'profile_id':profile_id,'profile_hash':mixed['profile_hash'],
+                 'measured':mixed['measured'],'artifact_id':mixed['artifact_id'],
+                 'clipped':mixed['clipped']})
         path=s.artifacts.verified_path(final['artifact_id']); binding=s.quality.binding(path,cid,final['artifact_id'])
-        expected={**clock,'frames':variant.target_frames,'has_audio':True,'narration':narration,'narration_required':any(seg.get('copy') for seg in variant.segments)}
+        # Image artifacts placed by the authorized plan are intentional
+        # stills — QC must not flag them as accidental freezes. Adjacent
+        # stills merge into one interval because freezedetect reports a
+        # continuous still run as a single freeze.
+        stills=[]
+        for p in sorted((x for x in pictures if x.get('media_kind')=='image'),key=lambda x:x['in_frame']):
+            start,end=p['in_frame']/fps,p['out_frame']/fps
+            if stills and start<=stills[-1]['end_s']+.05:
+                stills[-1]['end_s']=end
+            else:
+                stills.append({'start_s':start,'end_s':end,'approved':True,'artifact_id':p['artifact_id']})
+        expected={**clock,'frames':variant.target_frames,'has_audio':True,'narration':narration,'narration_required':any(seg.get('copy') for seg in variant.segments),'intentional_stills':stills}
         tech='technical-'+bid
         if not s.quality._get(tech): s.quality.inspect(tech,path,expected,binding=binding)
         checks=[tech]

@@ -5,7 +5,7 @@ import { Blocked, Empty, Loading } from "../../components/States";
 /** Granular readiness — installed/authenticated/catalog/tested/
  * qualified are separate truths; operator-language actions. */
 export function ProvidersScreen(
-  { providers }: { providers: Record<string, ProviderReadiness> | undefined },
+  { providers, onRecheck }: { providers: Record<string, ProviderReadiness> | undefined; onRecheck?: () => void },
 ) {
   if (providers === undefined) return <Loading what="providers" />;
   const names = Object.keys(providers);
@@ -15,6 +15,7 @@ export function ProvidersScreen(
   return (
     <section aria-label="providers">
       <h2>Providers</h2>
+      {onRecheck&&<button onClick={onRecheck}>Re-check readiness</button>}
       <ul>
         {names.map((name) => {
           const p = providers[name];

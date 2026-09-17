@@ -81,6 +81,20 @@ class EffectWork:
         if adapter is None:raise ContractError('route_unavailable','provider')
         s.executor.provider=adapter
         effect=EffectService(s.db,s.executor)
+        operation=next(op for op in plan['operations'] if op['key']==body['operation'])
+        cache_key=None
+        if plan['kind']=='research':
+            # Durable cache BEFORE intent/attempt/reservation — an
+            # identical research request must never re-charge.
+            cache_key=content_hash({'provider':plan['provider'],'account':plan['account'],
+                                    'request':operation['request'],'query_version':'creator-history.v2'})
+            cached=s.db.conn.execute("SELECT body,observed_at FROM discovery_cache WHERE query_key=? AND page=?",
+                (cache_key,operation['request'].get('page',1))).fetchone()
+            if cached:
+                age=(datetime.now(timezone.utc)-datetime.fromisoformat(cached['observed_at'].replace('Z','+00:00'))).total_seconds()
+                if 0<=age<86400:
+                    return {'status':'succeeded','attempt_id':'','result':{'posts':json.loads(cached['body'])},
+                            'cache_hit':True,'charge_verified':True}
         prior=s.db.conn.execute('SELECT id,status FROM attempts WHERE job_id=?',(job['id'],)).fetchone()
         aid=prior['id'] if prior and prior['status']!='prepared' else effect.prepare(body['authorization_id'],body['operation'],job['id'],job['fencing_token'],s.scheduler.worker_id)
         if prior and prior['status'] in ('unknown','dispatching'):out=s.executor.reconcile(aid) or {'status':'unknown'}
@@ -90,10 +104,16 @@ class EffectWork:
             with s.db.uow() as u:u.conn.execute("UPDATE jobs SET phase='collect' WHERE id=?",(job['id'],))
             return {'status':'pending','attempt_id':aid}
         if out.get('status')!='succeeded':raise ContractError('effect_failed','attempt',aid)
-        operation=next(op for op in plan['operations'] if op['key']==body['operation'])
         actual=out.get('actual_usd_micros') if operation['price']['unit']=='usd_micros' else out.get('actual_credits')
         if type(actual) is int:effect.settle(aid,actual,'reported_usage',out.get('operation_id') or aid)
         result={'status':'succeeded','attempt_id':aid,'result':out.get('result',{}),'charge_verified':type(actual) is int}
+        if cache_key is not None:
+            # Write-through: the durable receipt that lets every later
+            # identical request skip the paid/provider call entirely.
+            posts=(out.get('result') or {}).get('posts',[])
+            with s.db.uow() as u:
+                u.conn.execute("INSERT OR REPLACE INTO discovery_cache(query_key,page,body,observed_at,run_id) VALUES(?,?,?,?,?)",
+                    (cache_key,operation['request'].get('page',1),json.dumps(posts),utcnow(),body['plan_id']))
         if plan['kind'] in ('tts','music'):
             media=s.executor.download(aid)
             artifact=s.artifacts.intake_bytes(media['bytes'],provenance='elevenlabs' if plan['provider']=='elevenlabs' else 'generated_other',source_key=aid,requested_kind='audio')

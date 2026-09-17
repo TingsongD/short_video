@@ -2,6 +2,7 @@
 import copy
 import hashlib
 import json
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -49,7 +50,13 @@ class FactoryServices:
             "heartbeat":beat, "paused":bool(self.scheduler and self.scheduler.paused),
             "draining":bool(self.scheduler and self.scheduler._flag('draining'))}, "mode":self.config.get('mode','offline')}
 
-    def providers_readiness(self):
+    def providers_readiness(self,refresh=False):
+        # Readiness checks can spawn subprocesses — cache per-process for
+        # 60s so dashboard refreshes never run them synchronously; an
+        # explicit refresh bypasses the cache.
+        if not refresh and getattr(self,'_readiness_cache',None) is not None \
+                and time.monotonic()-self._readiness_at<60:
+            return self._readiness_cache
         out = {name:{'installed':False,'authenticated':False,'catalog_visible':False,'contract_tested':False,'live_qualified':False,'tested':False,'qualified':False,'detail':{'reason':'Route not configured and currently qualified; use imports or complete the recorded qualification gate'}} for name in ('jimeng_canvas','google_vertex','elevenlabs','viral_outliers','generated_music','audiovisual_analysis')}
         for name, adapter in self.providers.items():
             try:
@@ -60,6 +67,7 @@ class FactoryServices:
             out[name]['tested'] = out[name]['contract_tested']
             out[name]['qualified'] = out[name]['live_qualified']
             out[name]['detail'] = redact(ready)
+        self._readiness_cache=out;self._readiness_at=time.monotonic()
         return out
 
     def collection(self, name):
