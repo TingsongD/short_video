@@ -89,6 +89,11 @@ class TemplateService:
                 "'experimentrevision'").fetchall():
             body = json.loads(row["body"])
             ref = body.get("template_ref") or {}
+            if isinstance(ref, str):
+                rid, separator, rev = ref.rpartition("@")
+                if not separator or not rev.isdigit():
+                    continue
+                ref = {"id": rid, "revision": int(rev)}
             if ref.get("id") == template_id and \
                     ref.get("revision") == revision:
                 bound.append(row["id"])

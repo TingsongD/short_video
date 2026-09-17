@@ -9,7 +9,7 @@ All checks use offline providers; no new live spend or publication scope exists.
 | Package | Status | Evidence |
 | --- | --- | --- |
 | S0 containment | passed (offline checkpoint) | 856 suite tests passed in 115.35s; 5 focused safety tests passed (the final regression was added after full-suite collection); Approval clock regression reproduced then fixed; structured event redaction; unavailable handlers and empty reviews block; live transport policy defaults offline |
-| S1 state/restore | planned | |
+| S1 state/restore | passed | 863 tests pass (117.24s); atomic v7→v8 migration fault/retry; restored media/ledger checks; normal CLI shares restored database |
 | S2 effects/budgets | planned | |
 | S3 adapters | planned | |
 | S4 media/QC | planned | |
@@ -49,7 +49,7 @@ separate from engineering repairs; historical tests do not sign either gate.
 | R22 | open | |
 | R23 | open | |
 | R24 | open | |
-| R25 | open | |
+| R25 | in_progress | Self-contained verified backup and persistent restore hold fixed; S2 must enforce hold at dispatch |
 | R26 | open | |
 | R27 | open | |
 | R28 | open | |
@@ -61,7 +61,7 @@ separate from engineering repairs; historical tests do not sign either gate.
 | R34 | open | |
 | R35 | open | |
 | R36 | open | |
-| R37 | open | |
+| R37 | fixed | Rebranch preserves prior variants; composition history retained; persisted template references resolve |
 | R38 | in_progress | Nested credentials redacted before durable events and replay; live transport/API audit remains |
 | R39 | open | |
 | R40 | fixed | Approval grant/check share injected time; 7 approval tests pass |

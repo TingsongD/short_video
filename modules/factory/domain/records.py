@@ -338,6 +338,7 @@ class ExperimentRevision(Record):
 @dataclass
 class VariantPlan(Record):
     """One declared treatment branching from the frozen control."""
+    revision: int = 1
     experiment_id: str = ""
     experiment_revision: int = 0
     variant_key: str = ""

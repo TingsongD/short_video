@@ -143,6 +143,7 @@ class ExperimentService:
             id=f"{experiment_id}:{variant_key.lower()}", created_at=utcnow(),
             experiment_id=experiment_id,
             experiment_revision=row["revision"],
+            revision=row["revision"],
             variant_key=variant_key, hypothesis=hypothesis,
             changed_factor=factor, allowed_regions=regions_iv,
             allowed_fields=list(allowed_fields),
@@ -245,12 +246,17 @@ class ExperimentService:
                 vb = json.loads(row["body"])
                 if vb.get("stale_reason"):
                     continue
-                vb["stale_reason"] = "control_revised"
-                vb["experiment_revision"] = body["revision"]
-                u.conn.execute(
-                    "UPDATE records SET body=? WHERE id=? AND revision=?",
-                    (json.dumps(vb), row["id"], row["revision"]))
+                # Preserve the old variant. Staleness is a relation to the
+                # current experiment revision, not a rewrite of history.
                 staled.append(row["id"])
+            a = self._variant(experiment_id, "A")
+            a.revision = child.revision
+            a.experiment_revision = child.revision
+            a.segments = copy.deepcopy(child.packaging["segments"])
+            a.status = "draft"
+            a.stale_reason = ""
+            a.content_hash = _hash_body(a.to_dict())
+            u.records.put(a)
             u.conn.execute(
                 "UPDATE records SET body=json_set(body,'$.status',"
                 "'stale') WHERE kind='priceassessment' AND "
@@ -276,7 +282,10 @@ class ExperimentService:
             "variantplan", f"{experiment_id}:{key.lower()}")
         if row is None:
             raise ContractError("unknown_variant", "key", key)
-        return load_variant(row)
+        variant = load_variant(row)
+        if variant.experiment_revision != self._latest(experiment_id).revision:
+            variant.stale_reason = "control_revised"
+        return variant
 
     def _set_status(self, kind, rid, status):
         row = self.db.uow().records.get(kind, rid)

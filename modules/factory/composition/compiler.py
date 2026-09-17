@@ -310,16 +310,14 @@ class CompositionService:
                               "plan_hash": plan_hash},
             content_hash=content, diagnostics=diags)
         comp.validate_or_raise()
-        row = self.db.uow().records.get("composition", comp_id)
+        row = self.db.uow().records.get("composition", comp_id, revision)
         with self.db.uow() as u:
             if row is None:
                 u.records.put(comp)
             else:
-                u.conn.execute(
-                    "UPDATE records SET body=? WHERE kind='composition'"
-                    " AND id=? AND revision=?",
-                    (json.dumps(comp.to_dict()), comp_id,
-                     row["revision"]))
+                if row["content_hash"] != comp.content_hash:
+                    raise ContractError("immutable_revision", "composition", comp_id)
+                return json.loads(row["body"])
         return comp.to_dict()
 
     def _latest(self, experiment_id, variant_key):

@@ -55,14 +55,18 @@ identity, never re-submits.
 
 ```bash
 scripts/factory.sh backup data/backups/$(date +%Y%m%d) \
-    --ledger data/ledger.jsonl
+    --ledger data/costs/ledger.json
 scripts/factory.sh restore data/backups/20260917 data/factory-restore
 ```
 
-A backup contains: consistent SQLite snapshot (WAL-safe online
-backup), artifact manifest, unresolved intents + budget/financial
-state, and every `--ledger` file — all SHA-256'd into `manifest.json`.
+A backup contains a consistent SQLite snapshot (WAL-safe online
+backup), verified artifact bytes and manifest, unresolved intents and
+budget/financial state, the existing legacy spending ledger, and every `--ledger` file — all SHA-256'd into `manifest.json`.
 Git is not the backup for ignored financial state.
+
+Restore uses `<fresh-root>/data/factory/factory.db`, the same default layout as
+normal application startup. Restored authority remains blocked even when the
+snapshot has no unfinished jobs, until post-backup effects are reconciled.
 
 Restore copies verified files into a **fresh** root (an existing,
 nonempty root is refused; tampered files fail with `hash_mismatch`).

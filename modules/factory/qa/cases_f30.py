@@ -99,12 +99,12 @@ def f30_m04(ctx: CaseContext):
         "created_at,updated_at) VALUES('a1','j1',0,'running','{}','n','n')")
     m = create_backup(db, ctx.run_dir, ctx.run_dir / "bk")
     out = restore_into(ctx.run_dir / "bk", ctx.run_dir / "restored")
-    rdb = Database(ctx.run_dir / "restored" / "factory.db")
+    rdb = Database(ctx.run_dir / "restored" / "data" / "factory" / "factory.db")
     gate = activation_gate(rdb)
     checks = {
         "integrity_ok": out["integrity"]["integrity"] == "ok",
         "dispatch_gated": gate["dispatch_enabled"] is False
-        and gate["pending_effects"] == 1,
+        and gate["pending_effects"] >= 1,
         "manifest_hashed": "factory.db" in m["files"],
         "original_untouched": (ctx.run_dir / "bk" / "factory.db")
         .exists(),

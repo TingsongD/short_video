@@ -215,6 +215,27 @@ class TestAcceptance:
 
 
 class TestPostFreeze:
+    def test_template_dependency_uses_persisted_experiment_reference(self, svc):
+        from modules.factory.templates import TemplateService
+        template = _template()
+        assert TemplateService(svc["db"]).plans_bound_to(template.id, template.revision) == ["exp:exp1"]
+
+    def test_revision_can_branch_again_without_rewriting_prior_variant(self, svc):
+        es = svc["es"]
+        def edit(body):
+            for field in ("copy", "speech", "captions", "picture"):
+                body["segments"][0][field] = "new-" + field
+            return body
+        kwargs = dict(hypothesis="h", primary_metric="retention", allowed_fields=["copy", "speech", "captions", "picture"])
+        first = es.branch("exp1", "B", "hook", [FrameInterval(0, 120)], edit, **kwargs)
+        es.revise_control("exp1", lambda b: b, "new revision")
+        second = es.branch("exp1", "B", "hook", [FrameInterval(0, 120)], edit, **kwargs)
+        assert first.experiment_revision == 1 and second.experiment_revision == 2
+        history = svc["db"].uow().records.revisions("variantplan", "exp1:b")
+        assert len(history) == 2
+        import json
+        assert json.loads(history[0]["body"]) == first.to_dict()
+
     def test_revise_control_stales_variants_and_prices(self, svc):
         es = svc["es"]
         fields = ["copy", "speech", "captions", "picture"]

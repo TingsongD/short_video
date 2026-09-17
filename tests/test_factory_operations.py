@@ -151,11 +151,12 @@ def test_activation_gate_after_restore(db):
 # ------------------------------------------------------ backup/restore
 
 def test_backup_manifest_and_verify(db, tmp_path):
-    db.uow().conn.execute(
-        "INSERT INTO artifacts(id,sha256,kind,byte_count,probe,"
-        "provenance,local_path,status,body,created_at,updated_at,"
-        "version) VALUES('a1','s','video',1,'{}','test','p','retained',"
-        "'{}','now','now',1)")
+    from modules.factory.artifacts.registry import ArtifactStore
+    from modules.factory.audio import pcm
+    source = tmp_path / "source.wav"
+    source.write_bytes(pcm.write_wav(pcm.sine(0.1)))
+    artifact = ArtifactStore(tmp_path / "assets", db).intake_file(
+        source, provenance="manual", source_key="backup-fixture")
     ledger = tmp_path / "ledger.jsonl"
     ledger.write_text('{"charge": 5}\n')
     m = create_backup(db, tmp_path, tmp_path / "bk",
@@ -166,6 +167,12 @@ def test_backup_manifest_and_verify(db, tmp_path):
     fin = json.loads((tmp_path / "bk" / "financial-state.json")
                      .read_text())
     assert "unresolved_intents" in fin and "budgets" in fin
+    restored = tmp_path / "restored-with-assets"
+    restore_into(tmp_path / "bk", restored)
+    target_db = Database(restored / "data/factory/factory.db")
+    target_store = ArtifactStore(restored / "data/factory/artifacts", target_db)
+    assert target_store.path_for(artifact.id).read_bytes() == source.read_bytes()
+    assert (restored / "data/costs/ledger.jsonl").read_bytes() == ledger.read_bytes()
 
 
 def test_restore_into_fresh_root_verifies(db, tmp_path):
@@ -173,7 +180,7 @@ def test_restore_into_fresh_root_verifies(db, tmp_path):
     out = restore_into(tmp_path / "bk", tmp_path / "restored")
     assert out["integrity"]["integrity"] == "ok"
     assert out["dispatch"].startswith("gated")
-    assert (tmp_path / "restored" / "factory.db").exists()
+    assert (tmp_path / "restored" / "data" / "factory" / "factory.db").exists()
     # original untouched
     assert (tmp_path / "bk" / "factory.db").exists()
 
@@ -204,7 +211,7 @@ def test_cli_doctor_and_config(tmp_path, capsys):
 
 def test_cli_gate_exit_codes(tmp_path, capsys):
     assert cli(["--root", str(tmp_path), "gate"]) == 0
-    db = Database(tmp_path / "data" / "factory.db")
+    db = Database(tmp_path / "data" / "factory" / "factory.db")
     db.uow().conn.execute(
         "INSERT INTO jobs(id,logical_key,phase,status,created_at,"
         "updated_at) VALUES('j','k','dispatch','leased','now','now')")

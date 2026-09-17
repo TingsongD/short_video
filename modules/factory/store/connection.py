@@ -38,11 +38,16 @@ def migrate(conn):
         raise NewerDatabaseError(v)
     for num, ddl in _schema.MIGRATIONS:
         if num > v:
-            with conn:
-                conn.executescript(ddl)
-                conn.execute(
-                    "INSERT OR REPLACE INTO meta(key, value) "
-                    "VALUES('schema_version', ?)", (str(num),))
+            # executescript commits pending transactions; the transaction must
+            # be part of the script so DDL and its version advance atomically.
+            try:
+                conn.executescript("BEGIN IMMEDIATE;\n" + ddl +
+                    "\nINSERT OR REPLACE INTO meta(key,value) VALUES"
+                    f"('schema_version','{int(num)}');\nCOMMIT;")
+            except BaseException:
+                if conn.in_transaction:
+                    conn.rollback()
+                raise
     return _schema.CURRENT_VERSION
 
 

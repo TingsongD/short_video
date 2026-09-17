@@ -85,6 +85,17 @@ def test_compile_deterministic(stack):
         a["composition"]["files"]["video.svml"]
 
 
+def test_recompile_preserves_readable_historical_revision(stack):
+    db, arts, svc, tmp = stack
+    segs = _segments(arts, tmp)
+    original = svc.compile("comp-a", "exp1", "A", "plan-1", segs, [], CLOCK, now=NOW)
+    changed = svc.compile("comp-a", "exp1", "A", "plan-2", segs, [], CLOCK, now=NOW)
+    assert changed["composition"]["revision"] == 2
+    history = db.uow().records.revisions("composition", "comp-a")
+    assert [row["revision"] for row in history] == [1, 2]
+    assert json.loads(history[0]["body"]) == original["composition"]
+
+
 def test_caption_escaping(stack):
     db, arts, svc, tmp = stack
     caps = [{"id": "c1", "placement": "heading",

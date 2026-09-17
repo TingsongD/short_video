@@ -1,7 +1,7 @@
 """Ordered migrations. Every DB carries meta.schema_version; an older
 binary refuses a newer database rather than reinterpreting it."""
 
-CURRENT_VERSION = 7
+CURRENT_VERSION = 8
 
 MIGRATIONS = [
     (1, """
@@ -202,5 +202,25 @@ CREATE TABLE discovery_cache (
   run_id TEXT NOT NULL,
   PRIMARY KEY (query_key, page)
 );
+"""),
+    (8, """
+CREATE TABLE migration_issues (
+  kind TEXT NOT NULL, id TEXT NOT NULL, revision INTEGER NOT NULL,
+  reason TEXT NOT NULL, original_body TEXT NOT NULL,
+  resolved_evidence TEXT, PRIMARY KEY(kind,id,revision,reason)
+);
+INSERT INTO migration_issues(kind,id,revision,reason,original_body)
+SELECT kind,id,revision,'revision_body_mismatch',body FROM records
+WHERE kind IN ('composition','experimentrevision')
+AND COALESCE(json_extract(body,'$.revision'),revision) != revision;
+INSERT OR IGNORE INTO migration_issues(kind,id,revision,reason,original_body)
+SELECT kind,id,revision,'legacy_draft_requires_review',body FROM records
+WHERE kind IN ('experimentdraft','experiment_draft');
+DROP INDEX records_hash;
+CREATE INDEX records_hash ON records(kind,content_hash)
+WHERE content_hash IS NOT NULL;
+UPDATE records SET revision=COALESCE(json_extract(body,'$.experiment_revision'),1),
+body=json_set(body,'$.revision',COALESCE(json_extract(body,'$.experiment_revision'),1))
+WHERE kind='variantplan' AND revision=0;
 """),
 ]

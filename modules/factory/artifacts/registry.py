@@ -30,6 +30,9 @@ class ArtifactStore:
     def __init__(self, root, db=None):
         self.root = Path(root).resolve()
         self.db = db
+        if db is not None:
+            db.conn.execute("INSERT OR IGNORE INTO meta(key,value) VALUES"
+                            "('artifact_root',?)", (str(self.root),))
         for sub in ("blobs", "staging", "derived"):
             (self.root / sub).mkdir(parents=True, exist_ok=True)
 

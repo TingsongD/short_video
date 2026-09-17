@@ -16,7 +16,8 @@ from .store import Database
 
 
 def _db(root):
-    path = Path(root) / "data" / "factory.db"
+    from .operations.paths import database_path
+    path = database_path(root)
     path.parent.mkdir(parents=True, exist_ok=True)
     return Database(path)
 
@@ -82,7 +83,7 @@ def main(argv=None):
     if args.cmd == "restore":
         out = restore_into(args.backup_dir, args.new_root)
         print(json.dumps(out, indent=1))
-        db = Database(Path(args.new_root) / "factory.db")
+        db = _db(args.new_root)
         gate = activation_gate(db)
         print(json.dumps({"activation": gate}, indent=1))
         return 0 if not gate["pending_effects"] else 3

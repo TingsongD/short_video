@@ -304,10 +304,10 @@ def test_j08_restore_fresh_root_gate_then_reconcile(tmp_path):
     create_backup(db, tmp_path, bk)
     out = restore_into(bk, tmp_path / "restored")
     assert out["integrity"]["integrity"] == "ok"
-    rdb = Database(tmp_path / "restored" / "factory.db")
+    rdb = Database(tmp_path / "restored" / "data" / "factory" / "factory.db")
     gate = activation_gate(rdb)
     assert gate["dispatch_enabled"] is False
-    # after reconciling the fake remote world, the gate opens
+    # A restored snapshot cannot infer post-backup effects; explicit activation remains required.
     rec = dispatch_gate(rdb)
     assert rec["allowed"] is False or gate["pending_effects"] >= 1
 
