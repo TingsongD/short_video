@@ -245,3 +245,149 @@ class FakeProvider:
     def operation(self, operation_id):
         op = self.state.doc["operations"].get(operation_id)
         return dict(op) if op else None
+
+
+# ---------------------------------------------------------------------
+# Seed/source acquisition fake (F09)
+
+_TINY_PNG = bytes.fromhex(
+    "89504e470d0a1a0a0000000d494844520000000100000001080600000"
+    "01f15c4890000000d49444154789c626001000000ffff030000060005"
+    "57bfabd40000000049454e44ae426082")
+
+
+class FakeSeedSource:
+    """Scriptable source-acquisition provider: metadata lookups and
+    media downloads behind the provider protocol (submit/poll/download/
+    cancel/reconcile) so the F07 executor drives it.
+
+    Posts persist in fake_remote state — restart-safe. `media_dir`
+    holds real fixture bytes named `<post_id>.bin`; a post can instead
+    declare media="image" (thumbnail bytes), "missing", an expired URL
+    (refresh_url fixes it), or interrupt_downloads=N transient cuts.
+    """
+
+    def __init__(self, name, state_dir, ids, clock, media_dir=None):
+        self.name = name
+        self.ids = ids
+        self.clock = clock
+        self.media_dir = Path(media_dir) if media_dir else None
+        self.state = FakeProviderState(Path(state_dir) / f"{name}.json")
+        self.state.doc.setdefault("posts", {})
+        self.state.doc.setdefault("refreshes", 0)
+        self.state.doc.setdefault("source_ops", {})
+        self.state.save()
+
+    # -- setup -----------------------------------------------------------
+    def register_post(self, post_id, **kw):
+        post = {"post_id": post_id, "platform": "youtube",
+                "native_id": post_id, "title": "", "creator_id": "",
+                "stats": {}, "media": "missing", "url_state": "fresh",
+                "interrupt_downloads": 0, "downloads_interrupted": 0}
+        post.update(kw)
+        post.setdefault(
+            "media_url",
+            f"https://cdn.fake/{post_id}/media?sig=fakesig{post_id}")
+        self.state.doc["posts"][post_id] = post
+        self.state.save()
+        return post
+
+    def post(self, post_id):
+        return self.state.doc["posts"].get(post_id)
+
+    # -- provider protocol -------------------------------------------------
+    def submit(self, request):
+        self.state.bump("submit")
+        kind = request.get("kind")
+        post = self.state.doc["posts"].get(request.get("post_id"))
+        if post is None:
+            raise ProviderError("post_unavailable", http_status=404)
+        op_id = f"{self.name}-op:{self._next_seq()}"
+        if kind == "metadata":
+            result = {"title": post["title"], "creator_id": post["creator_id"],
+                      "stats": post["stats"], "media_url": post["media_url"],
+                      "post_id": post["post_id"]}
+            op = {"operation_id": op_id, "status": "succeeded",
+                  "result": result, "request": request}
+        elif kind == "media":
+            if post["url_state"] == "expired":
+                raise ProviderError("expired_source", http_status=410)
+            if post["media"] == "missing":
+                raise ProviderError("media_unavailable", http_status=404)
+            op = {"operation_id": op_id, "status": "accepted",
+                  "request": request}
+        else:
+            raise ProviderError("unsupported_kind")
+        self.state.doc["source_ops"][op_id] = op
+        self.state.save()
+        return {k: v for k, v in op.items() if k != "request"}
+
+    def poll(self, operation_id):
+        self.state.bump("poll")
+        op = self.state.doc["source_ops"].get(operation_id)
+        if op is None:
+            raise ProviderError("unknown_operation", http_status=404)
+        if op["status"] == "accepted":
+            post = self.state.doc["posts"][op["request"]["post_id"]]
+            if post["media"] == "missing":
+                op["status"] = "failed"
+            else:
+                op["status"] = "succeeded"
+                op["result"] = {"content_type": "video/mp4"}
+            self.state.save()
+        return {k: v for k, v in op.items() if k != "request"}
+
+    def download(self, operation_id, destination=None):
+        self.state.bump("download")
+        op = self.state.doc["source_ops"].get(operation_id)
+        if op is None or op["status"] != "succeeded":
+            raise ProviderError("not_downloadable", http_status=409)
+        post = self.state.doc["posts"][op["request"]["post_id"]]
+        if post["downloads_interrupted"] < post["interrupt_downloads"]:
+            post["downloads_interrupted"] += 1
+            self.state.save()
+            raise ProviderError("transfer_interrupted", transient=True)
+        data = self._media_bytes(post)
+        if destination:
+            Path(destination).write_bytes(data)
+        return {"sha256": hashlib.sha256(data).hexdigest(),
+                "bytes": len(data), "path": destination}
+
+    def _media_bytes(self, post):
+        if post["media"] == "image":
+            return _TINY_PNG
+        if post["media"].startswith("file:") and self.media_dir:
+            return (self.media_dir / post["media"][5:]).read_bytes()
+        raise ProviderError("media_unavailable", http_status=404)
+
+    def reconcile(self, operation_id=None, request_hash=None):
+        if operation_id:
+            op = self.state.doc["source_ops"].get(operation_id)
+            return dict(op) if op else None
+        return None
+
+    def cancel(self, operation_id):
+        op = self.state.doc["source_ops"].get(operation_id)
+        if op:
+            op["status"] = "cancelled"
+            self.state.save()
+
+    def refresh_url(self, post_id):
+        """Approved refresh path: returns a fresh signed media URL."""
+        post = self.state.doc["posts"][post_id]
+        post["url_state"] = "fresh"
+        self.state.doc["refreshes"] += 1
+        n = self.state.doc["refreshes"]
+        post["media_url"] = (f"https://cdn.fake/{post_id}/media"
+                             f"?sig=refreshed{n}")
+        self.state.save()
+        return post["media_url"]
+
+    def _next_seq(self):
+        self.state.doc["seq"] += 1
+        return self.state.doc["seq"]
+
+    def counters(self):
+        return {"submit": self.state.doc["counters"]["submit"],
+                "download": self.state.doc["counters"]["download"],
+                "refreshes": self.state.doc["refreshes"]}

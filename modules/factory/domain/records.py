@@ -73,13 +73,19 @@ class Record:
 
 @dataclass
 class Seed(Record):
+    revision: int = 0                # append-only provenance/metadata updates
     platform: str = ""
     canonical_url: str = ""
     native_id: str = ""
     creator_id: str = ""
     source_asset_id: str = ""
     original_url: str = ""
-    evidence_status: str = "metadata_only"   # metadata_only | media_ready
+    # metadata_only | needs_source_media | media_ready
+    evidence_status: str = "metadata_only"
+    title: str = ""
+    provenance: list = field(default_factory=list)  # url forms + via + when
+    metadata: dict = field(default_factory=dict)    # provider-observed fields
+    metadata_fetched_at: str = ""
 
     def validate(self):
         e = super().validate()
@@ -91,6 +97,10 @@ class Seed(Record):
         if self.evidence_status == "media_ready" and not self.source_asset_id:
             e.append(ContractError("missing_field", "source_asset_id",
                                    "media_ready requires a source artifact"))
+        if self.evidence_status not in ("metadata_only",
+                                        "needs_source_media", "media_ready"):
+            e.append(ContractError("bad_evidence_status", "evidence_status",
+                                   self.evidence_status))
         return e
 
 

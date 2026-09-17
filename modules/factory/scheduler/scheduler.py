@@ -102,17 +102,29 @@ class Scheduler:
     # ---------------------------------------------------------- planning
 
     def submit_plan(self, jobs):
-        """Validate the DAG then insert all jobs waiting_dependencies.
+        """Validate the DAG (including already-persisted jobs a new node
+        may depend on), then insert the NEW jobs waiting_dependencies.
         Cycle/unmet-dep → DagError before any row is written."""
-        order = validate_dag(jobs)
+        new = list(jobs)
+        new_ids = {j.id for j in new}
+        persisted = self.db.conn.execute(
+            "SELECT id, depends_on FROM jobs").fetchall()
+        from types import SimpleNamespace
+        graph_nodes = new + [SimpleNamespace(
+            id=r["id"], depends_on=json.loads(r["depends_on"] or "[]"))
+            for r in persisted if r["id"] not in new_ids]
+        order = validate_dag(graph_nodes)
         with self.db.uow() as u:
             for jid in order:
-                job = next(j for j in jobs if j.id == jid)
+                if jid not in new_ids:
+                    continue
+                job = next(j for j in new if j.id == jid)
                 job.status = "waiting_dependencies"
                 u.jobs.put(job)
             u.events.append("scheduler", "plan_accepted",
-                            {"jobs": order, "count": len(order)})
-        return order
+                            {"jobs": [j for j in order if j in new_ids],
+                             "count": len(new_ids)})
+        return [j for j in order if j in new_ids]
 
     def _deps_satisfied(self, u, job_row):
         deps = json.loads(job_row["depends_on"] or "[]")
