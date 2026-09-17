@@ -45,7 +45,7 @@ class TestCohortMath:
             {"post_id": e["post_id"],
              "published_at": e.get("published_at"),
              "format": e.get("format", "haul"),
-             "platform": "youtube", "views": 20000}
+             "platform": "youtube", "views": 20000,"creator_id":"creator-a","observed_at":"2026-09-16T00:00:00Z"}
             for e in fx["cohort"]["excluded"]]
         cohort = build_cohort(seed, all_pool)
         assert cohort["size"] == 20
@@ -193,7 +193,7 @@ def _post(pid, views, followers=10000, day="2026-09-10", fmt="haul",
           url=None):
     return {"post_id": pid, "platform": "youtube", "views": views,
             "followers": followers, "published_at": day + "T00:00:00Z",
-            "format": fmt, "title": f"t-{pid}",
+            "format": fmt, "title": f"t-{pid}","creator_id":"creator-a","handle":"creator-a","observed_at":"2026-09-16T00:00:00Z",
             "source_url": url or
             f"https://www.youtube.com/shorts/{pid[:11].ljust(11, 'x')}",
             "provider_score": 9.1}
@@ -205,7 +205,8 @@ class TestService:
         cohort = [_post(f"yt-c-{i:02d}", 20000,
                         day=f"2026-08-{10 + i:02d}") for i in range(20)]
         env["src"].set_credits(5)
-        env["src"].set_results("haul", 1, [seed_post] + cohort)
+        env["src"].set_results("haul", 1, [seed_post])
+        env["src"].set_results("creator:creator-a",1,cohort)
         run = env["svc"].scan(["haul"], pages=1, page_size=50,
                               mode="both", run_id="drun-r1")
         assert run.status == "complete"
@@ -260,7 +261,8 @@ class TestService:
         cohort = [_post(f"c{i}", 20000,
                         day=f"2026-08-{i + 1:02d}") for i in range(5)]
         env["src"].set_credits(5)
-        env["src"].set_results("q", 1, [seed] + cohort)
+        env["src"].set_results("q", 1, [seed])
+        env["src"].set_results("creator:creator-a",1,cohort)
         run = env["svc"].scan(["q"], pages=1, run_id="drun-r6",
                               mode="either")
         cand = next(c for c in run.candidates if c["post_id"] == "s1")

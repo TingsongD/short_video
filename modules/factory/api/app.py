@@ -122,11 +122,51 @@ def create_app(services, session_token=None):
 
     @app.post("/api/research/plans")
     async def research_plan(request: Request):
-        raise ContractError("research_unavailable", "research", "Research commands require a configured qualified adapter and budget")
+        body=await json_command(request)
+        def prepare():
+            requests=body.get('requests') or []
+            for item in requests:
+                if not isinstance(item,dict) or item.get('kind') not in ('search','creator_history') or type(item.get('page')) is not int or not 1<=item['page']<=10 or type(item.get('page_size')) is not int or not 1<=item['page_size']<=100:
+                    raise ContractError('invalid_research_request','requests')
+            return 201,{'plan':services.require('effect_work').prepare('research','viral_outliers','search',requests)}
+        status,resp=mutation(request,body,prepare)
+        return JSONResponse(resp,status_code=status)
+
+    @app.get('/api/research/plans/{plan_id}')
+    async def research_detail(plan_id:str):return services.require('effect_work').get(plan_id)
+
+    @app.post('/api/research/plans/{plan_id}/authorize')
+    async def research_authorize(plan_id:str,request:Request):
+        body=await json_command(request)
+        status,resp=mutation(request,body,lambda:(200,services.require('effect_work').authorize(plan_id,body)))
+        return JSONResponse(resp,status_code=status)
 
     @app.post("/api/research/plans/{plan_id}/run")
     async def research_run(plan_id: str, request: Request):
-        raise ContractError("research_unavailable", "research")
+        body=await json_command(request)
+        status,resp=mutation(request,body,lambda:(202,services.require('effect_work').queue(plan_id,body.get('authorization_id',''))))
+        return JSONResponse(resp,status_code=status)
+
+    @app.post('/api/research/evaluate',status_code=202)
+    async def research_evaluate(request:Request):
+        body=await json_command(request)
+        if not isinstance(body.get('plan_ids'),list) or not body['plan_ids']:raise ContractError('research_plans_required','plan_ids')
+        from ..domain.records import content_hash
+        inputs={**body,'run_id':'research-'+content_hash(body)[:24]}
+        status,resp=mutation(request,body,lambda:(202,services.require('commands').enqueue('research_evaluate',inputs,identity=inputs['run_id'])))
+        return JSONResponse(resp,status_code=status)
+
+    @app.post('/api/budgets',status_code=201)
+    async def budget(request:Request):
+        body=await json_command(request)
+        def create():
+            from ..budget import BudgetService
+            if not body.get('reviewer') or not body.get('evidence') or not {'id','unit','scope','scope_key','ceiling'}<=body.keys():raise ContractError('budget_scope_required','reviewer/evidence/budget')
+            result=BudgetService(services.db).create_budget(body['id'],body['unit'],body['scope'],body['scope_key'],body['ceiling'])
+            with services.db.uow() as u:u.events.append('factory','budget_scope_recorded',body)
+            return 201,{'budget_id':body['id']}
+        status,resp=mutation(request,body,create)
+        return JSONResponse(resp,status_code=status)
 
     @app.post("/api/seeds/{seed_id}/analyze", status_code=202)
     async def analyze(seed_id: str, request: Request):

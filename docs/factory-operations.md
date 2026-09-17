@@ -133,3 +133,22 @@ Native logins need human action:
 - Google Vertex: re-auth the Application Default Credentials / OAuth
   loader, then check `GET /api/providers` for granular readiness
   (installed/authenticated/catalog/tested/qualified).
+
+## Research repair workflow
+
+The operator records a funded native-credit budget, creates `/api/research/plans`
+with bounded `search` and `creator_history` requests, reviews the exact quote, then
+uses its `/authorize` and `/run` commands. `/api/research/evaluate` consumes only
+completed plan IDs. These endpoints enqueue durable worker commands; no search
+runs in the browser request. Search results are candidates, not their baseline.
+History is scoped by platform and creator, restricted to preceding comparable
+uploads, deduplicated and bounded to 50 observations with a 20-observation minimum.
+The full history request is bounded at 100 posts; an older seed may consequently
+have insufficient available history. Missing baseline evidence remains unavailable.
+
+The adapter's configured, expiring tariff supplies pricing. Missing tariffs or
+funded scope block dispatch. Live research remains unconfigured until separately
+qualified. Fixtures use disk receipts and fake credit balances. The source protocol
+is [Viral Outliers search](https://viraloutliers.com/docs/skills/api/search-viral-outlier-posts):
+creator history uses the same search endpoint's exact handle filter, all-time range
+and descending publication date. It does not assume a profile response envelope.

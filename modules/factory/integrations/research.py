@@ -10,14 +10,23 @@ from .http import BoundedHTTP
 
 
 class ViralOutliersSearch(SynchronousAdapter):
-    def __init__(self, state_dir, client, account):
+    def __init__(self, state_dir, client, account, pricing=None):
         super().__init__(state_dir)
         self.client, self.account = client, account
+        self.pricing=pricing
+
+    def price(self,request):
+        if not self.pricing:raise ProviderError('pricing_unavailable')
+        return dict(self.pricing)
 
     def execute(self, request):
         body = {"query": request["query"], "platforms": request.get("platforms") or ["youtube", "tiktok"],
                 "timeFrame": request.get("time_frame") or "one_month", "sortBy": request.get("sort_by") or "views_desc",
                 "page": request["page"], "pageSize": request["page_size"]}
+        if request.get('kind')=='creator_history':
+            if not request.get('handle') or len(body['platforms'])!=1:raise ProviderError('creator_scope_required')
+            body.update(handle=request['handle'].lstrip('@'),timeFrame='all_time',sortBy='date_desc')
+        if request.get('content_types'):body['contentTypes']=request['content_types']
         status, headers, payload = self.client.request("POST", SEARCH_PATH, body)
         if status == 402:
             raise ProviderError("insufficient_credits", http_status=402)
@@ -30,13 +39,14 @@ class ViralOutliersSearch(SynchronousAdapter):
             platform = (item.get("platform") or profile.get("platform") or "").lower()
             date = published(first(item, "published_at", "publishedAt", "postedAt", "posted_at"))
             posts.append({"post_id": first(item, "id", "post_id"), "platform": platform,
-                "creator_id": first(profile, "channel_id", "channelId", "id", "handle", "username"),
+                "creator_id": first(profile, "channel_id", "channelId", "id"),
+                "handle":first(profile,'handle','username'),
                 "views": count(first(item, "views", "view_count", "viewCount")),
                 "followers": count(first(profile, "followerCount", "followers", "subscriberCount")),
                 "provider_score": first(item, "outlierScore", "outlier_score"),
                 "format": first(item, "contentType", "content_type"),
                 "published_at": date.isoformat() if date else None, "observed_at": now,
-                "url": first(item, "postLink", "post_link", "post_url", "url"),
+                "source_url": first(item, "postLink", "post_link", "post_url", "url"),
                 "title": first(item, "title", "caption", "description") or ""})
         actual = headers.get("x-credits-charged")
         return {"posts": posts}, None, {"actual_credits": int(actual) if actual is not None else None}

@@ -17,7 +17,7 @@ ALLOWED_UPLOAD_TYPES = {"mp4", "mov", "webm", "png", "jpg", "jpeg", "mp3", "wav"
 COLLECTIONS = {"seeds":"seed", "blueprints":"referenceblueprint", "templates":"formattemplate",
     "products":"productsnapshot", "experiments":"experimentrevision", "variants":"variantplan",
     "plans":"productionplan", "compositions":"composition", "reviews":"review", "deliveries":"delivery",
-    "publications":"publication", "decisions":"experimentdecision"}
+    "publications":"publication", "decisions":"decision",'research':'discoveryrun','effect_plans':'effectplan'}
 
 
 class FactoryServices:
@@ -63,6 +63,10 @@ class FactoryServices:
         return out
 
     def collection(self, name):
+        if name=='budgets':
+            from ..budget import BudgetService
+            ledger=BudgetService(self.db)
+            return [{**dict(r),'available':ledger.available(r['id'])} for r in self.db.conn.execute('SELECT * FROM budgets')]
         if name == 'queue':
             return self.require('scheduler').status_snapshot()
         if name == 'assets':

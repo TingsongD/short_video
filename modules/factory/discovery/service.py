@@ -9,7 +9,7 @@ available for acquisition planning.
 import json
 
 from ..domain.errors import ContractError
-from ..domain.records import DiscoveryRun
+from ..domain.records import DiscoveryRun, content_hash
 from ..seeds.registry import SeedRegistry
 from ..store.uow import utcnow
 from ..testing.fakes import ProviderError
@@ -19,7 +19,7 @@ from .evaluate import evaluate
 
 class DiscoveryService:
     def __init__(self, db, registry, executor, provider,
-                 provider_name="viral_outliers", cache_ttl_s=86400, effects=None):
+                 provider_name="viral_outliers", cache_ttl_s=86400, effects=None, account='', settings=None):
         self.db = db
         self.effects = effects
         self.registry = registry
@@ -27,6 +27,9 @@ class DiscoveryService:
         self.provider = provider
         self.provider_name = provider_name
         self.cache_ttl_s = cache_ttl_s
+        self.account=account or getattr(provider,'account','')
+        self.settings=dict(settings or {})
+        self._calls=0
 
     # ------------------------------------------------------------- scan
 
@@ -35,6 +38,8 @@ class DiscoveryService:
              run_id=None, export_selected=True, max_calls=None):
         if not queries:
             raise ContractError("empty_scan", "queries")
+        if not 1<=pages<=10 or not 1<=page_size<=100:raise ContractError('invalid_scan_bounds','pages/page_size')
+        self._calls=0
         run_id = run_id or f"drun-{utcnow()}"
         planned = [(q, p) for q in queries for p in range(1, pages + 1)]
         received, per_query, pool = [], {}, []
@@ -51,37 +56,49 @@ class DiscoveryService:
         run = self._finish(run_id, queries, pages, page_size, mode,
                            baseline_threshold, follower_threshold,
                            planned, received, per_query, pool, partial,
-                           export_selected)
+                           export_selected,max_calls)
         return run
 
     # ------------------------------------------------------------ pages
 
     def _page(self, query, page, page_size, run_id, planned, received,
               max_calls):
-        key = f"{query}|{page}"
+        request = {"kind": "search", "query": query, "page": page,
+                   "page_size": page_size, **self.settings}
+        return self._request(request,run_id,max_calls)
+
+    def _request(self,request,run_id,max_calls):
+        key=content_hash({'provider':self.provider_name,'account':self.account,'request':request,'query_version':'creator-history.v2'})
+        page=request['page']
         cached = self.db.conn.execute(
             "SELECT body, observed_at FROM discovery_cache WHERE "
             "query_key=? AND page=?", (key, page)).fetchone()
         if cached and self._fresh(cached["observed_at"]):
             return json.loads(cached["body"])
-        if max_calls is not None and len(received) >= max_calls:
+        if max_calls is not None and self._calls >= max_calls:
             return None
-        request = {"kind": "search", "query": query, "page": page,
-                   "page_size": page_size, "run_id": run_id}
+        request={**request,'run_id':run_id}
         if self.effects is None:
             raise ContractError("authority_required", "research")
         aid = self.effects(request, f"job-discovery-{run_id}", "research", self.provider_name, "search")
         self.executor.require_request(aid, request)
+        self.executor.provider=self.provider
         try:
+            self._calls+=1
             op = self.executor.submit(
                 aid, call=lambda: self.provider.submit(request))
         except ProviderError as e:
             if e.code == "insufficient_credits":
                 return None
             raise
-        if op.get("status") == "accepted":
+        if op.get('reused') or op.get("status") in ('accepted','running'):
             op = self.executor.poll(aid)
+        if op.get('status')!='succeeded':raise ContractError('research_unfinished','attempt_id',aid)
         posts = (op.get("result") or {}).get("posts", [])
+        if not isinstance(posts,list) or any(not isinstance(p,dict) for p in posts):raise ContractError('research_response_invalid','posts')
+        if type(op.get('actual_credits')) is int:
+            from ..execution.effects import EffectService
+            EffectService(self.db,self.executor).settle(aid,op['actual_credits'],'reported_usage',op['operation_id'])
         with self.db.uow() as u:
             u.conn.execute(
                 "INSERT OR REPLACE INTO discovery_cache(query_key,page,"
@@ -94,26 +111,43 @@ class DiscoveryService:
         age = (datetime.now(timezone.utc)
                - datetime.fromisoformat(
                    observed_at.replace("Z", "+00:00"))).total_seconds()
-        return age < self.cache_ttl_s
+        return 0<=age < self.cache_ttl_s
 
     # ----------------------------------------------------------- finish
 
     def _finish(self, run_id, queries, pages, page_size, mode,
                 baseline_threshold, follower_threshold, planned,
-                received, per_query, pool, partial, export_selected):
-        # Dedupe by post identity; first observation wins.
+                received, per_query, pool, partial, export_selected,max_calls=None,history_by_creator=None):
+        existing=self.db.uow().records.get('discoveryrun',run_id)
+        if existing:return DiscoveryRun(**json.loads(existing['body']))
+        # Dedupe by platform and post identity; first observation wins.
         seen, candidates = set(), []
         for row in pool:
-            pid = row.get("post_id")
-            if not pid or pid in seen:
+            pid = (row.get('platform'),row.get("post_id"))
+            if not pid[1] or pid in seen:
                 continue
             seen.add(pid)
             candidates.append(row)
         results = []
         cohorts = {}
+        histories=dict(history_by_creator or {});history_status={}
         for c in candidates:
-            cohort = build_cohort(c, candidates)
-            cohorts[c["post_id"]] = cohort
+            scope=(c.get('platform'),c.get('creator_id'))
+            if scope not in histories:
+                histories[scope]=[]
+                if c.get('handle') and all(scope):
+                    request={**self.settings,'kind':'creator_history','query':'','handle':c['handle'],
+                        'platforms':[c['platform']],'page':1,'page_size':100,'time_frame':'all_time','sort_by':'date_desc'}
+                    try:
+                        fetched=self._request(request,run_id,max_calls)
+                        histories[scope]=fetched or []
+                        history_status[str(scope)]='received' if fetched is not None else 'budget_exhausted'
+                    except ContractError as error:
+                        if error.code not in ('operation_not_authorized','authority_required','budget_exceeded','research_unfinished'):raise
+                        history_status[str(scope)]=error.code
+                else:history_status[str(scope)]='creator_lookup_unavailable'
+            cohort = build_cohort(c, histories[scope],now=utcnow())
+            cohorts[c['platform']+':'+c["post_id"]] = cohort
             results.append(evaluate(
                 c, cohort, mode=mode,
                 follower_threshold=follower_threshold,
@@ -127,7 +161,7 @@ class DiscoveryService:
                 if not r["selected"]:
                     continue
                 cand = next(c for c in candidates
-                            if c["post_id"] == r["post_id"])
+                            if (c.get('platform'),c["post_id"]) == (r.get('platform'),r["post_id"]))
                 url = cand.get("source_url")
                 if not url:
                     continue
@@ -152,15 +186,10 @@ class DiscoveryService:
                                     per_query.items()},
                       "partial_reason": partial},
             candidates=results,
-            cohort={pid: {"size": c["size"],
-                          "mean_views": c["mean_views"],
-                          "median_views": c["median_views"],
-                          "included": c["included"],
-                          "excluded": c["excluded"],
-                          "flags": c["flags"]}
-                    for pid, c in cohorts.items()},
+            cohort=cohorts,
             exported_seed_ids=exported)
         run.validate_or_raise()
+        run.coverage.update(creator_history=history_status,actual_calls=self._calls)
         with self.db.uow() as u:
             u.records.put(run)
             u.events.append(f"discovery:{run_id}", "run_finished",

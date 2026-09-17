@@ -6,41 +6,223 @@
     "views": 1000000,
     "followers": 10000,
     "published_at": "2026-09-10T00:00:00Z",
-    "format": "haul"
+    "format": "haul",
+    "creator_id": "creator-a",
+    "observed_at": "2026-09-16T00:00:00Z"
   },
   "cohort": {
     "description": "20 comparable videos at 20,000 views each, preceding the seed, same platform/format",
     "videos": [
-      {"post_id": "yt-c-01", "views": 20000, "format": "haul", "published_at": "2026-08-20T00:00:00Z"},
-      {"post_id": "yt-c-02", "views": 20000, "format": "haul", "published_at": "2026-08-21T00:00:00Z"},
-      {"post_id": "yt-c-03", "views": 20000, "format": "haul", "published_at": "2026-08-22T00:00:00Z"},
-      {"post_id": "yt-c-04", "views": 20000, "format": "haul", "published_at": "2026-08-23T00:00:00Z"},
-      {"post_id": "yt-c-05", "views": 20000, "format": "haul", "published_at": "2026-08-24T00:00:00Z"},
-      {"post_id": "yt-c-06", "views": 20000, "format": "haul", "published_at": "2026-08-25T00:00:00Z"},
-      {"post_id": "yt-c-07", "views": 20000, "format": "haul", "published_at": "2026-08-26T00:00:00Z"},
-      {"post_id": "yt-c-08", "views": 20000, "format": "haul", "published_at": "2026-08-27T00:00:00Z"},
-      {"post_id": "yt-c-09", "views": 20000, "format": "haul", "published_at": "2026-08-28T00:00:00Z"},
-      {"post_id": "yt-c-10", "views": 20000, "format": "haul", "published_at": "2026-08-29T00:00:00Z"},
-      {"post_id": "yt-c-11", "views": 20000, "format": "haul", "published_at": "2026-08-30T00:00:00Z"},
-      {"post_id": "yt-c-12", "views": 20000, "format": "haul", "published_at": "2026-08-31T00:00:00Z"},
-      {"post_id": "yt-c-13", "views": 20000, "format": "haul", "published_at": "2026-09-01T00:00:00Z"},
-      {"post_id": "yt-c-14", "views": 20000, "format": "haul", "published_at": "2026-09-02T00:00:00Z"},
-      {"post_id": "yt-c-15", "views": 20000, "format": "haul", "published_at": "2026-09-03T00:00:00Z"},
-      {"post_id": "yt-c-16", "views": 20000, "format": "haul", "published_at": "2026-09-04T00:00:00Z"},
-      {"post_id": "yt-c-17", "views": 20000, "format": "haul", "published_at": "2026-09-05T00:00:00Z"},
-      {"post_id": "yt-c-18", "views": 20000, "format": "haul", "published_at": "2026-09-06T00:00:00Z"},
-      {"post_id": "yt-c-19", "views": 20000, "format": "haul", "published_at": "2026-09-07T00:00:00Z"},
-      {"post_id": "yt-c-20", "views": 20000, "format": "haul", "published_at": "2026-09-08T00:00:00Z"}
+      {
+        "post_id": "yt-c-01",
+        "views": 20000,
+        "format": "haul",
+        "published_at": "2026-08-20T00:00:00Z",
+        "creator_id": "creator-a",
+        "platform": "youtube",
+        "observed_at": "2026-09-16T00:00:00Z"
+      },
+      {
+        "post_id": "yt-c-02",
+        "views": 20000,
+        "format": "haul",
+        "published_at": "2026-08-21T00:00:00Z",
+        "creator_id": "creator-a",
+        "platform": "youtube",
+        "observed_at": "2026-09-16T00:00:00Z"
+      },
+      {
+        "post_id": "yt-c-03",
+        "views": 20000,
+        "format": "haul",
+        "published_at": "2026-08-22T00:00:00Z",
+        "creator_id": "creator-a",
+        "platform": "youtube",
+        "observed_at": "2026-09-16T00:00:00Z"
+      },
+      {
+        "post_id": "yt-c-04",
+        "views": 20000,
+        "format": "haul",
+        "published_at": "2026-08-23T00:00:00Z",
+        "creator_id": "creator-a",
+        "platform": "youtube",
+        "observed_at": "2026-09-16T00:00:00Z"
+      },
+      {
+        "post_id": "yt-c-05",
+        "views": 20000,
+        "format": "haul",
+        "published_at": "2026-08-24T00:00:00Z",
+        "creator_id": "creator-a",
+        "platform": "youtube",
+        "observed_at": "2026-09-16T00:00:00Z"
+      },
+      {
+        "post_id": "yt-c-06",
+        "views": 20000,
+        "format": "haul",
+        "published_at": "2026-08-25T00:00:00Z",
+        "creator_id": "creator-a",
+        "platform": "youtube",
+        "observed_at": "2026-09-16T00:00:00Z"
+      },
+      {
+        "post_id": "yt-c-07",
+        "views": 20000,
+        "format": "haul",
+        "published_at": "2026-08-26T00:00:00Z",
+        "creator_id": "creator-a",
+        "platform": "youtube",
+        "observed_at": "2026-09-16T00:00:00Z"
+      },
+      {
+        "post_id": "yt-c-08",
+        "views": 20000,
+        "format": "haul",
+        "published_at": "2026-08-27T00:00:00Z",
+        "creator_id": "creator-a",
+        "platform": "youtube",
+        "observed_at": "2026-09-16T00:00:00Z"
+      },
+      {
+        "post_id": "yt-c-09",
+        "views": 20000,
+        "format": "haul",
+        "published_at": "2026-08-28T00:00:00Z",
+        "creator_id": "creator-a",
+        "platform": "youtube",
+        "observed_at": "2026-09-16T00:00:00Z"
+      },
+      {
+        "post_id": "yt-c-10",
+        "views": 20000,
+        "format": "haul",
+        "published_at": "2026-08-29T00:00:00Z",
+        "creator_id": "creator-a",
+        "platform": "youtube",
+        "observed_at": "2026-09-16T00:00:00Z"
+      },
+      {
+        "post_id": "yt-c-11",
+        "views": 20000,
+        "format": "haul",
+        "published_at": "2026-08-30T00:00:00Z",
+        "creator_id": "creator-a",
+        "platform": "youtube",
+        "observed_at": "2026-09-16T00:00:00Z"
+      },
+      {
+        "post_id": "yt-c-12",
+        "views": 20000,
+        "format": "haul",
+        "published_at": "2026-08-31T00:00:00Z",
+        "creator_id": "creator-a",
+        "platform": "youtube",
+        "observed_at": "2026-09-16T00:00:00Z"
+      },
+      {
+        "post_id": "yt-c-13",
+        "views": 20000,
+        "format": "haul",
+        "published_at": "2026-09-01T00:00:00Z",
+        "creator_id": "creator-a",
+        "platform": "youtube",
+        "observed_at": "2026-09-16T00:00:00Z"
+      },
+      {
+        "post_id": "yt-c-14",
+        "views": 20000,
+        "format": "haul",
+        "published_at": "2026-09-02T00:00:00Z",
+        "creator_id": "creator-a",
+        "platform": "youtube",
+        "observed_at": "2026-09-16T00:00:00Z"
+      },
+      {
+        "post_id": "yt-c-15",
+        "views": 20000,
+        "format": "haul",
+        "published_at": "2026-09-03T00:00:00Z",
+        "creator_id": "creator-a",
+        "platform": "youtube",
+        "observed_at": "2026-09-16T00:00:00Z"
+      },
+      {
+        "post_id": "yt-c-16",
+        "views": 20000,
+        "format": "haul",
+        "published_at": "2026-09-04T00:00:00Z",
+        "creator_id": "creator-a",
+        "platform": "youtube",
+        "observed_at": "2026-09-16T00:00:00Z"
+      },
+      {
+        "post_id": "yt-c-17",
+        "views": 20000,
+        "format": "haul",
+        "published_at": "2026-09-05T00:00:00Z",
+        "creator_id": "creator-a",
+        "platform": "youtube",
+        "observed_at": "2026-09-16T00:00:00Z"
+      },
+      {
+        "post_id": "yt-c-18",
+        "views": 20000,
+        "format": "haul",
+        "published_at": "2026-09-06T00:00:00Z",
+        "creator_id": "creator-a",
+        "platform": "youtube",
+        "observed_at": "2026-09-16T00:00:00Z"
+      },
+      {
+        "post_id": "yt-c-19",
+        "views": 20000,
+        "format": "haul",
+        "published_at": "2026-09-07T00:00:00Z",
+        "creator_id": "creator-a",
+        "platform": "youtube",
+        "observed_at": "2026-09-16T00:00:00Z"
+      },
+      {
+        "post_id": "yt-c-20",
+        "views": 20000,
+        "format": "haul",
+        "published_at": "2026-09-08T00:00:00Z",
+        "creator_id": "creator-a",
+        "platform": "youtube",
+        "observed_at": "2026-09-16T00:00:00Z"
+      }
     ],
     "excluded": [
-      {"post_id": "yt-seed-0001", "reason": "is the seed"},
-      {"post_id": "yt-x-01", "reason": "published after seed", "published_at": "2026-09-12T00:00:00Z"},
-      {"post_id": "yt-x-02", "reason": "mixed format", "format": "podcast-clip"}
+      {
+        "post_id": "yt-seed-0001",
+        "reason": "is the seed"
+      },
+      {
+        "post_id": "yt-x-01",
+        "reason": "published after seed",
+        "published_at": "2026-09-12T00:00:00Z"
+      },
+      {
+        "post_id": "yt-x-02",
+        "reason": "mixed format",
+        "format": "podcast-clip"
+      }
     ]
   },
   "special_cases": {
-    "zero_followers": {"views": 50000, "followers": 0},
-    "missing_followers": {"views": 50000, "followers": null},
-    "zero_views": {"views": 0, "followers": 10000}
+    "zero_followers": {
+      "views": 50000,
+      "followers": 0
+    },
+    "missing_followers": {
+      "views": 50000,
+      "followers": null
+    },
+    "zero_views": {
+      "views": 0,
+      "followers": 10000
+    }
   }
 }

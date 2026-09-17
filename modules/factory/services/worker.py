@@ -55,6 +55,25 @@ class ApplicationWorker:
 
     def execute(self,kind,body,job):
         s=self.s
+        if kind=='effect':return s.effect_work.execute(body,job)
+        if kind=='research_evaluate':
+            from ..discovery.service import DiscoveryService
+            pool=[];histories={}
+            for pid in body['plan_ids']:
+                plan=s.effect_work.get(pid)
+                if plan['kind']!='research':raise ContractError('invalid_research_plan','plan_id')
+                for operation in plan['operations']:
+                    saved=s.commands.get(pid+':'+operation['key'])
+                    if saved['status']!='succeeded':raise ContractError('research_unfinished','job')
+                    posts=saved['command']['result']['result'].get('posts',[])
+                    if operation['request']['kind']=='creator_history':
+                        for post in posts:histories.setdefault((post.get('platform'),post.get('creator_id')),[]).append(post)
+                    else:pool.extend(posts)
+            for p in pool:histories.setdefault((p.get('platform'),p.get('creator_id')),[])
+            policy=body.get('policy',{})
+            svc=DiscoveryService(s.db,s.seeds,s.executor,None)
+            result=svc._finish(body['run_id'],[],0,0,policy.get('mode','either'),policy.get('baseline_threshold',5),policy.get('follower_threshold',2),[],[],{},pool,None,True,history_by_creator=histories)
+            return {'status':'complete','discovery':result.to_dict()}
         if kind=='analyze':
             return {'blueprint':s.analysis.import_observations(body['seed_id'],body['observations'],body['reviewer']).to_dict()}
         if kind=='quote':

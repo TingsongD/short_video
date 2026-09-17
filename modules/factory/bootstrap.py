@@ -45,6 +45,8 @@ def bootstrap(root, *, providers=None, drive=None, settings=None):
         studio=StudioService(db,registry,cleanup=cleanup),config=settings)
     from .studio.launcher import LocalStudioLauncher
     services.studio.launcher=LocalStudioLauncher(registry,data/'studio')
+    from .services.effect_work import EffectWork
+    services.effect_work=EffectWork(services)
     if drive is not None:
         from .delivery.service import DeliveryService
         services.delivery=DeliveryService(db,drive,artifacts,executor=executor)

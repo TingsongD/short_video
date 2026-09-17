@@ -1,0 +1,29 @@
+{
+  "package": "S6",
+  "parent_revision": "6628500",
+  "implementation_revision": "the focused S6 commit containing this evidence",
+  "findings": [
+    "R08",
+    "R31 discovery portion"
+  ],
+  "status": "offline_checkpoint_passed",
+  "targeted": "32 passed, two dependency warnings; /tmp/factory-s6-targeted.log",
+  "full_suite": "922 passed, 2 warnings, 152.75s; /tmp/factory-s6-full.log",
+  "verified": [
+    "Creator/platform/format identity, preceding dates, observation cutoff, duplicate and seed exclusions",
+    "Minimum 20 observations; unavailable baseline is null, observed small-sample diagnostics remain visible",
+    "Separate follower multiple, creator multiple and provider score",
+    "Search and creator-history requests have distinct quotes, durable receipts and native-credit reservations",
+    "Public API plan -> approval -> worker -> evaluation; repeated actions reuse jobs",
+    "Missing funded scope blocks before a provider receipt exists",
+    "Frozen legacy contracts and spending ledger unchanged"
+  ],
+  "protocol_sources": [
+    "https://viraloutliers.com/docs/skills/api/search-viral-outlier-posts"
+  ],
+  "limits": [
+    "Live research not configured or qualified",
+    "Bounded creator history can be insufficient for older seeds",
+    "No external account or paid request occurred"
+  ]
+}

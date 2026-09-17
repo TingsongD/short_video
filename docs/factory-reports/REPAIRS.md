@@ -14,7 +14,7 @@ All checks use offline providers; no new live spend or publication scope exists.
 | S3 adapters | passed (offline protocol checkpoint) | 886 tests pass (119.31s); 11 protocol regressions; installed Canvas schema; validated Shopify queries; real isolated Hypit 30-frame export and owned runtime cleanup. See REPAIR-S3-EVIDENCE.json. |
 | S4 media/QC | passed (offline checkpoint) | 903 tests pass (125.61s); 16 media regressions, collected-coverage regression, real 48-frame Hypit timing fixture, actual speech fitting and full interval comparisons. See REPAIR-S4-EVIDENCE.json. |
 | S5 application | first local milestone passed; final fault matrix remains S8 | 916 backend tests; 25 frontend tests/build; real HTTP/independent-worker four × 900-frame exports with distinct treatments, bound reviews, durable fake Drive receipts and verified cleanup. Native Studio opened and closed. See REPAIR-S5-EVIDENCE.json. |
-| S6 research | planned | |
+| S6 research | passed (offline checkpoint) | 922 tests pass; public research plan/approval/budget/worker/evaluation journey. Separate creator histories and strict cohort exclusions. See REPAIR-S6-EVIDENCE.json. |
 | S7 publishing/learning | planned | |
 | S8 qualification | planned | |
 
@@ -32,7 +32,7 @@ separate from engineering repairs; historical tests do not sign either gate.
 | R05 | fixed | Duplicate and restarted submissions reuse the original attempt; unknown acknowledgements never dispatch again. |
 | R06 | fixed | Remote holds count independently of leases; five-operation regression, configurable capacity and local heartbeat. |
 | R07 | in_progress | Per-experiment pause, collection queue, bounded retries, terminal failures and manual replacement transitions repaired; application recovery journey pending S5/S8. |
-| R08 | open | |
+| R08 | fixed (offline) | Separate creator history, audited exclusions and minimum evidence; insufficient baseline is unavailable. |
 | R09 | fixed (offline) | Native OAuth, typed pilot request and completed-step output parsing; durable ambiguous POST receipts. Unqualified reference modes visibly unavailable; live text route qualification still separate. |
 | R10 | fixed (offline) | Installed CLI 1.0.1 contract; stable persisted IDs, shared video canvas, reference imports, exact draft checks, operation/resource provenance and native file receipts. |
 | R11 | fixed (offline) | Pinned 0.1.8 nested build/status/get envelopes, workspace scope, original-build recovery and strict local plan gate. Real local 30-frame export retrieved; runtime stopped. |

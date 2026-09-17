@@ -15,20 +15,23 @@ MODES = ("follower", "baseline", "either", "both")
 
 
 def follower_multiple(views, followers):
-    if views is None or followers in (None, 0):
+    import math
+    if type(views) not in (int,float) or type(followers) not in (int,float) or not math.isfinite(views) or not math.isfinite(followers) or views<0 or followers<=0:
         return None
     return views / followers
 
 
 def baseline_multiple(views, cohort_median):
-    if views is None or cohort_median in (None, 0):
-        return None
-    return views / cohort_median
+    return follower_multiple(views,cohort_median)
 
 
 def passes(mode, fm, bm, follower_threshold=2.0, baseline_threshold=5.0):
+    from ..domain.errors import ContractError
+    import math
     if mode not in MODES:
-        raise ValueError(f"unknown selection_mode {mode!r}")
+        raise ContractError('invalid_selection_mode','mode')
+    if any(type(x) not in (int,float) or not math.isfinite(x) or x<=0 for x in (follower_threshold,baseline_threshold)):
+        raise ContractError('invalid_threshold','threshold')
     f = fm is not None and fm > follower_threshold      # strict
     b = bm is not None and bm >= baseline_threshold     # inclusive
     return {"follower": f, "baseline": b,
@@ -42,7 +45,7 @@ def evaluate(candidate, cohort, mode="either", follower_threshold=2.0,
     fm = follower_multiple(candidate.get("views"),
                            candidate.get("followers"))
     bm = baseline_multiple(candidate.get("views"),
-                           cohort.get("median_views"))
+                           cohort.get("median_views") if cohort.get('available',True) and 'small_sample' not in cohort.get('flags',[]) else None)
     reasons = []
     confidence = "standard"
     if candidate.get("views") is None:
@@ -64,6 +67,7 @@ def evaluate(candidate, cohort, mode="either", follower_threshold=2.0,
     if not selected:
         reasons.append(f"below_{mode}_threshold")
     return {"post_id": candidate.get("post_id"),
+            "platform":candidate.get('platform'),'creator_id':candidate.get('creator_id'),
             "views": candidate.get("views"),
             "followers": candidate.get("followers"),
             "follower_multiple": fm,

@@ -338,3 +338,24 @@ matrix remain required; no live qualification or legacy G-gate is signed here.
 Studio reopen was then verified through the public API and real local launcher;
 its session history uses separate revisions. Nine focused Studio tests pass,
 including the regression added after full-suite collection.
+
+## Safe repair S6 — scoped research and creator baselines (2026-09-17)
+
+Parent revision `6628500`. Search candidates no longer become one another's
+baseline. Creator histories are independently acquired and exclude the seed,
+other creators/platforms/formats, duplicate posts, future publication or
+observation dates and missing identities. Fewer than 20 valid preceding uploads
+produce an unavailable baseline; follower multiples and provider scores remain
+separate. Cache identities include provider/account, settings and page size.
+
+The public research commands now create immutable adapter-priced plans, record
+explicit native-unit budget scopes and authorizations, enqueue durable effect
+jobs, settle reported charges, and evaluate completed receipts. Worker recovery
+reuses original attempts, and missing funding blocks before submission. Generic
+audio/analysis effect-plan support is introduced for S8 application wiring.
+
+Evidence: 32 targeted tests; full offline suite **922 passed** in 152.75 seconds
+(two existing dependency warnings). Frozen contracts and the legacy ledger are
+unchanged. `REPAIR-S6-EVIDENCE.json` records scope and the official search protocol.
+No external research call, generation or purchase occurred. Live research remains
+unqualified; this checkpoint does not sign production or legacy G-gates.

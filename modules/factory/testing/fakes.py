@@ -434,7 +434,7 @@ class FakeDiscovery:
              "query": request.get("query"), "page": request.get("page")})
         self.state.bump("submit")
         posts = self.state.doc["result_sets"].get(
-            f"{request.get('query')}|{request.get('page')}", [])
+            f"{('creator:'+request['handle']) if request.get('kind')=='creator_history' else request.get('query')}|{request.get('page')}", [])
         op_id = f"{self.name}-search:{self._next_seq()}"
         op = {"operation_id": op_id, "status": "succeeded",
               "result": {"posts": posts}, "request": request}
