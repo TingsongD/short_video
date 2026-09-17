@@ -1482,3 +1482,187 @@ class FakeDrive(DriveAdapter):
             "sha256": hashlib.sha256(content).hexdigest()}
         self._save()
         return fid
+
+
+class FakePublisher:
+    """Persistent fake Upload Post world (F31): accounts, async
+    upload jobs keyed by idempotency identity, and real post objects.
+
+    The transport sees the actual request — file bytes, fields and
+    headers — so tests assert the wire contract directly. State may be
+    shared across "restarts" by passing the same `doc`.
+    Faults: lost_ack, oauth_expired, lost_status.
+    """
+
+    def __init__(self, users=("acct-main",), doc=None, now_fn=None,
+                 faults=None):
+        self.doc = doc if doc is not None else {
+            "seq": 0, "jobs": {}, "by_key": {}, "posts": {}}
+        self.users = set(users)
+        self.faults = set(faults or [])
+        self.now_fn = now_fn or (lambda: "2026-09-17T12:00:00+00:00")
+        self.sent = []
+        self.default_steps = ["accepted", "processing", "public"]
+
+    # ------------------------------------------------------- wire --
+
+    def transport(self, req):
+        self.sent.append(req)
+        if "oauth_expired" in self.faults:
+            from ..integrations.publisher import PublishTransportError
+            raise PublishTransportError("token_expired", 401)
+        path = req["path"]
+        if req["method"] == "POST" and path == "/api/upload":
+            return {"status": 200, "body": self._upload(req)}
+        if req["method"] == "GET" and path.startswith("/api/upload/status"):
+            return {"status": 200, "body": self._status(path)}
+        if path.startswith("/api/posts/"):
+            ref = path.rsplit("/", 1)[-1]
+            if req["method"] == "GET":
+                return {"status": 200, "body": self._get_post(ref)}
+            if req["method"] == "PATCH":
+                return {"status": 200, "body": self._patch_post(
+                    ref, req["fields"])}
+            if req["method"] == "DELETE":
+                return {"status": 200, "body": self._delete_post(ref)}
+        return {"status": 404, "body": {"error": "unknown_path"}}
+
+    # ----------------------------------------------------- upload --
+
+    def _upload(self, req):
+        from ..integrations.publisher import PublishTransportError
+        fields = req["fields"]
+        for need in ("user", "platform[]"):
+            if not fields.get(need):
+                raise PublishTransportError(
+                    f"missing required field {need}", 400)
+        if fields["user"] not in self.users:
+            raise PublishTransportError("unknown_user", 403)
+        key = req["headers"].get("Idempotency-Key")
+        if not key:
+            raise PublishTransportError("missing Idempotency-Key", 400)
+        import hashlib
+        payload = hashlib.sha256(
+            repr(sorted(fields.items())).encode()
+            + (req["file"]["bytes"] if req["file"] else b"")).hexdigest()
+        prior = self.doc["by_key"].get(key)
+        if prior:
+            job = self.doc["jobs"][prior]
+            if job["payload"] != payload:
+                raise PublishTransportError(
+                    "idempotency_payload_mismatch", 409)
+            return {"request_id": prior, "status": job["steps"]
+                    [min(job["i"], len(job["steps"]) - 1)]}
+        self.doc["seq"] += 1
+        rid = f"req-{self.doc['seq']:04d}"
+        steps = (["processing", "public"] if "sync_terminal"
+                 in self.faults else list(self.default_steps))
+        if fields.get("schedule_date"):
+            steps = ["accepted", "scheduled"]
+        elif fields.get("visibility") == "draft":
+            steps = ["accepted", "draft"]
+        self.doc["jobs"][rid] = {
+            "request_id": rid, "key": key, "payload": payload,
+            "fields": fields,
+            "file_bytes": len(req["file"]["bytes"]) if req["file"] else 0,
+            "video_url": fields.get("video_url", ""),
+            "steps": steps, "i": 0}
+        self.doc["by_key"][key] = rid
+        if "lost_ack" in self.faults:
+            raise PublishTransportError("lost_response")
+        return {"request_id": rid, "status": steps[0]}
+
+    def _status(self, path):
+        from ..integrations.publisher import PublishTransportError
+        if "lost_status" in self.faults:
+            raise PublishTransportError("status_unreachable")
+        query = path.split("?", 1)[-1] if "?" in path else ""
+        params = dict(p.split("=", 1) for p in query.split("&") if "=" in p)
+        if "idempotency_key" in params:
+            rid = self.doc["by_key"].get(params["idempotency_key"])
+            if rid is None:
+                return {"status": "not_found"}
+            return self._job_body(self.doc["jobs"][rid], advance=False)
+        job = self.doc["jobs"].get(params.get("request_id", ""))
+        if job is None:
+            return {"status": "not_found"}
+        return self._job_body(job, advance=True)
+
+    def _job_body(self, job, advance):
+        if advance and job["i"] < len(job["steps"]) - 1:
+            job["i"] += 1
+        status = job["steps"][job["i"]]
+        body = {"request_id": job["request_id"], "status": status}
+        if status == "public":
+            post = self._ensure_post(job)
+            body.update(post_url=post["url"],
+                        remote_post_id=post["id"],
+                        published_at=post["published_at"],
+                        visibility=post["visibility"])
+        if status == "scheduled":
+            body["scheduled_at"] = job["fields"].get("schedule_date", "")
+        return body
+
+    def _ensure_post(self, job):
+        for p in self.doc["posts"].values():
+            if p["request_id"] == job["request_id"]:
+                return p
+        self.doc["seq"] += 1
+        pid = f"yt-{self.doc['seq']:04d}"
+        post = {"id": pid, "request_id": job["request_id"],
+                "url": f"https://youtu.be/{pid}",
+                "account": job["fields"]["user"],
+                "platform": job["fields"]["platform[]"][0],
+                "visibility": job["fields"].get("visibility", "public"),
+                "status": "public",
+                "published_at": self.now_fn(),
+                "title": job["fields"].get("title", "")}
+        self.doc["posts"][pid] = post
+        return post
+
+    # ------------------------------------------------------ posts --
+
+    def _get_post(self, ref):
+        post = self.doc["posts"].get(ref)
+        if post is None:
+            for p in self.doc["posts"].values():
+                if p["url"].endswith(ref):
+                    post = p
+                    break
+        if post is None:
+            return {"status": "not_found"}
+        return dict(post)
+
+    def _patch_post(self, ref, fields):
+        post = self.doc["posts"].get(ref)
+        if post is None:
+            return {"status": "not_found"}
+        post.update({k: v for k, v in fields.items()
+                     if k in ("title", "description", "visibility")})
+        return dict(post)
+
+    def _delete_post(self, ref):
+        post = self.doc["posts"].get(ref)
+        if post is None:
+            return {"status": "not_found"}
+        post["status"] = "deleted"
+        post["visibility"] = "none"
+        return {"status": "deleted"}
+
+    # ---------------------------------------------------- helpers --
+
+    def plant_post(self, pid, **fields):
+        """Insert a pre-existing remote post (manual lane conflicts)."""
+        post = {"id": pid, "request_id": "",
+                "url": f"https://youtu.be/{pid}",
+                "account": "acct-main", "platform": "youtube",
+                "visibility": "public", "status": "public",
+                "published_at": "2026-09-10T09:00:00+00:00",
+                "title": "manual post"}
+        post.update(fields)
+        self.doc["posts"][pid] = post
+        return pid
+
+    def public_post_count(self):
+        return sum(1 for p in self.doc["posts"].values()
+                   if p["status"] == "public")

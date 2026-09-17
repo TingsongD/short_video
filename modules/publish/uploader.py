@@ -1,8 +1,9 @@
 """M9 upload lanes. Lane 1 default = manual checklist (docs/publish-manual.md).
-upload_post() is the optional MPT cross-post path — injectable transport,
-never called in tests."""
-import json
-import urllib.request
+upload_post() is the optional MPT cross-post path — now routed through
+the validated F31 adapter (real bytes, required `user`, `platform[]`,
+`Idempotency-Key`); injectable transport, never called in tests."""
+import hashlib
+from pathlib import Path
 
 
 def manual_instructions(video_id, metadata, video_path):
@@ -19,24 +20,26 @@ def manual_instructions(video_id, metadata, video_path):
 
 
 def upload_post(video_path, metadata, api_key, platforms=("youtube",),
-                transport=None):
-    """Optional upload-post.com cross-post. Returns platform->id map."""
-    payload = {
-        "video": str(video_path),
-        "title": metadata["title"],
-        "description": metadata["caption"],
-        "platform": list(platforms),
-    }
-    post = transport or _http
-    return post("https://api.upload-post.com/api/upload", payload, api_key)
-
-
-def _http(url, payload, api_key):
-    req = urllib.request.Request(
-        url, data=json.dumps(payload).encode(),
-        headers={"Content-Type": "application/json",
-                 "Authorization": f"Apikey {api_key}"},
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=60) as r:
-        return json.loads(r.read())
+                user="", idempotency_key="", transport=None):
+    """Optional upload-post.com cross-post. Returns the normalised
+    upload response including the async `request_id` — completion must
+    be observed via the status route, not assumed."""
+    from modules.factory.integrations.publisher import \
+        UploadPostPublisher
+    if not user:
+        raise ValueError(
+            "upload_post requires `user` (the provider account "
+            "profile) — set UPLOAD_POST_USER in secrets.toml or use "
+            "the manual lane")
+    if not idempotency_key:
+        idempotency_key = hashlib.sha256(
+            f"{Path(video_path).resolve()}|"
+            f"{Path(video_path).stat().st_size}|"
+            f"{metadata['title']}".encode()).hexdigest()[:32]
+    client = UploadPostPublisher(api_key=api_key, user=user,
+                                 transport=transport)
+    return client.upload(
+        video_path=str(video_path), title=metadata["title"],
+        description=metadata["caption"], platforms=platforms,
+        idempotency_key=idempotency_key,
+        extra_fields={"hashtags": ",".join(metadata.get("hashtags", []))})

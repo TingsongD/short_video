@@ -88,13 +88,16 @@ def _live_production_clients(cfg):
 def _live_uploader(sec):
     from modules.publish.uploader import manual_instructions, upload_post
     key = sec.get("UPLOAD_POST_API_KEY", "")
-    if not key:
+    user = sec.get("UPLOAD_POST_USER", "")
+    if not key or not user:
         def missing(video_path, meta):
             raise RuntimeError(
-                "no upload mechanism configured — set UPLOAD_POST_API_KEY in "
-                "secrets.toml or publish manually per docs/publish-manual.md")
+                "no upload mechanism configured — set UPLOAD_POST_API_KEY "
+                "and UPLOAD_POST_USER in secrets.toml or publish manually "
+                "per docs/publish-manual.md")
         return missing
-    return lambda video_path, meta: upload_post(video_path, meta, key)
+    return lambda video_path, meta: upload_post(video_path, meta, key,
+                                                user=user)
 
 
 def _live_analytics_client(cfg):

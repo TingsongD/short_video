@@ -932,6 +932,13 @@ class Publication(Record):
     published_at: str = ""           # actual public time, not ack time
     visibility: str = ""
     authorization_id: str = ""
+    idempotency_key: str = ""        # stable identity across retries
+    metadata: dict = field(default_factory=dict)   # title/caption/tags
+    media_url: str = ""              # accessible URL alternative to bytes
+    timezone: str = "UTC"            # cadence + schedule timezone
+    horizon_policy: dict = field(default_factory=dict)  # predeclared
+    manual: bool = False             # manual lane registration
+    deleted_at: str = ""             # explicit deletion — never silent
 
     def validate(self):
         e = super().validate()
@@ -942,6 +949,10 @@ class Publication(Record):
                                    self.status))
         if self.status == "public" and not self.published_at:
             e.append(ContractError("public_needs_time", "published_at"))
+        if not self.platform:
+            e.append(ContractError("missing_field", "platform"))
+        if not self.account_id:
+            e.append(ContractError("missing_field", "account_id"))
         return e
 
 
