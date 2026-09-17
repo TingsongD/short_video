@@ -31,7 +31,13 @@ class DriveAdapter:
 class GdriveCLI(DriveAdapter):
     """Real adapter over `gdrive files …` (existing authorized CLI)."""
 
-    def __init__(self, runner=None, binary="gdrive"):
+    def __init__(self, runner=None, binary="gdrive", policy=None):
+        from ..execution.policy import live_transport
+        if runner is None:
+            runner = live_transport(subprocess.run, "drive", policy)
+            real_runner = runner
+            runner = lambda argv, timeout=300: real_runner(
+                argv, capture_output=True, text=True, timeout=timeout)
         self.binary = binary
         self.runner = runner or (
             lambda argv, timeout=300: subprocess.run(

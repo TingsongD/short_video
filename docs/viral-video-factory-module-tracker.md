@@ -4,6 +4,11 @@
 
 Use the [main handover](viral-video-factory-handover.md), [detailed module guide](viral-video-factory-implementation-modules.md) and [validation runbook](viral-video-factory-validation-runbook.md) together. Update this tracker during implementation with actual evidence; preserve the original requirement and explain deviations.
 
+> **Repair override (2026-09-17):** F00–F34 engineering acceptance is reopened
+> pending the independent R01–R43 repair program. Earlier table entries below
+> are historical evidence, not current release acceptance. See
+> [repair ledger](factory-reports/REPAIRS.md). All live qualifications remain pending.
+
 ## Status rules
 
 - **Engineering:** `planned`, `in_progress`, `passed`, `blocked`. A pass requires implemented scope, targeted tests and full offline suite evidence for the integrated source revision.

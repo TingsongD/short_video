@@ -154,16 +154,21 @@ class Events:
         self.conn = conn
 
     def append(self, stream, etype, body):
+        from ..events.redact import redact
         cur = self.conn.execute(
             "INSERT INTO events(stream,type,body,created_at) "
             "VALUES(?,?,?,?)",
-            (stream, etype, canonical(body), utcnow()))
+            (stream, etype, canonical(redact(body)), utcnow()))
         return cur.lastrowid
 
     def since(self, stream, seq=0):
-        return [dict(r) for r in self.conn.execute(
+        from ..events.redact import redact
+        rows = [dict(r) for r in self.conn.execute(
             "SELECT * FROM events WHERE stream=? AND seq>? ORDER BY seq",
             (stream, seq)).fetchall()]
+        for row in rows:
+            row["body"] = canonical(redact(json.loads(row["body"])))
+        return rows
 
 
 class Outbox:

@@ -12,26 +12,7 @@ from pathlib import Path
 
 from ..testing.clock import utcnow_iso
 
-SECRET_PATTERNS = [
-    re.compile(r"AIza[0-9A-Za-z_-]{20,}"),
-    re.compile(r"sk-[0-9A-Za-z]{20,}"),
-    re.compile(r"Bearer\s+[A-Za-z0-9._~+/-]{10,}", re.I),
-    re.compile(r"access_token[\"']?\s*[:=]\s*[\"'][^\"']+", re.I),
-    re.compile(r"sig(nature)?=[0-9a-f]{16,}", re.I),
-]
-
-
-def redact(value):
-    """Recursively strip credential-shaped strings from evidence."""
-    if isinstance(value, str):
-        for pat in SECRET_PATTERNS:
-            value = pat.sub("[redacted]", value)
-        return value
-    if isinstance(value, dict):
-        return {k: redact(v) for k, v in value.items()}
-    if isinstance(value, list):
-        return [redact(v) for v in value]
-    return value
+from ..events.redact import redact, SECRET_PATTERNS
 
 
 def new_record(case_id, module_id, mode, expected, fixture_version,

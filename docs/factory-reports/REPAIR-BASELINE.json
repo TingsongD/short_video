@@ -1,0 +1,50 @@
+{
+  "starting_revision": "dae132af6bf72c003592de5abb33fd28a03d3ced",
+  "branch": "feat/factory",
+  "dirty_status": [
+    " D LONGFORM_PLAN.md",
+    " M apps/factory-dashboard/tsconfig.tsbuildinfo",
+    "?? docs/factory-reports/REVIEW-2026-09-17.md",
+    "?? docs/factory-reports/factory-review-20260917-evidence.json"
+  ],
+  "frozen_sha256": {
+    "schemas/asset_manifest.schema.json": "448a04188b4a0602a43b75eabc1e27acdb9561af3fad9436adfcf8a6183eca37",
+    "schemas/format_library.schema.json": "224a36eea4b8e3bbc5deed76fbc9c1965519284577694f0d9c2da0bf63f7a1b1",
+    "schemas/hooks_bank.schema.json": "907bf78a0f0afb879372d2c9573fe3793ef86cde847f887603199c162fb42260",
+    "schemas/mpt_task.schema.json": "4bed92964605654826b5a8cd4578ed39634e839c2e998d6f3a65737b865b3dd2",
+    "schemas/niche_report.schema.json": "be2752d3d8ce1753b7960a7f9ae826a4fc4999c344aee0ae4f8537c2a81f19fb",
+    "schemas/publish_record.schema.json": "c8abad53d7caf5fb2fbf27d6afe620b2de9d3dd014e0e7597f7d2e583c227e91",
+    "schemas/readback.schema.json": "4934d5be47fffa0ee581cde74228eecd07cedf59c6169f798aca44ca942c04f2",
+    "schemas/scored_ideas.schema.json": "79f3915cd6f6e8adf6ba66ee45710fe2d5daa954c8b18ad41ba3d8ed4a7c90cf",
+    "schemas/shot_list.schema.json": "ee2e9c39abcfcc01f4f78893969b1707eea7e7b085f6132620c86db6899eb67a",
+    "tests/fixtures/contracts/asset_manifest.sample.json": "99457d89cc0242757619aad92a5669fd04e654e2a8cd6354d77bff0c485298ef",
+    "tests/fixtures/contracts/format_library.sample.json": "5b7c37fa7c3d934f5b9023ace9363f7aeab482c39ff4c163429f156167475512",
+    "tests/fixtures/contracts/hooks_bank.sample.json": "3dafead0f8af633dce2b3071d67d400b139ccdbb832edb2afdc5d75872718f60",
+    "tests/fixtures/contracts/mpt_task.sample.json": "8aa44a4446e696bb1ca9d4f4665fbcf3be52e501780c62f4ab52dbddf20a779f",
+    "tests/fixtures/contracts/niche_report.sample.json": "1a3f06fd3466ee2882ae37ec3623ba02e23a2a22bed5de0e7d6190fde68ed4e5",
+    "tests/fixtures/contracts/publish_record.sample.json": "96f721d2939305c74b210c6a85d1f0ed7bc42f889d0ea6f6a4607e1fb53b5735",
+    "tests/fixtures/contracts/readback.sample.json": "4788e6e44513706238afdf4a440a54d2491207a98fb71f8e32df9664510174be",
+    "tests/fixtures/contracts/scored_ideas.invalid.json": "4578d58da80f055d97194831df54028fd63d7e7550c6ee76075c35a383319d87",
+    "tests/fixtures/contracts/scored_ideas.sample.json": "c4556f7ee7a49085013b0092f17be7a46c589f4b425099ad13f4bea866330d56",
+    "tests/fixtures/contracts/shot_list.sample.json": "dc4b0a916ef6871ed2d5d4933b37e474d6832415296144c702ffbdcb1e302023",
+    "tests/fixtures/grill/ideas.json": "4b97f8f44eb89a85e8738860358550bceea1c65f0c5c60bf82c40069cd200f23",
+    "tests/fixtures/media/bad_video.mp4": "08bc5bc360bf5ddfc05db6f925697ddf3428ae96970d7ef799dd245823a5e813",
+    "tests/fixtures/media/good_image.png": "61d832016167a60cee06a09c5005100c4b59ff518181d2fda6cd494dde7c77e7",
+    "tests/fixtures/media/good_video.mp4": "0062e19fae384b1f142b1dc914177d3e958a0569246f3f5e4f9d3eb62dbf2e83",
+    "tests/fixtures/media/good_voice.mp3": "8df79293367b5e252b84a4ac60a76c03074f189d5cbfa0d5a3a57c32e0d0c6fe",
+    "tests/fixtures/media/short_voice.mp3": "6879939ce1c8c4712d2f2f2b56309b3ab24f6e552614ed3479f4f5b64104d7ad",
+    "tests/fixtures/media/zero_byte.mp4": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "tests/fixtures/yt/channel_stats.json": "ebe8c34ba5aff4e2a92f910ea58187a663c5fc1c3f7e9cf36434dea19ba249c3",
+    "tests/fixtures/yt/channel_videos.json": "7182bade97d6d83e1877a72b47e3421bf2f6c0aec3217a333373a1621ecbc850",
+    "tests/fixtures/yt/search_response.json": "b83f7d9616da1c17f43f43e8b3c362566eff524bced6973263ff106fb302c2f2"
+  },
+  "ledger_sha256": "697d47a4f452ab1dd9e8532e32976ef3ca9cadd2e48db8e8dddb46cbe23da35a",
+  "baseline": "Review: 851 passed, 1 failing clock test; failure reproduced before repair",
+  "test_boundaries": [
+    "application API/CLI",
+    "durable worker and scheduler",
+    "provider transports",
+    "rendered artifacts",
+    "domain service public commands"
+  ]
+}

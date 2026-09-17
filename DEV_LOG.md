@@ -7,6 +7,19 @@ decisions) is my direct work.
 
 ---
 
+## 2026-09-17 — Factory repair program (S0–S8)
+
+The independent review at `dae132a` found 43 issue groups. The earlier
+F00–F34 end-to-end completion claim is superseded: component test passes
+did not establish an integrated factory. Implementation and live gates are
+reopened against `docs/factory-reports/REVIEW-2026-09-17.md`.
+
+S0 begins with zero external effects. Existing dirty files, frozen contracts
+and legacy financial state are preserved. Repair status/evidence is recorded
+in `docs/factory-reports/REPAIRS.md`; prior entries remain historical.
+
+---
+
 ## 2026-09-16 → 2026-09-17 — Viral Video Factory build: F00–F34 (35 commits)
 
 **Session outcome:** the durable factory documented in

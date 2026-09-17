@@ -81,11 +81,12 @@ class UploadPostPublisher:
     rejected after the file left the building."""
 
     def __init__(self, api_key="", user="", base_url=DEFAULT_BASE,
-                 transport=None):
+                 transport=None, policy=None):
         self.api_key = api_key
         self.user = user
         self.base_url = base_url
-        self.transport = transport or http_transport
+        from ..execution.policy import live_transport
+        self.transport = transport or live_transport(http_transport, "publish", policy)
 
     # ------------------------------------------------------------- --
 

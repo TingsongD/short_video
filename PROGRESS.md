@@ -1,5 +1,11 @@
 # PROGRESS
 
+## Factory repair program — active
+
+Independent review R01–R43 supersedes factory completion claims. Sequential
+S0–S8 repairs run offline; [current evidence](docs/factory-reports/REPAIRS.md).
+Legacy G-gates and production records remain independent.
+
 ## Wave 0 — Foundation & Contracts ✅ DONE (2026-09-14)
 
 - [x] M0: folder tree, git repo, .gitignore, config templates, secrets shape

@@ -1,0 +1,178 @@
+{
+  "reviewed_revision": "dae132a",
+  "mode": "offline",
+  "real_external_effects": 0,
+  "results": {
+    "stale_authorization": {
+      "run_accepted": true,
+      "current_revision": 1,
+      "authorization_revision": 0,
+      "quote_credits": 10,
+      "current_requested_credits": 9999
+    },
+    "health_exception": "TypeError: 'NoneType' object is not callable",
+    "executor_duplicate": {
+      "effects_for_same_attempt": 2,
+      "saved_remote_id": "op-2"
+    },
+    "zero_authority_generation": {
+      "remote_effects": 1,
+      "budget_rows": 0,
+      "reservation_rows": 0
+    },
+    "production_resume_after_acceptance": {
+      "node": "pic:6abd74f05e9cdb2d",
+      "outcome": "failed",
+      "error": "attempt_conflict"
+    },
+    "expired_remote_capacity": {
+      "claim_before_expiry": null,
+      "claim_after_expiry": "two",
+      "first_remote_status": "accepted"
+    },
+    "false_completion": {
+      "outcomes": [
+        {
+          "node": "cmp:a",
+          "outcome": "deferred"
+        },
+        {
+          "node": "del:a",
+          "outcome": "deferred"
+        }
+      ],
+      "job_states": [
+        {
+          "phase": "deliver",
+          "status": "succeeded"
+        },
+        {
+          "phase": "render",
+          "status": "succeeded"
+        }
+      ]
+    },
+    "qc_no_checks": {
+      "accepted": true,
+      "target_hash": "f8a69ede5e62175fdb7dabb3dc7ef0b22d72e608aa5c3b836f2b18e1b86e1297"
+    },
+    "dedupe_duration": {
+      "takes": [
+        {
+          "variant": "a",
+          "slot": "s1",
+          "duration_s": 4
+        },
+        {
+          "variant": "b",
+          "slot": "s1",
+          "duration_s": 8
+        }
+      ],
+      "allocations": [
+        {
+          "duration_s": 4,
+          "offset_s": 0.0,
+          "split": false,
+          "covers_s": 4.0,
+          "over_s": 0.0
+        }
+      ]
+    },
+    "speech_fit": {
+      "fit": {
+        "fits": true,
+        "rate": 1.1,
+        "pad_s": 0.0,
+        "trim_s": 0.0,
+        "spoken_s": 11.0
+      },
+      "mapped_last_word": {
+        "w": "last",
+        "start_s": 11.0,
+        "end_s": 12.100000000000001
+      }
+    },
+    "restore_layout": {
+      "restored_records": 1,
+      "normal_cli_records": 0
+    },
+    "documented_start": {
+      "exit": 2,
+      "error": "factory start: error: the following arguments are required: --port"
+    },
+    "asgi_export_exists": false,
+    "api_idempotency_ack_loss": {
+      "effects_for_same_key": 2
+    },
+    "cross_creator_cohort": {
+      "included": [
+        "other"
+      ],
+      "excluded": [],
+      "size": 1,
+      "mean_views": 10,
+      "median_views": 10,
+      "flags": []
+    },
+    "vertex_pilot_wire": {
+      "captures": [
+        {
+          "method": "POST",
+          "auth_is_placeholder": true,
+          "payload_keys": [
+            "model",
+            "background",
+            "input",
+            "response",
+            "generation_config"
+          ]
+        },
+        {
+          "method": "GET",
+          "auth_is_placeholder": true,
+          "payload_keys": []
+        }
+      ],
+      "real_completion_interpreted_as": "running",
+      "has_media": false
+    },
+    "canvas_ceiling_override": {
+      "approved": 10,
+      "submitted": 99
+    },
+    "hypit_json_shape": {
+      "build_id_type": "dict",
+      "completed_interpreted_as": "running"
+    },
+    "real_freezedetect_log_parsing": [],
+    "missing_region_hashes": {
+      "ok": true,
+      "diffs": []
+    },
+    "audio_extends_beyond_target": 2.0,
+    "one_second_48k_at_22k": 2.1769,
+    "drive_name_transmitted": false,
+    "drive_human_size": "ValueError",
+    "deliver_same_id_again": "record_conflict",
+    "retry_already_verified_uploads": 2,
+    "studio_close": {
+      "resource_marked": "stopped",
+      "kill_path_present": false
+    },
+    "redaction": {
+      "refresh_token": "synthetic value was not redacted",
+      "confirmation_token": "synthetic value was not redacted",
+      "key": "synthetic value was not redacted"
+    },
+    "average_view_duration": {
+      "stored": 50.5,
+      "weighted_expected": 99.9010989010989
+    },
+    "one_day_coverage": {
+      "start": "2026-09-17",
+      "end": "2026-09-17",
+      "days": 1
+    }
+  }
+}

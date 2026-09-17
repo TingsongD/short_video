@@ -84,7 +84,7 @@ class QualityService:
         """Acceptance requires every bound review to pass against the
         CURRENT bytes — a review on old bytes is stale."""
         current = _sha(final_path)
-        problems = []
+        problems = [] if check_ids else ["missing_required_reviews"]
         for cid in check_ids:
             rev = self._get(cid)
             if rev is None:

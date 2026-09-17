@@ -236,7 +236,7 @@ class ProductionService:
                 return "awaiting_review"
             self._set(plan_id, node["node_key"], status="done")
             return "reviewed"
-        return "deferred"   # compose/deliver land with F22/F25
+        raise ContractError("handler_unavailable", "kind", kind)
 
     # ------------------------------------------------- branch control
 

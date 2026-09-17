@@ -34,10 +34,10 @@ def find_idea(idea_id, grill_dir=None):
     raise KeyError(f"idea {idea_id} not found in {d}")
 
 
-def paid_call(ledger, service, est_cost, fn, cost_of, approvals_dir=None):
+def paid_call(ledger, service, est_cost, fn, cost_of, approvals_dir=None, now=None):
     """Hard cap -> approval gate -> paid call -> ledger entry."""
     ledger.authorize(service, est_cost)
-    approval.require("spend", f"{service} ~${est_cost:.3f}", approvals_dir)
+    approval.require("spend", f"{service} ~${est_cost:.3f}", approvals_dir, now=now)
     result = fn()
     cost, extra = cost_of(result)
     ledger.record(service, cost, **extra)

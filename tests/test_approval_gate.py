@@ -29,7 +29,7 @@ def test_approved_token_allows_call_and_logs(tmp_path):
     out = stages.paid_call(led, "elevenlabs", 0.20,
                            lambda: "audio-bytes",
                            lambda r: (0.20, {"units": 10}),
-                           approvals_dir=appr)
+                           approvals_dir=appr, now=NOW)
     assert out == "audio-bytes"
     assert led.entries[0]["service"] == "elevenlabs"
     assert led.entries[0]["approved"] is True
