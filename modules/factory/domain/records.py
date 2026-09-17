@@ -1075,3 +1075,39 @@ class ProductionPlan(Record):
             e.append(ContractError("unknown_plan_status", "status",
                                    self.status))
         return e
+
+
+# ------------------------------------------------------------ composition
+
+@dataclass
+class Composition(Record):
+    """One compiled variant composition: SVML/SVS/SVRun + binding
+    manifest, deterministic for identical inputs."""
+    experiment_id: str = ""
+    variant_key: str = ""
+    revision: int = 0
+    parent_revision: int = 0
+    parent_hash: str = ""
+    plan_id: str = ""
+    status: str = "draft"            # draft | checked | failed
+    renderer: str = "hypit"          # hypit | ffmpeg_fast
+    clock: dict = field(default_factory=dict)   # {fps,width,height}
+    total_frames: int = 0
+    files: dict = field(default_factory=dict)
+    # {"svml": sha, "svs": sha, "svrun": sha, "manifest": sha}
+    bindings: list = field(default_factory=list)
+    # [{binding, role, artifact_id, sha256, in_frame, out_frame}]
+    source_revisions: dict = field(default_factory=dict)
+    content_hash: str = ""
+    diagnostics: list = field(default_factory=list)
+
+    def validate(self):
+        e = super().validate()
+        _id_errors(e, self.experiment_id, "experiment_id")
+        if self.variant_key not in VARIANT_KEYS:
+            e.append(ContractError("bad_variant", "variant_key",
+                                   self.variant_key))
+        if self.renderer not in ("hypit", "ffmpeg_fast"):
+            e.append(ContractError("unknown_renderer", "renderer",
+                                   self.renderer))
+        return e
