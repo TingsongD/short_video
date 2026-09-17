@@ -40,8 +40,9 @@ def _parse_time(s):
 
 
 class BudgetService:
-    def __init__(self, db):
+    def __init__(self, db, clock=None):
         self.db = db
+        self.clock = clock or (lambda: datetime.now(timezone.utc))
 
     # ------------------------------------------------------------ budgets
 
@@ -87,14 +88,24 @@ class BudgetService:
                 status="held"):
         """lines: [(budget_id, amount)] — all checked and held atomically.
         Returns reservation id; raises ReservationBlocked naming the cap."""
+        lines = list(lines)
+        if not lines or len({bid for bid, _ in lines}) != len(lines):
+            raise ContractError("invalid_reservation_lines", "lines")
+        if status not in HELD:
+            raise ContractError("invalid_reservation_status", "status", status)
         rid = f"rsv:{uuid.uuid4().hex[:16]}"
         with self.db.uow() as u:
             # Idempotent: same request hash replays the same reservation.
             existing = u.conn.execute(
-                "SELECT id, status FROM reservations WHERE request_hash=?",
+                "SELECT id, status, authorization_id FROM reservations WHERE request_hash=?",
                 (request_hash,)).fetchone()
             if existing:
+                old_lines = dict(u.conn.execute("SELECT budget_id,amount FROM reservation_lines WHERE reservation_id=?", (existing["id"],)).fetchall())
+                if old_lines != dict(lines) or existing["authorization_id"] != authorization_id or existing["status"] == "released":
+                    raise ContractError("reservation_identity_conflict", "request_hash", request_hash)
                 return existing["id"]
+            if u.conn.execute("SELECT 1 FROM meta WHERE key IN ('restore_pending','spend_overrun')").fetchone():
+                raise ContractError("dispatch_blocked", "reconciliation")
             for budget_id, amount in lines:
                 row = u.conn.execute(
                     "SELECT cap_amount FROM budgets WHERE id=?",
@@ -141,8 +152,8 @@ class BudgetService:
 
     def settle(self, reservation_id, kind, amounts, evidence=""):
         """Terminal, evidence-backed settlement. Idempotent by id.
-        amounts: {budget_id: actual}. Over-reservation requires an
-        authorization correction allowance — refused otherwise."""
+        amounts: {budget_id: actual}. Record real charges even above the
+        reservation; a variance blocks later dispatch until reconciled."""
         if kind not in ("native_quote", "usage_estimate",
                         "reported_usage", "invoice_confirmed"):
             raise ContractError("bad_settlement_kind", "kind", kind)
@@ -153,8 +164,15 @@ class BudgetService:
             if row is None:
                 raise ContractError("unknown_reservation", "id",
                                     reservation_id)
+            saved = u.conn.execute("SELECT budget_id,settled_amount,kind FROM reservation_lines WHERE reservation_id=?", (reservation_id,)).fetchall()
+            if set(amounts) != {r["budget_id"] for r in saved}:
+                raise ContractError("incomplete_settlement", "amounts")
             if row["status"] == "settled":
-                return reservation_id                # idempotent
+                if any(amounts[r["budget_id"]] != r["settled_amount"] or kind != r["kind"] for r in saved):
+                    raise ContractError("settlement_identity_conflict", "reservation_id", reservation_id)
+                return reservation_id
+            if row["status"] not in HELD:
+                raise ContractError("not_held", "reservation_id", reservation_id)
             for budget_id, actual in amounts.items():
                 if type(actual) is not int or actual < 0:
                     raise ContractError("invalid_amount", budget_id,
@@ -167,14 +185,13 @@ class BudgetService:
                     raise ContractError("unknown_line", "budget_id",
                                         budget_id)
                 if actual > line["amount"]:
-                    # Variance: only allowed if correction allowance has
-                    # headroom in that same budget.
-                    headroom = self._headroom(u.conn, budget_id)
-                    if actual - line["amount"] > headroom:
-                        raise ContractError(
-                            "settlement_over_reserved", budget_id,
-                            f"{actual}>{line['amount']} reserved, "
-                            f"headroom {headroom}")
+                    if not evidence:
+                        raise ContractError("settlement_needs_evidence", "evidence")
+                    u.conn.execute("INSERT OR REPLACE INTO meta(key,value) VALUES('spend_overrun',?)",
+                                   (json.dumps({"reservation": reservation_id, "budget": budget_id,
+                                                "actual": actual, "reserved": line["amount"]}),))
+                    u.events.append(f"reservation:{reservation_id}", "charge_variance",
+                                    {"budget_id": budget_id, "actual": actual, "reserved": line["amount"]})
                 u.conn.execute(
                     "UPDATE reservation_lines SET settled_amount=?, kind=? "
                     "WHERE reservation_id=? AND budget_id=?",
@@ -189,6 +206,8 @@ class BudgetService:
 
     def release(self, reservation_id, evidence=""):
         """Free a hold ONLY on evidence of a terminal no-charge outcome."""
+        if not evidence:
+            raise ContractError("release_needs_evidence", "evidence")
         with self.db.uow() as u:
             cur = u.conn.execute(
                 "UPDATE reservations SET status='released', evidence=? "
@@ -220,22 +239,30 @@ class BudgetService:
         if auth.scope_hash != plan_hash:
             reasons.append("plan_hash_mismatch")
         valid_until = _parse_time(getattr(auth, "valid_until", ""))
-        if valid_until and (now or datetime.now(timezone.utc)) > valid_until:
+        if not valid_until or (now or self.clock()) >= valid_until:
             reasons.append("authorization_expired")
         if provider not in (auth.allowed_providers or []):
             reasons.append("provider_not_authorized")
         allowed_models = (auth.allowed_models or {}).get(provider, [])
-        if allowed_models and model not in allowed_models:
+        if model not in allowed_models:
             reasons.append("model_not_authorized")
         if price is None:
             reasons.append("no_price_assessment")
         else:
+            if price.plan_hash and price.plan_hash != plan_hash:
+                reasons.append("price_plan_mismatch")
+            if price.provider != provider:
+                reasons.append("price_provider_mismatch")
+            if price.model and price.model != model:
+                reasons.append("price_model_mismatch")
+            if price.reserve_amount < price.amount:
+                reasons.append("reserve_below_quote")
             if price.request_hash != request_hash:
                 reasons.append("price_request_mismatch")
             if price.provisional:
                 reasons.append("price_provisional")
             pexp = _parse_time(getattr(price, "valid_until", ""))
-            if pexp and (now or datetime.now(timezone.utc)) > pexp:
+            if not pexp or (now or self.clock()) >= pexp:
                 reasons.append("quote_expired")
             cap = (auth.caps or {}).get(price.unit)
             if cap is None:

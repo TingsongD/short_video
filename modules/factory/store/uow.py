@@ -2,8 +2,9 @@
 their events commit together; external intents go to the outbox in the
 same transaction — dispatch happens after commit, never inside."""
 import json
-import sqlite3
+import threading
 import uuid
+import sqlite3
 from datetime import datetime, timezone
 
 from ..domain.errors import ContractError
@@ -261,8 +262,10 @@ class UnitOfWork:
     """One transaction across all repositories. Commit or roll back
     atomically; external calls never happen inside the `with` block."""
 
-    def __init__(self, conn):
+    def __init__(self, conn, lock):
         self.conn = conn
+        self.lock = lock
+        self.savepoint = None
         self.records = Records(conn)
         self.jobs = Jobs(conn)
         self.attempts = Attempts(conn)
@@ -273,16 +276,30 @@ class UnitOfWork:
         self._active = False
 
     def __enter__(self):
-        self.conn.execute("BEGIN IMMEDIATE")
-        self._active = True
+        self.lock.acquire()
+        try:
+            if self.conn.in_transaction:
+                self.savepoint = "uow_" + uuid.uuid4().hex
+                self.conn.execute(f"SAVEPOINT {self.savepoint}")
+            else:
+                self.conn.execute("BEGIN IMMEDIATE")
+            self._active = True
+        except BaseException:
+            self.lock.release()
+            raise
         return self
 
     def __exit__(self, exc_type, exc, tb):
         self._active = False
-        if exc_type is None:
-            self.conn.execute("COMMIT")
-        else:
-            self.conn.execute("ROLLBACK")
+        try:
+            if self.savepoint:
+                if exc_type is not None:
+                    self.conn.execute(f"ROLLBACK TO {self.savepoint}")
+                self.conn.execute(f"RELEASE {self.savepoint}")
+            else:
+                self.conn.execute("COMMIT" if exc_type is None else "ROLLBACK")
+        finally:
+            self.lock.release()
         return False
 
 
@@ -290,9 +307,10 @@ class Database:
     def __init__(self, path):
         self.path = str(path)
         self.conn = connection.open(self.path)
+        self.lock = threading.RLock()
 
     def uow(self):
-        return UnitOfWork(self.conn)
+        return UnitOfWork(self.conn, self.lock)
 
     def readonly(self):
         return connection.open(self.path, readonly=True)

@@ -22,7 +22,7 @@ class ReferenceGeneration:
         self.budget = budget            # F05 BudgetService
 
     def request(self, pack_id, ref_id, job_id, prompt, lines,
-                model="", attempt_seq=1, authorization_id=None):
+                model="", attempt_seq=1, authorization_id=None, attempt_id=None):
         """lines: [(budget_id, int credits)] — sized by the caller from
         the adapter's price table. Returns {attempt_id, reservation_id,
         operation} or {attempt_id, error}."""
@@ -33,13 +33,10 @@ class ReferenceGeneration:
                "duration_s": 1}
         wire = json.dumps(req, sort_keys=True, default=str)
         rh = hashlib.sha256(wire.encode()).hexdigest()
-        res = self.budget.reserve(rh, lines,
-                                  authorization_id=authorization_id) \
-            if self.budget and lines else None
-        attempt_id = self.executor.prepare(
-            job_id, attempt_seq, req, kind="reference_generation",
-            reservation_id=res, provider=self.adapter.name,
-            model=req["model"])
+        prepared = self.executor.require_request(attempt_id, req)
+        if prepared["job_id"] != job_id:
+            raise ContractError("operation_identity_conflict", "job_id", job_id)
+        res = prepared["reservation_id"]
         op = self.executor.submit(
             attempt_id, lambda: self.adapter.submit(req))
         return {"attempt_id": attempt_id, "reservation_id": res,
@@ -75,7 +72,7 @@ class ReferenceGeneration:
         rec = self.adapter.reconcile(request_hash=request_hash)
         if rec is None:
             return {"status": "no_remote_trace",
-                    "action": "new_attempt_allowed"}
+                    "action": "reconcile_or_review_evidence"}
         if rec.get("operation_id"):
             return self.collect(pack_id, ref_id, role,
                                 rec["operation_id"], attempt_id,

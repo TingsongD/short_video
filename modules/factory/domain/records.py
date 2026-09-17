@@ -466,6 +466,7 @@ class PriceAssessment(Record):
 class Authorization(Record):
     """Spend authority bound to a plan hash. Does not grow with balance."""
     scope_hash: str = ""             # hash of the authorized experiment revision
+    binding: dict = field(default_factory=dict)  # exact operation quotes, account, revision and budgets
     allowed_providers: list = field(default_factory=list)
     allowed_models: dict = field(default_factory=dict)
     allowed_input_modes: list = field(default_factory=list)
@@ -490,7 +491,7 @@ class Authorization(Record):
                 if cap is not None and (type(cap) is not int or cap < 0):
                     e.append(ContractError("invalid_cap", f"caps.{unit}"))
         for p in self.allowed_providers:
-            if p not in PROVIDERS:
+            if p not in PROVIDERS | {"elevenlabs", "google_tts", "google_music", "viral_outliers", "drive", "upload_post", "analysis"}:
                 e.append(ContractError("unknown_provider",
                                        "allowed_providers", p))
         return e

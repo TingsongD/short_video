@@ -19,8 +19,9 @@ from .evaluate import evaluate
 
 class DiscoveryService:
     def __init__(self, db, registry, executor, provider,
-                 provider_name="viral_outliers", cache_ttl_s=86400):
+                 provider_name="viral_outliers", cache_ttl_s=86400, effects=None):
         self.db = db
+        self.effects = effects
         self.registry = registry
         self.executor = executor
         self.provider = provider
@@ -67,9 +68,10 @@ class DiscoveryService:
             return None
         request = {"kind": "search", "query": query, "page": page,
                    "page_size": page_size, "run_id": run_id}
-        aid = self.executor.prepare(
-            f"job-discovery-{run_id}", len(received) + 1, request,
-            kind="discovery_search", route=f"{self.provider_name}:search")
+        if self.effects is None:
+            raise ContractError("authority_required", "research")
+        aid = self.effects(request, f"job-discovery-{run_id}", "research", self.provider_name, "search")
+        self.executor.require_request(aid, request)
         try:
             op = self.executor.submit(
                 aid, call=lambda: self.provider.submit(request))

@@ -24,14 +24,21 @@ SECRET_KEYS = {"authorization", "cookie", "setcookie", "apikey", "key",
                "verificationcode", "clientsecret", "password", "secret"}
 
 
+def _secret_field(key, value):
+    name = re.sub(r"[^a-z]", "", str(key).lower())
+    # Domain authorization metadata is public; HTTP authorization strings
+    # are credentials. Recurse into metadata to remove nested credentials.
+    return name in SECRET_KEYS and not (name == "authorization" and isinstance(value, dict))
+
+
 def redact(value):
     if isinstance(value, str):
         for pat in SECRET_PATTERNS:
             value = pat.sub("[redacted]", value)
         return value
     if isinstance(value, dict):
-        return {k: ("[redacted]" if re.sub(r"[^a-z]", "", str(k).lower())
-                    in SECRET_KEYS else redact(v)) for k, v in value.items()}
+        return {k: ("[redacted]" if _secret_field(k, v) else redact(v))
+                for k, v in value.items()}
     if isinstance(value, (list, tuple)):
         return [redact(v) for v in value]
     return value

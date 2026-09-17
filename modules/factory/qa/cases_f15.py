@@ -1,3 +1,4 @@
+from modules.factory.testing.authority import approve_operation
 """F15 manual scenarios: explicit routing both ways, ineligible
 combinations, scoped authorization, fallback suppression."""
 from .cases_f01 import CaseContext, _result
@@ -157,8 +158,7 @@ def f15_m04(ctx: CaseContext):
     db, jp, vp, adapters, cat, _ = _stack(ctx, "m04")
     ex = Executor(db, jp, ctx.clock)
     router = ProviderRouter(db, adapters, cat, executor=ex)
-    att = ex.prepare("job:g1", 1, {"prompt": "x"},
-                     kind="generation_submit", provider="jimeng_canvas")
+    att = approve_operation(db, ex, {"prompt": "x"}, "job:g1", kind="generation", provider="jimeng_canvas", model="fast", unit="jimeng_credits")
     def lost():
         return adapters["jimeng_canvas"].provider.submit(
             {"prompt": "x"}, faults=("accept-then-timeout",))

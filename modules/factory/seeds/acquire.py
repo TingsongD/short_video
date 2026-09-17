@@ -27,8 +27,9 @@ from .ssrf import SSRFError, assert_fetchable
 class AcquisitionService:
     def __init__(self, db, scheduler, executor, registry, artifacts,
                  adapter, adapter_name, budget=None, costs=None,
-                 metadata_ttl_s=3600, staging_dir=None, resolver=None):
+                 metadata_ttl_s=3600, staging_dir=None, resolver=None, effects=None):
         self.db = db
+        self.effects = effects
         self.scheduler = scheduler
         self.executor = executor
         self.registry = registry
@@ -181,7 +182,7 @@ class AcquisitionService:
         if phase == "submit":
             res = self._reserve("media", request)
             try:
-                op = self._submit_media(request, seed, aid)
+                op, aid = self._submit_media(request, seed, aid)
             except Exception:
                 self._release(res, "media_submit_failed")
                 raise
@@ -210,7 +211,7 @@ class AcquisitionService:
     def _submit_media(self, request, seed, attempt_id):
         try:
             return self.executor.submit(
-                attempt_id, call=lambda: self.adapter.submit(request))
+                attempt_id, call=lambda: self.adapter.submit(request)), attempt_id
         except ProviderError as e:
             if e.code != "expired_source":
                 raise
@@ -220,10 +221,13 @@ class AcquisitionService:
             self.registry.apply_metadata(
                 seed.id, {**seed.metadata, "media_url": fresh},
                 fetched_at=utcnow())
-            return self.executor.submit(
-                attempt_id,
-                call=lambda: self.adapter.submit(
-                    {**request, "url": fresh}))
+            assert_fetchable(fresh, resolver=self.resolver)
+            if self.costs.get("media"):
+                raise ContractError("renewed_source_requires_authorization", "seed_id", seed.id)
+            original = self.executor._attempt(attempt_id)
+            req = {**request, "url": fresh}
+            aid = self.executor.prepare(original["job_id"], original["attempt_seq"] + 1, req, kind="seed_media", route=self.adapter_name)
+            return self.executor.submit(aid, call=lambda: self.adapter.submit(req)), aid
 
     def _stage(self, attempt_id):
         import os
@@ -238,15 +242,24 @@ class AcquisitionService:
         """Reuse an unfinished attempt (resume download/poll) instead of
         preparing a new remote effect."""
         rows = self.db.conn.execute(
-            "SELECT id, status FROM attempts WHERE job_id=? "
+            "SELECT id, status, attempt_seq FROM attempts WHERE job_id=? "
             "ORDER BY attempt_seq", (job["id"],)).fetchall()
         for r in rows:
+            if r["status"] in ("unknown", "dispatching", "cancel_requested"):
+                op = self.executor.reconcile(r["id"])
+                if not op:
+                    raise ContractError("attempt_unresolved", "attempt_id", r["id"])
+                return r["id"], "resume"
             if r["status"] in ("accepted", "running", "succeeded"):
                 return r["id"], "resume"
         seq = (rows[-1]["attempt_seq"] + 1) if rows else 1
-        aid = self.executor.prepare(
-            job["id"], seq, request, kind=kind,
-            route=self.adapter_name)
+        if self.costs.get("metadata" if kind == "seed_metadata" else "media"):
+            if self.effects is None:
+                raise ContractError("authority_required", "acquisition")
+            aid = self.effects(request, job["id"], "research", self.adapter_name, kind)
+            self.executor.require_request(aid, request)
+        else:
+            aid = self.executor.prepare(job["id"], seq, request, kind=kind, route=self.adapter_name)
         return aid, "submit"
 
     # ---------------------------------------------------------- money
@@ -259,14 +272,24 @@ class AcquisitionService:
             return None
         wire = json.dumps(request, sort_keys=True, default=str)
         rh = hashlib.sha256(wire.encode()).hexdigest()
-        return self.budget.reserve(rh, cfg["lines"])
+        row = self.db.conn.execute("SELECT body FROM intents WHERE request_hash=? ORDER BY created_at DESC LIMIT 1", (rh,)).fetchone()
+        rid = json.loads(row["body"]).get("reservation_id") if row else None
+        if not rid:
+            raise ContractError("reservation_required", "acquisition")
+        return rid
 
     def _settle(self, res, kind):
         if res and self.budget:
-            self.budget.settle(res, "native_quote",
-                               dict(self.costs[kind]["lines"]),
-                               evidence=f"{kind} acquisition")
+            reserved = self.db.conn.execute("SELECT budget_id,amount FROM reservation_lines WHERE reservation_id=?", (res,)).fetchall()
+            self.budget.settle(res, "native_quote", dict(reserved), evidence=f"{kind} acquisition receipt")
 
     def _release(self, res, evidence):
         if res and self.budget:
-            self.budget.release(res, evidence=evidence)
+            proven = self.db.conn.execute("""SELECT 1 FROM attempts a JOIN events e ON e.stream='attempt:'||a.id
+                WHERE json_extract(a.body,'$.reservation_id')=? AND a.status='failed'
+                AND e.type='submit_failed' AND json_extract(e.body,'$.class')='pre_acceptance'""", (res,)).fetchone()
+            if proven:
+                self.budget.release(res, evidence=evidence)
+            else:
+                with self.db.uow() as u:
+                    u.conn.execute("UPDATE reservations SET status='ambiguous' WHERE id=? AND status='held'", (res,))

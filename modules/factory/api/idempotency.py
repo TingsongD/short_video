@@ -1,12 +1,9 @@
-"""Durable idempotency (F27): mutation requests persist
-key → request-hash → result. Identical replay returns the original;
-changed payload or reused key on a different request is a conflict.
-"""
+"""Durable action ownership: uncertain actions are reconciled, never replayed."""
 import hashlib
 import json
 from datetime import datetime, timezone
-
 from ..domain.errors import ContractError
+from ..events.redact import redact
 
 
 def _now():
@@ -14,9 +11,8 @@ def _now():
 
 
 def request_hash(method, path, body):
-    canon = json.dumps(body, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(f"{method} {path} {canon}".encode()) \
-        .hexdigest()
+    canon = json.dumps(body, sort_keys=True, separators=(',', ':'))
+    return hashlib.sha256(f'{method} {path} {canon}'.encode()).hexdigest()
 
 
 class IdempotencyStore:
@@ -24,27 +20,35 @@ class IdempotencyStore:
         self.db = db
 
     def run(self, key, method, path, body, fn):
-        """Execute fn once per (key, request). Persisted result replays
-        on identical retry; a changed payload with the same key is a
-        409 — never a second effect."""
-        h = request_hash(method, path, body)
-        row = self.db.uow().records.get("api_request", key)
-        if row is not None:
-            saved = json.loads(row["body"])
-            if saved["request_hash"] != h:
-                raise ContractError(
-                    "idempotency_conflict", "Idempotency-Key",
-                    "key reused with a different request")
-            return saved["status"], json.loads(saved["response"])
-        status, response = fn()
+        fingerprint = request_hash(method, path, body)
         with self.db.uow() as u:
-            u.conn.execute(
-                "INSERT INTO records(kind,id,revision,schema_version,"
-                "status,body,created_at,updated_at,version)"
-                " VALUES('api_request',?,0,'api_request.v1',?,?,?,?,1)",
-                (key, "done",
-                 json.dumps({"request_hash": h, "method": method,
-                             "path": path, "status": status,
-                             "response": json.dumps(response)}),
-                 _now(), _now()))
-        return status, response
+            row = u.records.get('api_request', key)
+            if row:
+                saved = json.loads(row['body'])
+                if saved['request_hash'] != fingerprint:
+                    raise ContractError('idempotency_conflict', 'Idempotency-Key', 'key reused with a different request')
+                if row['status'] == 'done':
+                    return saved['status'], json.loads(saved['response'])
+                if row['status'] == 'rejected':
+                    raise ContractError(**saved['error'])
+                raise ContractError('idempotency_unresolved', 'Idempotency-Key', 'inspect the durable action before retrying')
+            saved = {'request_hash': fingerprint, 'method': method, 'path': path}
+            u.conn.execute("INSERT INTO records(kind,id,revision,schema_version,status,body,created_at,updated_at) VALUES('api_request',?,0,'api_request.v2','in_progress',?,?,?)",
+                           (key, json.dumps(saved), _now(), _now()))
+        try:
+            status, response = fn()
+        except ContractError as error:
+            saved['error'] = {'code': error.code, 'field': error.field, 'detail': redact(error.detail)}
+            self._finish(key, 'rejected', saved)
+            raise
+        except Exception:
+            self._finish(key, 'unknown', saved)
+            raise
+        saved.update(status=status, response=json.dumps(redact(response)))
+        self._finish(key, 'done', saved)
+        return status, redact(response)
+
+    def _finish(self, key, status, body):
+        with self.db.uow() as u:
+            u.conn.execute("UPDATE records SET status=?,body=?,updated_at=? WHERE kind='api_request' AND id=? AND revision=0",
+                           (status, json.dumps(body), _now(), key))

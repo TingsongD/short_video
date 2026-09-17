@@ -47,8 +47,9 @@ def load_blueprint(row):
 class AnalysisService:
     def __init__(self, db, registry, artifacts, executor, analyzer,
                  provider_name="analyzer", model="fake-av-1",
-                 route="video+audio"):
+                 route="video+audio", effects=None):
         self.db = db
+        self.effects = effects
         self.registry = registry
         self.artifacts = artifacts
         self.executor = executor
@@ -81,10 +82,10 @@ class AnalysisService:
                    "scenes": scenes, "audio_present": audio["present"],
                    "input_mode": self.route, "seed_id": seed.id}
         job_id = job_id or f"job:analysis:{seed_id}"
-        attempt = self.executor.prepare(
-            job_id, 1, request, kind="analysis_submit",
-            provider=self.provider_name, model=self.model,
-            route=self.route)
+        if self.effects is None:
+            raise ContractError("authority_required", "analysis")
+        attempt = self.effects(request, job_id, "analysis", self.provider_name, self.model)
+        self.executor.require_request(attempt, request)
         self.executor.submit(attempt)
         op = self.executor.poll(attempt)
         return self._finish(attempt, op, target_rate,

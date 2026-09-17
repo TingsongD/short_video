@@ -22,7 +22,7 @@ DEFAULT_POLICY = {
 
 def classify(provider_code, http_status=None, where="submit"):
     """Provider error → failure class (checklist 3)."""
-    if provider_code in ("rejected_before_accept",):
+    if provider_code in ("rejected_before_accept", "expired_source"):
         return "pre_acceptance"
     if provider_code == "quota_exceeded" or http_status == 429:
         return "pre_acceptance"          # no acceptance, no charge

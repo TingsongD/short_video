@@ -1,3 +1,5 @@
+from modules.factory.testing.authority import FixtureEffects
+from modules.factory.execution import Executor
 """F31 publishing: manual lane, authorised automated lane, async
 states, idempotency, cadence/timezone, ambiguous publish, OAuth
 expiry, actual post verification."""
@@ -39,7 +41,7 @@ def _svc(db, pub=None, users=None, max_per_day=2):
     remote = pub or FakePublisher()
     adapter = UploadPostPublisher(api_key="k", user="acct-main",
                                   transport=remote.transport)
-    return PublishingService(db, publisher=adapter,
+    return PublishingService(db, publisher=adapter, effects=FixtureEffects(db, Executor(db)),
                              accounts=accounts,
                              max_per_day=max_per_day)
 

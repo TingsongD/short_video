@@ -57,6 +57,7 @@ class ProductionService:
                     m = self.adapter.price(n["request"],
                                            a["duration_s"], model)
                     m = m.to_dict() if hasattr(m, "to_dict") else m
+                    a["price"] = m
                     amount += m["amount"]
                     unit = m["unit"]
             n["price"] = {"unit": unit, "amount": amount}
@@ -96,6 +97,38 @@ class ProductionService:
                         depends=n.get("depends", []),
                         problem=n.get("problem", ""))
 
+    def authorize(self, plan_id, authorization, account, budget_ids, valid_until):
+        """Approve exact plan operations after the operator reviews its quote."""
+        from ..execution.effects import EffectService, wire_hash
+        from ..domain.records import PriceAssessment
+        from ..store.uow import utcnow
+        ops = []
+        for key, node in self._nodes(plan_id).items():
+            if node["kind"] != "picture" or node["status"] == "needs_manual":
+                continue
+            for i, allocation in enumerate(node["allocations"]):
+                req = dict(node["request"], duration_s=allocation["duration_s"], model=node["model"])
+                price = allocation.get("price")
+                if not price or not price.get("unit"):
+                    raise ContractError("no_price_assessment", "node", key)
+                quote = PriceAssessment(schema_version="price_assessment.v1",
+                    id=f"quote:{content_hash([authorization.id,key,i])[:32]}", created_at=utcnow(),
+                    kind="usage_estimate" if node["provider"] == "google_vertex" else "native_quote",
+                    request_hash=wire_hash(req), plan_hash=self._plan(plan_id)["plan_hash"],
+                    provider=node["provider"], model=node["model"], unit=price["unit"],
+                    amount=price["amount"], reserve_amount=price["amount"],
+                    rate_basis="adapter:plan-quote", valid_until=valid_until)
+                ops.append(dict(key=f"{key}:{i}", kind="generation", provider=node["provider"],
+                    model=node["model"], account=account, request=req, price=quote))
+        EffectService(self.db, self.executor).approve(authorization, "productionplan", plan_id, ops, budget_ids)
+        return authorization.id
+
+    def _authority(self, plan_id):
+        rows = self.db.conn.execute("SELECT id FROM records WHERE kind='authorization' AND status='authorized' AND json_extract(body,'$.binding.kind')='productionplan' AND json_extract(body,'$.binding.id')=? ORDER BY created_at DESC", (plan_id,)).fetchall()
+        if not rows:
+            raise ContractError("authority_required", "plan_id", plan_id)
+        return rows[0]["id"]
+
     # --------------------------------------------------------- submit
 
     def submit(self, plan_id):
@@ -127,7 +160,7 @@ class ProductionService:
     def run_next(self):
         """Claim one ready dispatch job and execute its node handler.
         Returns the node outcome or None."""
-        job = self.scheduler.claim()
+        job = self.scheduler.claim("collect") or self.scheduler.claim()
         if job is None:
             return None
         plan_id, key = job["logical_key"].split(":", 1)
@@ -137,13 +170,13 @@ class ProductionService:
                                 f"work_{node['status']}")
             return {"node": key, "outcome": "blocked"}
         try:
-            outcome = self._execute(plan_id, node)
+            with self.scheduler.heartbeat(job["id"], job["fencing_token"]):
+                outcome = self._execute(plan_id, node, job)
         except ContractError as e:
-            # remote_unfinished means the provider is still working —
-            # hand the job back to ready rather than failing it
-            self.scheduler.fail(job["id"], job["fencing_token"],
-                                e.code,
-                                retryable=e.code == "remote_unfinished")
+            if e.code in {"remote_unfinished", "capacity_full"}:
+                self.scheduler.defer(job["id"], job["fencing_token"], e.code)
+                return {"node": key, "outcome": "waiting", "error": e.code}
+            self.scheduler.fail(job["id"], job["fencing_token"], e.code)
             return {"node": key, "outcome": "failed", "error": e.code}
         if outcome == "awaiting_review":
             self.scheduler.transition(job["id"], job["fencing_token"],
@@ -152,7 +185,7 @@ class ProductionService:
         self.scheduler.complete(job["id"], job["fencing_token"])
         return {"node": key, "outcome": outcome}
 
-    def _execute(self, plan_id, node):
+    def _execute(self, plan_id, node, job=None):
         kind = node["kind"]
         if kind == "picture":
             if node["status"] == "needs_manual":
@@ -161,16 +194,16 @@ class ProductionService:
             op_ids = []
             from ..domain.money import Money
             priced = node.get("price") or {}
-            per_alloc = priced.get("amount", 0) // \
-                max(1, len(node["allocations"]))
+            from ..execution.effects import EffectService
+            if job is None:
+                raise ContractError("worker_lease_required", "job")
+            effects = EffectService(self.db, self.executor)
+            authority_id = self._authority(plan_id)
             for i, a in enumerate(node["allocations"]):
-                req = dict(node["request"])
-                req["duration_s"] = a["duration_s"]
-                att = self.executor.prepare(
-                    f"{plan_id}:{node['node_key']}", i + 1, req,
-                    kind="generation", provider=node["provider"])
-                price = Money(priced["unit"], per_alloc) \
-                    if priced.get("unit") else None
+                req = dict(node["request"], duration_s=a["duration_s"], model=node["model"])
+                att = effects.prepare(authority_id, f"{node['node_key']}:{i}",
+                    job["id"], job["fencing_token"], self.scheduler.worker_id, i + 1)
+                price = Money(**a["price"])
                 op = self.executor.submit(
                     att, lambda: self.adapter.submit(req, price=price))
                 op_ids.append(op["operation_id"])
@@ -191,6 +224,8 @@ class ProductionService:
                 (f"{plan_id}:{pic_key}",)).fetchall()
             for a in atts:
                 op = self.executor.poll(a["id"])
+                if op.get("status") in {"failed", "cancelled"}:
+                    raise ContractError("remote_terminal_failure", "attempt", a["id"])
                 if op.get("status") != "succeeded":
                     raise ContractError("remote_unfinished", "attempt",
                                         a["id"])
@@ -283,6 +318,8 @@ class ProductionService:
         probe = json.loads(row["probe"] or "{}")
         need = max((t["duration_s"] for t in node.get("takes", [])
                     ), default=0)
+        if row["kind"] != "video" or row["status"] != "registered":
+            raise ContractError("invalid_manual_video", "artifact_id", artifact_id)
         have = probe.get("duration_s") or 0
         if have + 1e-6 < need:
             raise ContractError("insufficient_coverage", "duration_s",
@@ -294,6 +331,26 @@ class ProductionService:
             if node_key in n.get("depends", []):
                 self._set(plan_id, k, status="downloaded",
                           artifact_ids=[artifact_id])
+        with self.db.uow() as u:
+            jid = f"{plan_id}:{node_key}"
+            u.conn.execute("UPDATE jobs SET status='succeeded',blocked_reason=NULL,lease_owner=NULL,lease_expires=NULL WHERE id=?", (jid,))
+            remaining = {k for k in self._nodes(plan_id) if k != node_key}
+            repaired = {node_key}
+            while True:
+                children = [k for k in remaining if set(self._node(plan_id,k)["depends"]) & repaired]
+                if not children:
+                    break
+                for key in children:
+                    remaining.remove(key)
+                    repaired.add(key)
+                    child = self._node(plan_id,key)
+                    if child["kind"] == "download":
+                        status = "succeeded"
+                    else:
+                        status = "waiting_dependencies"
+                        self._set(plan_id,key,status="planned",problem="")
+                    u.conn.execute("UPDATE jobs SET status=?,blocked_reason=NULL,lease_owner=NULL,lease_expires=NULL,next_attempt_at=NULL,retry_count=0 WHERE id=? AND status IN ('blocked','failed','awaiting_review','ready','waiting_dependencies')", (status, f"{plan_id}:{key}"))
+            u.events.append(f"plan:{plan_id}", "manual_replacement", {"node": node_key, "artifact": artifact_id, "downstream": sorted(repaired)})
         return {"status": "manual", "artifact_id": artifact_id}
 
     # --------------------------------------------------------- status
@@ -305,6 +362,11 @@ class ProductionService:
     def resume(self, plan_id):
         """Restart view: persisted work states drive remaining jobs —
         downloaded/accepted assets are never regenerated."""
+        if self.scheduler:
+            self.scheduler.resume(self._plan(plan_id)["experiment_id"])
+            self.scheduler.reclaim_expired()
+        if self.executor:
+            self.executor.recover()
         return self.status(plan_id)
 
     # --------------------------------------------------------- helpers

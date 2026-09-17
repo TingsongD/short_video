@@ -1,3 +1,5 @@
+from modules.factory.testing.authority import FixtureEffects
+from modules.factory.execution import Executor
 """F25 — verified Drive delivery.
 
 Intent persisted before transfer; remote verification (parent, name,
@@ -25,7 +27,7 @@ FOLDER = "folder-authorized"
 def env(tmp_path):
     db = Database(tmp_path / "f.db")
     drive = FakeDrive(tmp_path / "remote.json")
-    svc = DeliveryService(db, drive)
+    svc = DeliveryService(db, drive, effects=FixtureEffects(db, Executor(db)))
     final = tmp_path / "exp1-A-hook-r1-30s.mp4"
     final.write_bytes(b"final-bytes" * 1000)
     return db, drive, svc, final, tmp_path

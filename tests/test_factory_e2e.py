@@ -1,3 +1,8 @@
+from modules.factory.testing.authority import FixtureEffects
+from modules.factory.execution import Executor
+from modules.factory.testing.authority import FixtureEffects
+from modules.factory.execution import Executor
+from modules.factory.testing.authority import approve_production
 """F34: failure drills and performance qualification — real
 application services, real local ffmpeg renderer, fake remote
 transports only. J01–J04/J08 journeys plus the deterministic
@@ -101,6 +106,14 @@ def _run_all(svc, limit=400, on_step=None):
     while n < limit:
         out = svc.run_next()
         if out is None:
+            waiting = svc.db.conn.execute("SELECT 1 FROM jobs WHERE status='ready' AND next_attempt_at IS NOT NULL").fetchone()
+            if waiting:
+                from datetime import datetime, timedelta, timezone
+                # Advance only the scheduler's injected test clock; no provider effect is fabricated.
+                future = svc.scheduler.clock() + timedelta(seconds=3)
+                svc.scheduler.clock = lambda: future
+                n += 1
+                continue
             break
         n += 1
         if on_step:
@@ -113,6 +126,7 @@ def _run_plan(tmp_path, payload=None):
         tmp_path, payload=payload)
     svc.plan("plan-1", "exp1", 1, _takes(), "jimeng_canvas",
              "seedance_2.0_fast_vip", [4, 8], now=NOW)
+    approve_production(svc, "plan-1")
     svc.submit("plan-1")
     _run_all(svc)
     return db, sched, prov, adapter, arts, svc
@@ -163,7 +177,7 @@ def test_j01_seed_to_four_outputs(tmp_path):
         diff = sets["a"] ^ sets[v]
         assert len(diff) == 2                      # one slot swapped
     drive = FakeDrive(tmp_path / "drive.json")
-    delivery = DeliveryService(db, drive)
+    delivery = DeliveryService(db, drive, effects=FixtureEffects(db, Executor(db)))
     finals = {}
     for v, ids in variants.items():
         paths = [arts.path_for(aid) for aid in ids]
@@ -209,6 +223,7 @@ def test_j03_crash_restart_no_duplicate_effect(tmp_path):
     db, sched, prov, adapter, arts, svc = _stack(tmp_path)
     svc.plan("plan-1", "exp1", 1, _takes(), "jimeng_canvas",
              "seedance_2.0_fast_vip", [4, 8], now=NOW)
+    approve_production(svc, "plan-1")
     svc.submit("plan-1")
     svc.run_next()                                  # first submit
     ops_before = set(prov.state.doc["operations"])
@@ -234,7 +249,7 @@ def test_j03_upload_lost_ack_reconciles(tmp_path):
     src = arts.path_for(aid)
     drive = FakeDrive(tmp_path / "drive.json")
     drive.doc["lost_next"] = True                   # next ack is lost
-    delivery = DeliveryService(db, drive)
+    delivery = DeliveryService(db, drive, effects=FixtureEffects(db, Executor(db)))
     out = delivery.deliver("del-1", str(src), "f.mp4", "folder-1",
                            now=NOW)
     # restart — new service, same remote world
@@ -282,6 +297,7 @@ def test_j04_both_provider_routes(tmp_path):
               _takes(model="gemini-omni-1.1-flash-preview"),
               "google_vertex", "gemini-omni-1.1-flash-preview",
               [4, 8], now=NOW)
+    approve_production(svc2, "plan-v")
     svc2.submit("plan-v")
     _run_all(svc2)
     vtotal = json.loads(db2.uow().records.get(
@@ -298,6 +314,7 @@ def test_j08_restore_fresh_root_gate_then_reconcile(tmp_path):
     db, sched, prov, adapter, arts, svc = _stack(tmp_path)
     svc.plan("plan-1", "exp1", 1, _takes(), "jimeng_canvas",
              "seedance_2.0_fast_vip", [4, 8], now=NOW)
+    approve_production(svc, "plan-1")
     svc.submit("plan-1")
     svc.run_next()                                  # live remote op
     bk = tmp_path / "bk"
@@ -318,7 +335,7 @@ def test_publication_lost_ack_one_post(tmp_path):
     db = Database(tmp_path / "f.db")
     remote = FakePublisher(faults={"lost_ack"})
     svc = PublishingService(
-        db, accounts={"youtube:acct-main": "acct-main"},
+        db, effects=FixtureEffects(db, Executor(db)), accounts={"youtube:acct-main": "acct-main"},
         publisher=UploadPostPublisher(
             api_key="k", user="acct-main",
             transport=remote.transport))
@@ -359,6 +376,7 @@ def test_jimeng_capacity_is_global(tmp_path):
     db, sched, prov, adapter, arts, svc = _stack(tmp_path)
     svc.plan("plan-1", "exp1", 1, _takes(), "jimeng_canvas",
              "seedance_2.0_fast_vip", [4, 8], now=NOW)
+    approve_production(svc, "plan-1")
     svc.submit("plan-1")
     peak = [0]
 

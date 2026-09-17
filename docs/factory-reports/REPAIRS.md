@@ -10,7 +10,7 @@ All checks use offline providers; no new live spend or publication scope exists.
 | --- | --- | --- |
 | S0 containment | passed (offline checkpoint) | 856 suite tests passed in 115.35s; 5 focused safety tests passed (the final regression was added after full-suite collection); Approval clock regression reproduced then fixed; structured event redaction; unavailable handlers and empty reviews block; live transport policy defaults offline |
 | S1 state/restore | passed | 863 tests pass (117.24s); atomic v7→v8 migration fault/retry; restored media/ledger checks; normal CLI shares restored database |
-| S2 effects/budgets | planned | |
+| S2 effects/budgets | shared-boundary checkpoint passed; adapter/application qualification remains S3/S5 | 875 tests pass (119.62s); 10 effect regressions; scoped atomic reservations/attempts/outbox/capacity; API uncertain retries blocked; per-experiment pause and collection; native provider enforcement verified with adapters in S3 |
 | S3 adapters | planned | |
 | S4 media/QC | planned | |
 | S5 application | planned | |
@@ -26,12 +26,12 @@ separate from engineering repairs; historical tests do not sign either gate.
 | Finding | Engineering status | Validation |
 | --- | --- | --- |
 | R01 | open | |
-| R02 | open | |
-| R03 | open | |
+| R02 | in_progress | Shared effect authority/reservation boundary connected to generation, speech, music, research, analysis, delivery and publication. Native transports and real bootstrap require S3/S5 qualification. |
+| R03 | fixed | Edits invalidate draft quotes/authority; dispatch checks immutable bound record and experiment revision. |
 | R04 | open | |
-| R05 | open | |
-| R06 | open | |
-| R07 | open | |
+| R05 | fixed | Duplicate and restarted submissions reuse the original attempt; unknown acknowledgements never dispatch again. |
+| R06 | fixed | Remote holds count independently of leases; five-operation regression, configurable capacity and local heartbeat. |
+| R07 | in_progress | Per-experiment pause, collection queue, bounded retries, terminal failures and manual replacement transitions repaired; application recovery journey pending S5/S8. |
 | R08 | open | |
 | R09 | open | |
 | R10 | open | |
@@ -41,7 +41,7 @@ separate from engineering repairs; historical tests do not sign either gate.
 | R14 | open | |
 | R15 | open | |
 | R16 | open | |
-| R17 | open | |
+| R17 | in_progress | Repeated delivery reconciles, expected size is persisted, and uncertain upload never repeats automatically; artifact acceptance and native Drive qualification pending S3/S5. |
 | R18 | open | |
 | R19 | open | |
 | R20 | open | |
@@ -49,11 +49,11 @@ separate from engineering repairs; historical tests do not sign either gate.
 | R22 | open | |
 | R23 | open | |
 | R24 | open | |
-| R25 | in_progress | Self-contained verified backup and persistent restore hold fixed; S2 must enforce hold at dispatch |
+| R25 | in_progress | Restore hold now enforced before reservation and dispatch; operator activation and full restore journey remain S5/S8. |
 | R26 | open | |
 | R27 | open | |
 | R28 | open | |
-| R29 | open | |
+| R29 | in_progress | API ownership recorded before action; uncertain retries blocked; fingerprint includes expected revision and exact import SHA256. Atomic queued domain-command response remains S5. |
 | R30 | open | |
 | R31 | open | |
 | R32 | open | |
@@ -65,6 +65,23 @@ separate from engineering repairs; historical tests do not sign either gate.
 | R38 | in_progress | Nested credentials redacted before durable events and replay; live transport/API audit remains |
 | R39 | open | |
 | R40 | fixed | Approval grant/check share injected time; 7 approval tests pass |
-| R41 | open | |
+| R41 | in_progress | Pinned model enforced; live routing requires qualified catalog and active authority; unresolved or successfully completed originals cannot trigger paid fallback. Adapter qualification remains S3. |
 | R42 | open | |
 | R43 | open | |
+
+## S2 implementation notes
+
+Parent implementation revision: `006f274`. The S2 commit contains the code,
+regressions and this checkpoint. Tests use explicit fixture operator approvals
+through `EffectService.approve`, not an exemption for fake paid providers.
+Requests bind account, provider/model, full settings, immutable record digest,
+experiment revision, dated quote and expiry. Applicable aggregate/provider and
+authority caps reserve together. Real overcharges are recorded and halt spending.
+
+The generic legacy API draft surface is retained only until S5 replaces it. It
+cannot mint the scoped authority required by the effect executor. This checkpoint
+does not qualify native adapter protocols, integrated UI delivery, a real provider
+or the full factory. R02/R07/R25/R29/R41 remain open where those journeys are needed.
+
+Frozen contracts and the legacy ledger match the starting hashes. The pre-existing
+`LONGFORM_PLAN.md` deletion and dashboard build-cache change remain unstaged.

@@ -1,3 +1,4 @@
+from modules.factory.testing.authority import approve_production
 """F21 manual scenarios: canonical nine-job graph, branch isolation,
 restart resume, duration-limit split/manual coverage."""
 import json
@@ -67,6 +68,7 @@ def f21_m01(ctx: CaseContext):
     db, sched, prov, arts, svc = _stack(ctx, "m01")
     out = svc.plan("plan-1", "exp1", 1, _takes(), "jimeng_canvas",
                    "seedance_2.0_fast_vip", [4, 8], now=NOW)
+    approve_production(svc, "plan-1")
     svc.submit("plan-1")
     _run_all(svc)
     stats = out["plan"]["stats"]
@@ -95,6 +97,7 @@ def f21_m02(ctx: CaseContext):
     db, sched, prov, arts, svc = _stack(ctx, "m02")
     svc.plan("plan-1", "exp1", 1, _takes(), "jimeng_canvas",
              "seedance_2.0_fast_vip", [4, 8], now=NOW)
+    approve_production(svc, "plan-1")
     svc.submit("plan-1")
     _run_all(svc)
     ckey = next(k for k, n in svc._nodes("plan-1").items()
@@ -124,6 +127,7 @@ def f21_m03(ctx: CaseContext):
     db, sched, prov, arts, svc = _stack(ctx, "m03")
     svc.plan("plan-1", "exp1", 1, _takes(), "jimeng_canvas",
              "seedance_2.0_fast_vip", [4, 8], now=NOW)
+    approve_production(svc, "plan-1")
     svc.submit("plan-1")
     for _ in range(12):
         svc.run_next()                 # partial progress, then "crash"
@@ -182,6 +186,7 @@ def f21_m04(ctx: CaseContext):
     res = svc.replace_manual("plan-1", manual, oka.id)
     ctx.check("manual_accepted", res["status"] == "manual"
               and res["artifact_id"] == oka.id)
+    approve_production(svc, "plan-1")
     svc.submit("plan-1")
     _run_all(svc)
     ctx.check("no_underlength_submit",

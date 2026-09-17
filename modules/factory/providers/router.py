@@ -26,18 +26,25 @@ MIN_SUPPORT = "observed"
 
 
 class ProviderRouter:
-    def __init__(self, db, adapters, catalog=None, executor=None):
+    def __init__(self, db, adapters, catalog=None, executor=None, live=False):
         self.db = db
+        self.live = live
         self.adapters = adapters
         self.catalog = catalog or CapabilityCatalog(db)
         self.executor = executor
 
     # --------------------------------------------------------- route
 
-    def route(self, request, policy, authorization=None, now=None):
+    def route(self, request, policy, authorization=None, now=None, original_attempt_id=None):
         """→ {"provider", "model", "duration_s", "price", "reason",
         "rejected": {provider: [why_not...]}} or raise no_route."""
         now = now or utcnow()
+        if original_attempt_id and self.fallback_blocked_reason(original_attempt_id):
+            raise ContractError("original_unresolved", "attempt_id", original_attempt_id)
+        if self.live and authorization is None:
+            raise ContractError("authority_required", "routing")
+        if authorization and (authorization.status != "authorized" or not authorization.valid_until or authorization.valid_until <= now):
+            raise ContractError("authorization_expired_or_inactive", "routing")
         candidates = self._candidates(policy)
         rejected = {}
         for provider in candidates:
@@ -77,9 +84,12 @@ class ProviderRouter:
             models = [request.model]
         else:
             models = list(getattr(adapter, "models", []) or [])
-        if request.model and request.model not in models:
-            return {"eligible": False,
-                    "why_not": [f"model_locked_to:{request.model}"]}
+        if request.model:
+            if request.model not in models:
+                return {"eligible": False, "why_not": [f"model_locked_to:{request.model}"]}
+            models = [request.model]
+        if authorization:
+            models = [m for m in models if m in (authorization.allowed_models or {}).get(provider, [])]
         if authorization and authorization.allowed_providers and \
                 provider not in authorization.allowed_providers:
             return {"eligible": False,
@@ -116,7 +126,7 @@ class ProviderRouter:
             why.append("stale_capability_snapshot")
             return {"eligible": False, "why_not": why}
         snap = entry["snapshot"]
-        if snap.support not in ("observed", "qualified"):
+        if snap.support not in (("qualified",) if self.live else ("observed", "qualified")):
             why.append(f"unqualified_support:{snap.support}")
             return {"eligible": False, "why_not": why}
         caps = snap.capabilities or adapter.capabilities(model)
@@ -130,7 +140,9 @@ class ProviderRouter:
             price = adapter.price(request, duration, model=model)
             if authorization:
                 cap = (authorization.caps or {}).get(price.unit)
-                if cap is not None and price.amount > cap:
+                if cap is None:
+                    why.append(f"model:{model}:no_authorized_cap:{price.unit}")
+                elif price.amount > cap:
                     why.append(f"model:{model}:exceeds_cap:{price.unit}")
         if why:
             return {"eligible": False, "why_not": why}

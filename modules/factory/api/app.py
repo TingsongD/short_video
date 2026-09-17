@@ -82,7 +82,7 @@ def create_app(services, session_token=None):
         if not key:
             raise ContractError("missing_idempotency_key",
                                 "Idempotency-Key", "required")
-        return idem.run(key, request.method, request.url.path, body, fn)
+        return idem.run(key, request.method, request.url.path, {"payload": body, "expected_revision": request.headers.get("x-expected-revision")}, fn)
 
     def expected_rev(request: Request):
         raw = request.headers.get("x-expected-revision")
@@ -100,7 +100,7 @@ def create_app(services, session_token=None):
         raw = await request.body()
         name = request.headers.get("x-filename", "upload.bin")
         status, resp = mutation(
-            request, {"filename": name, "bytes": len(raw)},
+            request, {"filename": name, "bytes": len(raw), "sha256": __import__("hashlib").sha256(raw).hexdigest()},
             lambda: (201, {"artifact":
                            services.import_file(name, raw)}))
         return JSONResponse(resp, status_code=status)

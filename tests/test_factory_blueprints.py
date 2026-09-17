@@ -1,3 +1,4 @@
+from modules.factory.testing.authority import FixtureEffects
 """F12 — reference analysis and blueprint review."""
 import hashlib
 import json
@@ -52,7 +53,7 @@ def env(tmp_path):
                             IdFactory(tmp_path / "ids.json"),
                             FakeClock(), scripts={sha: script})
     ex = Executor(db, analyzer, FakeClock())
-    svc = AnalysisService(db, reg, arts, ex, analyzer)
+    svc = AnalysisService(db, reg, arts, ex, analyzer, effects=FixtureEffects(db, ex))
     seed, _ = reg.submit_url("https://www.youtube.com/watch?v=core30s0000")
     art = arts.intake_file(src, provenance="seed_source",
                            source_key="core-30s", requested_kind="video")

@@ -18,6 +18,14 @@ S0 begins with zero external effects. Existing dirty files, frozen contracts
 and legacy financial state are preserved. Repair status/evidence is recorded
 in `docs/factory-reports/REPAIRS.md`; prior entries remain historical.
 
+Repair checkpoints now include S0 (`6c0f33a`), S1 (`006f274`), and the S2 shared
+execution boundary (875 offline tests, 119.62s). S2 adds immutable approval
+bindings, atomic effect preparation, persistent remote capacity, conservative
+recovery and accurate charge variance accounting. Updated component fixtures
+explicitly approve fake effects through the same boundary. Native adapter and
+integrated application qualification are still pending; the factory is not yet
+engineering-complete or production-qualified.
+
 ---
 
 ## 2026-09-16 → 2026-09-17 — Viral Video Factory build: F00–F34 (35 commits)

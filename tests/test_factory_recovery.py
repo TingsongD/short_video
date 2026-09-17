@@ -181,8 +181,8 @@ class TestCancellationAndFallback:
         assert e.value.code == "resolution_needs_evidence"
         ex.resolve_unknown(aid, "provider console shows op + charge",
                            "confirmed_charged")
-        assert ex._attempt(aid)["status"] == "succeeded"
-        assert ex.fallback_allowed(aid)
+        assert ex._attempt(aid)["status"] == "unknown"
+        assert not ex.fallback_allowed(aid)
 
 
 class TestRetryPolicy:

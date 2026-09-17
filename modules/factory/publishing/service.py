@@ -38,11 +38,14 @@ def _key(publication_id, final_sha256, platform, account_id):
 
 class PublishingService:
     def __init__(self, db, publisher=None, accounts=None,
-                 max_per_day=2):
+                 max_per_day=2, effects=None, executor=None):
         """accounts: {"platform:account_id": provider_user} — the known
         valid destinations. Unknown accounts are refused for both
         lanes."""
+        from ..execution import Executor
         self.db = db
+        self.effects = effects
+        self.executor = executor or Executor(db)
         self.publisher = publisher
         self.accounts = dict(accounts or {})
         self.max_per_day = max_per_day
@@ -115,9 +118,23 @@ class PublishingService:
             raise ContractError("no_publisher", "platform",
                                 p["platform"])
         self._check_authorization(p, now)
-        self._check_cadence(p, now)
+        if p["status"] in ("public", "draft", "scheduled"):
+            return {"status": p["status"], "request_id": p.get("request_id", "")}
+        if p.get("attempt_id"):
+            return self.reconcile(publication_id, now=now)
+        if self.effects is None:
+            raise ContractError("authority_required", "publication")
+        request = {"publication_id": publication_id, "final_sha256": p["final_sha256"],
+                   "platform": p["platform"], "account_id": p["account_id"],
+                   "metadata": p.get("metadata") or {}, "visibility": p.get("visibility"),
+                   "scheduled_at": p.get("scheduled_at"), "action": "publish"}
+        with self.db.uow():
+            self._check_cadence(p, now)
+            aid = self.effects(request, f"publish:{publication_id}", "publication", "upload_post", "upload")
+            self.executor.require_request(aid, request)
+            self._set(publication_id, attempt_id=aid, status="uploading", dispatch_started_at=now)
         meta = p.get("metadata") or {}
-        try:
+        def upload():
             resp = self.publisher.upload(
                 video_path=video_path, video_url=p.get("media_url", ""),
                 title=meta.get("title", ""),
@@ -130,6 +147,9 @@ class PublishingService:
                 idempotency_key=p["idempotency_key"],
                 extra_fields={"hashtags": ",".join(
                     meta.get("hashtags", []))})
+            return dict(resp, operation_id=resp["request_id"])
+        try:
+            resp = self.executor.submit(aid, upload)
         except PublishTransportError as e:
             if e.status_code in (400, 401, 403, 409):
                 self._set(publication_id, status="failed",
@@ -174,6 +194,8 @@ class PublishingService:
         provider-confirmed public state stamps published_at."""
         now = now or _now()
         p = self._get(publication_id)
+        if p["status"] == "requested" and not p.get("attempt_id") and not p.get("request_id"):
+            return {"status": "requested", "action": "safe_to_resubmit"}
         try:
             if p.get("request_id"):
                 resp = self.publisher.status(p["request_id"])
@@ -181,10 +203,8 @@ class PublishingService:
                 found = self.publisher.find_by_idempotency_key(
                     p["idempotency_key"])
                 if found is None:
-                    self._set(publication_id, status="requested",
-                              last_error="no_remote_effect")
-                    return {"status": "requested",
-                            "action": "safe_to_resubmit"}
+                    self._set(publication_id, status="unknown", last_error="no_remote_trace")
+                    return {"status": "unknown", "action": "reconcile_or_review_evidence"}
                 resp = found
         except PublishTransportError:
             self._set(publication_id, status="unknown")
@@ -284,13 +304,25 @@ class PublishingService:
 
     # ------------------------------------------------------ actions --
 
+    def _post_action(self, p, action, payload, call):
+        if self.effects is None:
+            raise ContractError("authority_required", "publication_action")
+        request = {"action": action, "publication_id": p["id"], "remote_post_id": p["remote_post_id"],
+                   "account_id": p["account_id"], "platform": p["platform"], "payload": payload}
+        aid = self.effects(request, f"{action}:{p['id']}", "publication", "upload_post", action)
+        self.executor.require_request(aid, request)
+        def send():
+            call()
+            return {"operation_id": p["remote_post_id"]}
+        return self.executor.submit(aid, send)
+
     def update_metadata(self, publication_id, metadata, now=""):
         """Explicit live-post metadata change — separate from any
         publish/retry path."""
         p = self._get(publication_id)
         if not p or not p.get("remote_post_id"):
             raise ContractError("no_remote_post", "id", publication_id)
-        self.publisher.update_post(p["remote_post_id"], metadata)
+        self._post_action(p, "update_metadata", metadata, lambda: self.publisher.update_post(p["remote_post_id"], metadata))
         self._set(publication_id, metadata={
             **(p.get("metadata") or {}), **metadata})
         self._event(publication_id, "metadata_updated",
@@ -304,7 +336,7 @@ class PublishingService:
         p = self._get(publication_id)
         if not p or not p.get("remote_post_id"):
             raise ContractError("no_remote_post", "id", publication_id)
-        self.publisher.delete_post(p["remote_post_id"])
+        self._post_action(p, "delete", {}, lambda: self.publisher.delete_post(p["remote_post_id"]))
         self._set(publication_id, deleted_at=now)
         self._event(publication_id, "post_deleted", {})
         return {"status": "deleted", "deleted_at": now}
@@ -362,9 +394,9 @@ class PublishingService:
             if other["id"] == p["id"] or \
                     other["platform"] != p["platform"] or \
                     other["account_id"] != p["account_id"] or \
-                    other["status"] not in ("scheduled", "public"):
+                    other["status"] not in ("scheduled", "public", "uploading", "processing", "unknown"):
                 continue
-            at = other.get("published_at") or other.get("scheduled_at")
+            at = other.get("published_at") or other.get("scheduled_at") or other.get("dispatch_started_at")
             if not at:
                 continue
             try:

@@ -1,3 +1,4 @@
+from modules.factory.testing.authority import approve_operation
 """F20: music beds + shared mix — exact durations, loop joins,
 measured levels, clip policy, frozen profiles, unchanged-region
 evidence, generation recovery, import provenance."""
@@ -132,7 +133,8 @@ def test_generate_and_recover(stack):
     gen = FakeMusicGen(tmp / "mus.json")
     music.generator = gen
     music.executor = Executor(db, provider=gen)
-    out = music.generate("bed-g", "job:mus", {"energy": "high"})
+    aid = approve_operation(db, music.executor, {"kind":"music", "brief":{"energy":"high"}}, "job:mus", kind="music", provider="google_music", model="fake-music", unit="usd_micros")
+    out = music.generate("bed-g", "job:mus", {"energy": "high"}, attempt_id=aid)
     music.collect("bed-g", out["operation"]["operation_id"], "fake-music-v1", now=NOW)
     got = music.collect("bed-g", out["operation"]["operation_id"],
                         "fake-music-v1", now=NOW)
@@ -146,8 +148,9 @@ def test_generation_route_auth_distinct(stack):
     gen = FakeMusicGen(tmp / "mus.json", authed=False)
     music.generator = gen
     music.executor = Executor(db, provider=gen)
+    aid = approve_operation(db, music.executor, {"kind":"music", "brief":{}}, "job:mus", kind="music", provider="google_music", model="fake-music", unit="usd_micros")
     with pytest.raises(ProviderError, match="route_auth_required"):
-        music.generate("bed-g", "job:mus", {})
+        music.generate("bed-g", "job:mus", {}, attempt_id=aid)
 
 
 def test_generate_lost_ack_recovers(stack):
@@ -158,8 +161,7 @@ def test_generate_lost_ack_recovers(stack):
     gen.lose_next_submit()
     import json, hashlib
     req = {"kind": "music", "brief": {"energy": "high"}}
-    att = music.executor.prepare("job:m", 1, req, kind="music_generation",
-                                 provider="fake_music")
+    att = approve_operation(db, music.executor, req, "job:m", kind="music", provider="google_music", model="fake-music", unit="usd_micros")
     with pytest.raises(ProviderError):
         music.executor.submit(att, lambda: gen.submit(req))
     assert len(gen.doc["ops"]) == 1

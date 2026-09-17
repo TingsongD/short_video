@@ -1,3 +1,4 @@
+from modules.factory.testing.authority import approve_operation
 """F20 manual scenarios: exact-duration beds, clip/missing QC, frozen
 mix confinement, generation recovery vs imported provenance."""
 import hashlib
@@ -143,9 +144,7 @@ def f20_m04(ctx: CaseContext):
     music.executor = Executor(db, provider=gen)
     gen.lose_next_submit()
     req = {"kind": "music", "brief": {"energy": "high"}}
-    att = music.executor.prepare("job:m04", 1, req,
-                                 kind="music_generation",
-                                 provider="fake_music")
+    att = approve_operation(db, music.executor, req, "job:m04", kind="music", provider="google_music", model="fake-music", unit="usd_micros")
     try:
         music.executor.submit(att, lambda: gen.submit(req))
         ctx.check("interrupt_named", False)

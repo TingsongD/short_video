@@ -1,3 +1,4 @@
+from modules.factory.testing.authority import approve_operation
 """F18 manual scenarios: pack assembly + acceptance, defect rejection
 + dispatch gate, generated-reference interrupt recovery, presenter
 replacement invalidation."""
@@ -139,9 +140,7 @@ def f18_m03(ctx: CaseContext):
     import hashlib as h
     rh = h.sha256(json.dumps(req, sort_keys=True).encode()).hexdigest()
     runner.lose_next_run()
-    att = executor.prepare("job:m03", 1, req,
-                           kind="reference_generation",
-                           provider="jimeng_canvas")
+    att = approve_operation(db, executor, req, "job:m03", kind="generation", provider="jimeng_canvas", model="seedream_4.0", unit="jimeng_credits", amount=30)
     try:
         executor.submit(att, lambda: adapter.submit(req))
         ctx.check("interrupt_named", False)

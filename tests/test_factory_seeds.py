@@ -1,3 +1,4 @@
+from modules.factory.testing.authority import FixtureEffects
 """F09 — seed registry and source acquisition."""
 import json
 
@@ -35,7 +36,7 @@ def env(tmp_path):
     arts = ArtifactStore(tmp_path / "artifacts", db=db)
     src = FakeSeedSource("vo", tmp_path / "remote", ids, clock,
                          media_dir=media_dir)
-    sched = Scheduler(db, worker_id="w-test")
+    sched = Scheduler(db, worker_id="w-test", clock=clock.now)
     ex = Executor(db, src, clock)
     reg = SeedRegistry(db, artifacts=arts)
     svc = AcquisitionService(db, sched, ex, reg, arts, src,
@@ -199,6 +200,8 @@ class TestAcquisition:
         attempts = env["db"].conn.execute(
             "SELECT * FROM attempts ORDER BY attempt_seq").fetchall()
         assert len(attempts) == 2               # meta + one media attempt
+        assert env["svc"].run_next() is None    # respects bounded backoff
+        env["clock"].advance(seconds=3)
         env["svc"].run_next()                   # resumes SAME attempt
         got = env["reg"].get(seed.id)
         assert got.evidence_status == "media_ready"
@@ -300,6 +303,7 @@ class TestBudget:
         budget.create_budget("b-research", "viral_outliers_credits", "provider",
                              scope_key="viral_outliers", cap=10)
         env["svc"].budget = budget
+        env["svc"].effects = FixtureEffects(env["db"], env["ex"])
         env["svc"].costs = {"metadata": {"lines": [("b-research", 1)]}}
         seed = _seed(env, media="missing", stats={"views": 7})
         env["svc"].plan(seed.id)
@@ -309,11 +313,12 @@ class TestBudget:
         assert rows[0]["status"] == "settled"
         assert env["src"].counters()["submit"] == 1
 
-    def test_failed_lookup_releases_reservation(self, env):
+    def test_unclassified_failed_lookup_retains_reservation(self, env):
         budget = BudgetService(env["db"])
         budget.create_budget("b-research", "viral_outliers_credits", "provider",
                              scope_key="viral_outliers", cap=10)
         env["svc"].budget = budget
+        env["svc"].effects = FixtureEffects(env["db"], env["ex"])
         env["svc"].costs = {"metadata": {"lines": [("b-research", 1)]}}
         seed, _ = env["reg"].submit_url(YT)     # post not registered
         env["svc"].plan(seed.id)
@@ -321,4 +326,4 @@ class TestBudget:
             env["svc"].run_next()
         rows = env["db"].conn.execute(
             "SELECT status FROM reservations").fetchall()
-        assert rows[0]["status"] == "released"
+        assert rows[0]["status"] == "ambiguous"

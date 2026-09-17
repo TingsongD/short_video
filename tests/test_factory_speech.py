@@ -1,3 +1,4 @@
+from modules.factory.testing.authority import approve_operation
 """F19: speech — normalization, identity cache, TTS recovery,
 alignment, fit limits, captions, variant reuse."""
 import pytest
@@ -33,7 +34,10 @@ def stack(tmp_path):
 def _voiced(speech, seg_id="seg-1", text="Stop scrolling, this is it.",
             variant="A", iv=IV):
     speech.plan_segment(seg_id, variant, text, VOICE, iv, now=NOW)
-    out = speech.synthesize(seg_id, f"job:{seg_id}")
+    seg = speech.get(seg_id)
+    req = {"text": seg["text"], "voice_id": VOICE["voice_id"], "model": VOICE["model"], "language": "en", "settings": VOICE["settings"]}
+    aid = approve_operation(speech.db, speech.executor, req, f"job:{seg_id}")
+    out = speech.synthesize(seg_id, f"job:{seg_id}", attempt_id=aid)
     speech.collect(seg_id, out["operation"]["operation_id"])
     speech.collect(seg_id, out["operation"]["operation_id"])
     return out
@@ -145,8 +149,7 @@ def test_lost_ack_recovers_same_op(stack):
     import json, hashlib
     rh = hashlib.sha256(json.dumps(req, sort_keys=True).encode()
                         ).hexdigest()
-    att = ex.prepare("job:s", 1, req, kind="tts_synthesis",
-                     provider="elevenlabs")
+    att = approve_operation(speech.db, ex, req, "job:s")
     with pytest.raises(ProviderError):
         ex.submit(att, lambda: tts.submit(req))
     assert len(tts.doc["ops"]) == 1        # remote accepted anyway

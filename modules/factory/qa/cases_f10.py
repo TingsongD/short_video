@@ -1,3 +1,4 @@
+from modules.factory.testing.authority import FixtureEffects
 """F10 manual scenarios: cohort math evidence, boundary modes, null
 handling, credit-exhausted pagination."""
 import json
@@ -27,7 +28,7 @@ def _stack(ctx, name, credits=0):
                         ctx.workspace.ids, ctx.clock, credits=credits)
     ex = Executor(db, src, ctx.clock)
     reg = SeedRegistry(db)
-    svc = DiscoveryService(db, reg, ex, src)
+    svc = DiscoveryService(db, reg, ex, src, effects=FixtureEffects(db, ex))
     return db, src, reg, svc
 
 
@@ -139,8 +140,8 @@ def f10_m04(ctx: CaseContext):
     ctx.check("no_topup", src.credits() == 0
               and src.counters()["charges"] == 1)
     # restart: cached page not re-charged
-    svc2 = DiscoveryService(db, reg,
-                            Executor(db, src, ctx.clock), src)
+    ex2 = Executor(db, src, ctx.clock)
+    svc2 = DiscoveryService(db, reg, ex2, src, effects=FixtureEffects(db, ex2))
     run2 = svc2.scan(["haul"], pages=2, run_id="drun-m04b")
     ctx.check("cache_no_recharge",
               src.counters()["charges"] == 1

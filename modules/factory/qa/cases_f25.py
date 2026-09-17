@@ -1,3 +1,5 @@
+from modules.factory.testing.authority import FixtureEffects
+from modules.factory.execution import Executor
 """F25 manual scenarios: verified receipt + reuse, lost-ack reconcile,
 conflict/checksum rejection, and the live authorized upload gate."""
 import json
@@ -13,7 +15,7 @@ FOLDER = "folder-authorized"
 def _stack(ctx, name):
     db = Database(ctx.run_dir / f"{name}.db")
     drive = FakeDrive(ctx.run_dir / f"{name}-remote.json")
-    svc = DeliveryService(db, drive)
+    svc = DeliveryService(db, drive, effects=FixtureEffects(db, Executor(db)))
     final = ctx.run_dir / f"{name}.mp4"
     final.write_bytes(f"{name}-bytes".encode() * 500)
     name_final = delivery_name("exp1", "A", "hook", 1, 30)

@@ -1,3 +1,4 @@
+from modules.factory.testing.authority import approve_operation
 """F15 — shared generation contract and provider routing."""
 import pytest
 
@@ -152,7 +153,8 @@ class TestAuthorization:
             schema_version="authorization.v1", id="auth-1",
             created_at=NOW, scope_hash="h",
             allowed_providers=["google_vertex"],
-            caps={"usd_micros": 50_000}, status="authorized")
+            caps={"usd_micros": 50_000}, status="authorized",
+            allowed_models={"google_vertex": ["omni-1"]}, valid_until="2026-10-01T00:00:00Z")
         with pytest.raises(ContractError) as e:
             env["router"].route(_req(), ProviderPolicy(choice="vertex"),
                                 authorization=auth, now=NOW)
@@ -190,9 +192,7 @@ class TestFallback:
         ex = Executor(env["db"], env["jp"], FakeClock())
         router = ProviderRouter(env["db"], env["adapters"],
                                 env["catalog"], executor=ex)
-        att = ex.prepare("job:g1", 1, {"prompt": "x"},
-                         kind="generation_submit",
-                         provider="jimeng_canvas")
+        att = approve_operation(env["db"], ex, {"prompt": "x"}, "job:g1", kind="generation", provider="jimeng_canvas", model="fast", unit="jimeng_credits")
         ex.submit(att)
         assert router.fallback_blocked_reason(att) == \
             "original_unresolved"
@@ -202,10 +202,11 @@ class TestFallback:
         ex = Executor(env["db"], env["jp"], FakeClock())
         router = ProviderRouter(env["db"], env["adapters"],
                                 env["catalog"], executor=ex)
-        att = ex.prepare("job:g2", 1, {"prompt": "x"},
-                         kind="generation_submit",
-                         provider="jimeng_canvas")
+        att = approve_operation(env["db"], ex, {"prompt": "x"}, "job:g2", kind="generation", provider="jimeng_canvas", model="fast", unit="jimeng_credits")
         op = ex.submit(att)
         ex.request_cancel(att)
-        ex.poll(att)                     # → cancelled terminal
+        ex.poll(att)                     # cancellation alone does not settle charge
+        assert router.fallback_blocked_reason(att) == "original_unresolved"
+        from modules.factory.execution.effects import EffectService
+        EffectService(env["db"]).settle(att, 0, "native_quote", "verified no charge")
         assert router.fallback_blocked_reason(att) is None

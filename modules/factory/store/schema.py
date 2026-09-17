@@ -1,7 +1,7 @@
 """Ordered migrations. Every DB carries meta.schema_version; an older
 binary refuses a newer database rather than reinterpreting it."""
 
-CURRENT_VERSION = 8
+CURRENT_VERSION = 9
 
 MIGRATIONS = [
     (1, """
@@ -222,5 +222,18 @@ WHERE content_hash IS NOT NULL;
 UPDATE records SET revision=COALESCE(json_extract(body,'$.experiment_revision'),1),
 body=json_set(body,'$.revision',COALESCE(json_extract(body,'$.experiment_revision'),1))
 WHERE kind='variantplan' AND revision=0;
+"""),
+    (9, """
+CREATE TABLE effect_bindings (
+ attempt_id TEXT PRIMARY KEY REFERENCES attempts(id), authorization_id TEXT NOT NULL,
+ operation_key TEXT NOT NULL, price_id TEXT, worker_id TEXT NOT NULL,
+ fencing INTEGER NOT NULL, UNIQUE(authorization_id,operation_key)
+);
+CREATE TABLE remote_holds (
+ attempt_id TEXT PRIMARY KEY REFERENCES attempts(id), job_id TEXT NOT NULL,
+ capacity TEXT NOT NULL, created_at TEXT NOT NULL
+);
+ALTER TABLE jobs ADD COLUMN next_attempt_at TEXT;
+ALTER TABLE jobs ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0;
 """),
 ]

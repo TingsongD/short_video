@@ -33,8 +33,11 @@ def _now():
 
 
 class DeliveryService:
-    def __init__(self, db, drive, artifacts=None):
+    def __init__(self, db, drive, artifacts=None, effects=None, executor=None):
+        from ..execution import Executor
         self.db = db
+        self.effects = effects
+        self.executor = executor or Executor(db)
         self.drive = drive
         self.artifacts = artifacts
 
@@ -48,6 +51,11 @@ class DeliveryService:
         sha = _sha256(final_path)
         md5 = _md5(final_path)
         size = Path(final_path).stat().st_size
+        existing = self._get(delivery_id)
+        if existing:
+            if existing["file_sha256"] != sha or existing["parent_folder_id"] != folder_id or existing.get("delivery_name") != name:
+                raise ContractError("delivery_identity_conflict", "delivery_id", delivery_id)
+            return self.reconcile(delivery_id, now=now)
         d = Delivery(schema_version="delivery.v1", id=delivery_id,
                      created_at=now, file_sha256=sha,
                      parent_folder_id=folder_id, status="pending",
@@ -56,7 +64,7 @@ class DeliveryService:
         d.validate_or_raise()
         self._put(d)
         self._set(delivery_id, remote_md5=md5, drive_link="",
-                  delivery_name=name)
+                  delivery_name=name, expected_size=size, source_path=str(Path(final_path).resolve()))
         try:
             remote = self._find(folder_id, name)
         except Exception:
@@ -73,7 +81,7 @@ class DeliveryService:
                     "detail": "same name, different content — "
                               "not proof of success, not overwritten"}
         try:
-            up = self.drive.upload(folder_id, final_path, name)
+            up = self._upload(delivery_id, final_path, folder_id, name)
             self._set(delivery_id, status="uploaded",
                       drive_file_id=up["id"])
         except Exception:
@@ -85,6 +93,21 @@ class DeliveryService:
             return self.reconcile(delivery_id, now=now)
         return self._verify(delivery_id, up["id"], name, folder_id,
                             size, md5, now)
+
+    def _upload(self, delivery_id, final_path, folder_id, name):
+        if self.effects is None:
+            raise ContractError("authority_required", "delivery")
+        d = self._get(delivery_id)
+        request = {"artifact_sha256": d["file_sha256"], "folder_id": folder_id,
+                   "name": name, "size": d["expected_size"], "md5": d["remote_md5"]}
+        aid = self.effects(request, f"delivery:{delivery_id}", "delivery", "drive", "files")
+        self.executor.require_request(aid, request)
+        self._set(delivery_id, attempt_id=aid)
+        def upload():
+            out = self.drive.upload(folder_id, final_path, name)
+            return dict(out, operation_id=out["id"])
+        op = self.executor.submit(aid, upload)
+        return {"id": op["operation_id"]}
 
     def _find(self, folder_id, name):
         for f in self.drive.list_files(folder_id):
@@ -100,12 +123,12 @@ class DeliveryService:
         if st is None:
             problems.append("stat_unavailable")
         else:
-            if st.get("parent") and st["parent"] != folder_id:
-                problems.append(f"wrong_parent:{st['parent']}")
-            if st.get("name") and st["name"] != name:
-                problems.append(f"wrong_name:{st['name']}")
-            if st.get("size") and int(st["size"]) != size:
-                problems.append(f"size_mismatch:{st['size']}!={size}")
+            if st.get("parent") != folder_id:
+                problems.append(f"wrong_parent:{st.get('parent')}")
+            if st.get("name") != name:
+                problems.append(f"wrong_name:{st.get('name')}")
+            if st.get("size") is None or int(st["size"]) != size:
+                problems.append(f"size_mismatch:{st.get('size')}!={size}")
             remote_md5 = st.get("md5")
             if remote_md5 is None:
                 problems.append("checksum_unavailable")
@@ -121,6 +144,9 @@ class DeliveryService:
                   drive_link=self.drive.link(file_id),
                   remote_md5=md5, verified_at=now,
                   cleanup_receipt="reused" if reused else "")
+        attempt_id = self._get(delivery_id).get("attempt_id")
+        if attempt_id:
+            self.executor._attach_remote(attempt_id, file_id, "succeeded", "delivery_verified")
         self._event(delivery_id, "upload_verified",
                     {"file_id": file_id, "reused": reused})
         return {"status": "verified", "file_id": file_id,
@@ -141,7 +167,7 @@ class DeliveryService:
         if remote.get("md5") == d["remote_md5"]:
             return self._verify(delivery_id, remote["id"], name,
                                 d["parent_folder_id"],
-                                remote.get("size", 0),
+                                d.get("expected_size", -1),
                                 d["remote_md5"], now, reused=True)
         self._set(delivery_id, status="conflict",
                   drive_file_id=remote["id"])
@@ -155,16 +181,17 @@ class DeliveryService:
         if d["file_sha256"] != _sha256(final_path):
             raise ContractError("final_changed", "file_sha256",
                                 "retry requires the identical final")
+        reconciled = self.reconcile(delivery_id, now=now)
+        if reconciled["status"] != "pending":
+            return reconciled
+        # No attempt means the first read/auth check failed before any upload.
+        # An absent listing cannot prove an ambiguous upload was not accepted.
+        if d.get("attempt_id"):
+            return {"status": "unknown", "action": "reconcile_or_review_evidence"}
         name = self._name_of(delivery_id)
-        try:
-            up = self.drive.upload(d["parent_folder_id"], final_path,
-                                   name)
-        except Exception:
-            return self.reconcile(delivery_id, now=now)
-        return self._verify(delivery_id, up["id"], name,
-                            d["parent_folder_id"],
-                            Path(final_path).stat().st_size,
-                            _md5(final_path), now or _now())
+        up = self._upload(delivery_id, final_path, d["parent_folder_id"], name)
+        return self._verify(delivery_id, up["id"], name, d["parent_folder_id"],
+                            d["expected_size"], d["remote_md5"], now or _now())
 
     def _name_of(self, delivery_id):
         # the descriptive name travels with the intent record

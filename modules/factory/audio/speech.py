@@ -103,7 +103,7 @@ class SpeechService:
 
     # --------------------------------------------------- synthesize
 
-    def synthesize(self, segment_id, job_id, lines=None, attempt_seq=1):
+    def synthesize(self, segment_id, job_id, lines=None, attempt_seq=1, attempt_id=None):
         """Reserve (optional) → persist intent → submit through the TTS
         adapter. A lost acknowledgement leaves the attempt unknown —
         never resynthesized blindly."""
@@ -114,13 +114,10 @@ class SpeechService:
                "settings": seg["voice"].get("settings") or {}}
         wire = json.dumps(req, sort_keys=True, default=str)
         rh = hashlib.sha256(wire.encode()).hexdigest()
-        res = None
-        if self.budget and lines:
-            res = self.budget.reserve(rh, lines)
-        attempt_id = self.executor.prepare(
-            job_id, attempt_seq, req, kind="tts_synthesis",
-            reservation_id=res, provider="elevenlabs",
-            model=req["model"])
+        prepared = self.executor.require_request(attempt_id, req)
+        if prepared["job_id"] != job_id:
+            raise ContractError("operation_identity_conflict", "job_id", job_id)
+        res = prepared["reservation_id"]
         op = self.executor.submit(
             attempt_id, lambda: self.tts.submit(req))
         self._set(segment_id, status="submitted")
@@ -153,7 +150,7 @@ class SpeechService:
                                  request_hash=request_hash)
         if rec is None:
             return {"status": "no_remote_trace",
-                    "action": "new_attempt_allowed"}
+                    "action": "reconcile_or_review_evidence"}
         if rec.get("status") == "succeeded":
             return self.collect(segment_id, rec["operation_id"])
         return {"status": rec.get("status", "unknown")}

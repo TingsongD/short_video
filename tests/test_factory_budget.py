@@ -20,7 +20,8 @@ BOUNDARIES = json.loads((fixtures.FIXTURE_ROOT
 @pytest.fixture
 def svc(tmp_path):
     db = Database(tmp_path / "f.db")
-    svc = BudgetService(db)
+    from datetime import datetime
+    svc = BudgetService(db, clock=lambda: datetime.fromisoformat(NOW.replace("Z", "+00:00")))
     svc.db_path = tmp_path / "f.db"      # for per-thread connections
     yield svc
     db.close()
@@ -159,12 +160,13 @@ class TestAmbiguousAndSettlement:
         with pytest.raises(ContractError):
             svc.release(rid2)
 
-    def test_over_reserved_settlement_refused(self, svc):
+    def test_over_reserved_charge_is_recorded(self, svc):
         svc.create_budget("b", "usd_micros", "aggregate", cap=1000)
         rid = svc.reserve("rh1", [("b", 900)])
-        with pytest.raises(ContractError) as e:
-            svc.settle(rid, "invoice_confirmed", {"b": 1200})
-        assert e.value.code == "settlement_over_reserved"
+        svc.settle(rid, "invoice_confirmed", {"b": 1200}, evidence="receipt")
+        assert svc.available("b") == -200
+        with pytest.raises(ContractError, match="dispatch_blocked"):
+            svc.reserve("new", [("b", 1)])
 
 
 class TestAuthorization:

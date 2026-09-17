@@ -41,12 +41,21 @@ def _stack(ctx, name):
         AlignmentService(db, FakeAligner())
 
 
+def _synthesize(speech, segment_id, job_id):
+    from ..testing.authority import approve_operation
+    seg = speech.get(segment_id)
+    req = {"text": seg["text"], "voice_id": seg["voice"]["voice_id"], "model": seg["voice"]["model"],
+           "language": seg["voice"].get("language", "en"), "settings": seg["voice"].get("settings") or {}}
+    aid = approve_operation(speech.db, speech.executor, req, job_id)
+    return speech.synthesize(segment_id, job_id, attempt_id=aid)
+
+
 def _voice_all(speech, variant, script=SCRIPT):
     outs = {}
     for sid, text, (a, b) in script:
         speech.plan_segment(f"{variant.lower()}-{sid}", variant, text, VOICE,
                             FrameInterval(a, b), now=NOW)
-        op = speech.synthesize(f"{variant.lower()}-{sid}", f"job:{variant}-{sid}")
+        op = _synthesize(speech, f"{variant.lower()}-{sid}", f"job:{variant}-{sid}")
         oid = op["operation"]["operation_id"]
         speech.collect(f"{variant.lower()}-{sid}", oid)
         outs[sid] = speech.collect(f"{variant.lower()}-{sid}", oid)
@@ -95,7 +104,7 @@ def f19_m02(ctx: CaseContext):
                         "simply cannot fit inside four seconds of "
                         "spoken audio no matter what.",
                         VOICE, FrameInterval(0, 120), now=NOW)
-    op = speech.synthesize("s-long", "job:s-long")
+    op = _synthesize(speech, "s-long", "job:s-long")
     speech.collect("s-long", op["operation"]["operation_id"])
     speech.collect("s-long", op["operation"]["operation_id"])
     seg = speech.get("s-long")

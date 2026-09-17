@@ -1,3 +1,4 @@
+from modules.factory.testing.authority import approve_production
 """F21: unique-work production plan — canonical 9-job graph, dedupe,
 duration splits, branch isolation, pricing-once, resume, manual
 coverage."""
@@ -136,6 +137,7 @@ def test_run_shared_billed_once(stack):
     db, sched, prov, adapter, arts, svc = stack
     svc.plan("plan-1", "exp1", 1, _takes(), "jimeng_canvas",
              "seedance_2.0_fast_vip", [4, 8], now=NOW)
+    approve_production(svc, "plan-1")
     svc.submit("plan-1")
     _run_all(svc)
     # 9 submits total — shared control work billed once
@@ -181,6 +183,7 @@ def test_needs_manual_no_under_length_submit(stack):
     assert out["plan"]["stats"]["manual_needed"] >= 1
     manual = [n for n in out["nodes"].values()
               if n["status"] == "needs_manual"]
+    approve_production(svc, "plan-1")
     svc.submit("plan-1")
     res = svc.run_next()
     while res and res["node"] != manual[0]["node_key"]:
@@ -226,6 +229,7 @@ def test_resume_survives_restart(stack, tmp_path):
     db, sched, prov, adapter, arts, svc = stack
     svc.plan("plan-1", "exp1", 1, _takes(), "jimeng_canvas",
              "seedance_2.0_fast_vip", [4, 8], now=NOW)
+    approve_production(svc, "plan-1")
     svc.submit("plan-1")
     # run exactly the picture+download phase, then "restart"
     for _ in range(9):
@@ -248,6 +252,7 @@ def test_five_slot_concurrency(stack):
     db, sched, prov, adapter, arts, svc = stack
     svc.plan("plan-1", "exp1", 1, _takes(), "jimeng_canvas",
              "seedance_2.0_fast_vip", [4, 8], now=NOW)
+    approve_production(svc, "plan-1")
     svc.submit("plan-1")
     claimed = []
     for _ in range(7):

@@ -224,3 +224,27 @@ def test_openapi_documented(env):
     for p in ("/api/health", "/api/seeds", "/api/experiments",
               "/api/assets/{asset_id}/media", "/api/events"):
         assert p in paths, p
+
+
+def test_material_edit_invalidates_quote_and_authorization(env):
+    client, csrf, *_ = env
+    mut(client, csrf, "post", "/api/experiments", key="create", json={"id": "edited", "unique_work": [{"credits": 5}]})
+    mut(client, csrf, "post", "/api/experiments/edited/quote", key="quote", json={})
+    mut(client, csrf, "post", "/api/experiments/edited/authorize", key="approve", rev=0, json={})
+    edit = mut(client, csrf, "patch", "/api/experiments/edited/draft", key="edit", rev=0, json={"unique_work": [{"credits": 500}]})
+    assert edit.status_code == 200
+    assert mut(client, csrf, "post", "/api/experiments/edited/run", key="run", rev=1, json={}).json()["error"] == "not_authorized"
+    assert mut(client, csrf, "post", "/api/experiments/edited/authorize", key="approve-again", rev=1, json={}).json()["error"] == "no_quote"
+
+
+def test_same_size_import_with_different_bytes_is_a_conflict(env):
+    from modules.factory.audio import pcm
+    client, csrf, *_ = env
+    a = pcm.write_wav(pcm.sine(0.2, freq=440))
+    b = pcm.write_wav(pcm.sine(0.2, freq=880))
+    assert len(a) == len(b)
+    r = mut(client, csrf, "post", "/api/imports", key="upload", content=a, headers={"x-filename": "sample.wav"})
+    assert r.status_code == 201
+    r = mut(client, csrf, "post", "/api/imports", key="upload", content=b, headers={"x-filename": "sample.wav"})
+    assert r.status_code == 409
+    assert r.json()["error"] == "idempotency_conflict"

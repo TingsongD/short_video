@@ -157,7 +157,14 @@ class FactoryServices:
         if body.get("status") != "draft" and locked & set(patch):
             raise ContractError("locked_field", "patch",
                                 "submitted plans need a new revision")
+        if expected_revision is None:
+            raise ContractError("expected_revision_required", "revision")
+        if set(patch) & {"authorization", "last_quote", "status", "_rev"}:
+            raise ContractError("reserved_field", "patch")
         body.update(patch)
+        body.pop("authorization", None)
+        body.pop("last_quote", None)
+        body["status"] = "draft"
         body["_rev"] = rev + 1
         self._put_draft("experiment_draft", experiment_id, body,
                         expected_version=ver)
@@ -192,7 +199,7 @@ class FactoryServices:
                                 f"expected {expected_revision}, "
                                 f"current {rev} — approvals bind the "
                                 "exact reviewed revision")
-        if "last_quote" not in body:
+        if "last_quote" not in body or body["last_quote"].get("revision") != rev:
             raise ContractError("no_quote", "experiment_id",
                                 "quote the exact revision first")
         body["status"] = "authorized"
@@ -210,7 +217,7 @@ class FactoryServices:
         if body is None:
             raise ContractError("not_found", "experiment_id",
                                 experiment_id)
-        if body.get("status") != "authorized":
+        if body.get("status") != "authorized" or body.get("authorization", {}).get("revision") != rev:
             raise ContractError("not_authorized", "experiment_id",
                                 "authorize the quoted revision first")
         if expected_revision is not None \
@@ -236,12 +243,12 @@ class FactoryServices:
 
     def pause_experiment(self, experiment_id):
         if self.scheduler:
-            self.scheduler.pause()
+            self.scheduler.pause(experiment_id)
         return {"id": experiment_id, "paused": True}
 
     def resume_experiment(self, experiment_id):
         if self.scheduler:
-            self.scheduler.resume()
+            self.scheduler.resume(experiment_id)
         return {"id": experiment_id, "resumed": True}
 
     def reconcile_job(self, job_id):

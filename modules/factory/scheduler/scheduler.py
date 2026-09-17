@@ -10,6 +10,8 @@ capacity is conservatively held until reconciliation (checklist 3/7).
 import json
 import shutil
 import uuid
+import threading
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 
 from ..domain.errors import ContractError
@@ -63,8 +65,9 @@ class ResourcePolicy:
 
 class Scheduler:
     def __init__(self, db, worker_id=None, lease_s=LEASE_S,
-                 resource_policy=None):
+                 resource_policy=None, clock=None):
         self.db = db
+        self.clock = clock or (lambda: datetime.now(timezone.utc))
         self.worker_id = worker_id or f"worker:{uuid.uuid4().hex[:8]}"
         self.lease_s = lease_s
         self.resources = resource_policy or ResourcePolicy()
@@ -73,6 +76,9 @@ class Scheduler:
                 u.conn.execute(
                     "INSERT OR IGNORE INTO capacities(name,limit_n) "
                     "VALUES(?,?)", (name, n))
+
+    def now(self):
+        return self.clock().strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
     # ------------------------------------------------------------- flags
 
@@ -90,8 +96,41 @@ class Scheduler:
             u.events.append("scheduler", "flag",
                             {"key": key, "on": bool(on)})
 
-    def pause(self):    self._set_flag("paused", True)
-    def resume(self):   self._set_flag("paused", False)
+    def pause(self, experiment_id=None):
+        self._set_flag(f"paused:{experiment_id}" if experiment_id else "paused", True)
+
+    def resume(self, experiment_id=None):
+        self._set_flag(f"paused:{experiment_id}" if experiment_id else "paused", False)
+
+    def renew(self, job_id, fencing):
+        with self.db.uow() as u:
+            self._verify_lease(u, job_id, fencing)
+            expires = (self.clock() + timedelta(seconds=self.lease_s)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+            u.conn.execute("UPDATE jobs SET lease_expires=? WHERE id=?", (expires, job_id))
+            u.conn.execute("UPDATE capacity_holds SET expires_at=? WHERE job_id=?", (expires, job_id))
+            return expires
+
+    @contextmanager
+    def heartbeat(self, job_id, fencing):
+        stop = threading.Event()
+        errors = []
+        def beat():
+            while not stop.wait(max(0.05, self.lease_s / 3)):
+                try:
+                    self.renew(job_id, fencing)
+                except Exception as error:
+                    errors.append(error)
+                    break
+        thread = threading.Thread(target=beat, name=f"lease:{job_id}", daemon=True)
+        thread.start()
+        try:
+            yield
+            if errors:
+                raise errors[0]
+        finally:
+            stop.set()
+            thread.join(timeout=max(1, self.lease_s / 3))
+
     def drain(self):    self._set_flag("draining", True)
     def undrain(self):  self._set_flag("draining", False)
 
@@ -146,7 +185,7 @@ class Scheduler:
                 u.conn.execute(
                     "UPDATE jobs SET status='ready', updated_at=? "
                     "WHERE id=?",
-                    (_now(), r["id"]))
+                    (self.now(), r["id"]))
                 promoted.append(r["id"])
         return promoted
 
@@ -172,7 +211,7 @@ class Scheduler:
                 "UPDATE jobs SET status='blocked', blocked_reason=?, "
                 "updated_at=? WHERE id=? AND status NOT IN "
                 "('succeeded','failed','cancelled')",
-                (f"ancestor {job_id}: {reason}", _now(), jid))
+                (f"ancestor {job_id}: {reason}", self.now(), jid))
         return blocked
 
     # --------------------------------------------------------- capacity
@@ -182,24 +221,29 @@ class Scheduler:
                              (capacity,)).fetchone()
         if row is None:
             raise ContractError("unknown_capacity", "capacity", capacity)
-        now = _now()
-        used = u.conn.execute(
-            "SELECT COUNT(*) FROM capacity_holds WHERE capacity=? AND "
-            "expires_at>?", (capacity, now)).fetchone()[0]
+        now = self.now()
+        used = self._capacity_used(u.conn, capacity)
         return row[0] - used
+
+    def _capacity_used(self, conn, capacity):
+        remote = conn.execute("SELECT count(*) FROM remote_holds WHERE capacity=?", (capacity,)).fetchone()[0]
+        local = conn.execute("""SELECT count(*) FROM capacity_holds h WHERE capacity=?
+            AND (expires_at>? OR retained_reason='unfinished_remote_op')
+            AND NOT EXISTS (SELECT 1 FROM remote_holds r WHERE r.job_id=h.job_id AND r.capacity=h.capacity)""", (capacity, self.now())).fetchone()[0]
+        return remote + local
 
     def _hold(self, u, capacity, job_id, expires):
         u.conn.execute(
             "INSERT OR REPLACE INTO capacity_holds(capacity,job_id,"
             "holder,fencing,expires_at) VALUES(?,?,?,?,?)",
             (capacity, job_id, self.worker_id, 0,
-             expires.isoformat() + "Z"))
+             expires.strftime("%Y-%m-%dT%H:%M:%S.%fZ")))
 
     def _release_holds(self, u, job_id, keep_unfinished=True):
         if keep_unfinished:
             has_unfinished = u.conn.execute(
                 "SELECT COUNT(*) FROM attempts WHERE job_id=? AND status "
-                "IN ('dispatching','accepted','running','unknown')",
+                "IN ('dispatching','accepted','running','unknown','cancel_requested')",
                 (job_id,)).fetchone()[0]
             if has_unfinished:
                 u.conn.execute(
@@ -216,7 +260,7 @@ class Scheduler:
         queue: dispatch | observe | collect."""
         if queue == "dispatch" and (self.paused or self._flag("draining")):
             return None
-        now = datetime.now(timezone.utc)
+        now = self.clock()
         expires = now + timedelta(seconds=self.lease_s)
         with self.db.uow() as u:
             self._propagate_ready(u)
@@ -228,14 +272,19 @@ class Scheduler:
                 want = None
             candidates = u.conn.execute(
                 "SELECT * FROM jobs WHERE status IN "
-                + ("('ready')" if queue == "dispatch" else
-                   "('accepted','running','unknown')" if queue == "observe"
-                   else "('output_available')")
+                + ("('ready') AND phase!='collect'" if queue == "dispatch" else
+                   "('accepted','running','unknown','cancel_requested')" if queue == "observe"
+                   else "('ready','output_available') AND (phase='collect' OR status='output_available')")
                 + " AND (lease_expires IS NULL OR lease_expires<?) "
-                "ORDER BY created_at", (_now(),)).fetchall()
+                "AND (next_attempt_at IS NULL OR next_attempt_at<=?) "
+                "ORDER BY created_at", (self.now(), self.now())).fetchall()
             for row in candidates:
-                capacity = PHASE_CAPACITY.get(row["phase"])
-                if capacity and self._capacity_free(u, capacity) <= 0:
+                if queue == "dispatch" and self._flag(f"paused:{row['experiment_id']}"):
+                    continue
+                capacity = (PHASE_CAPACITY.get(row["phase"]) if queue == "dispatch"
+                            else "observe" if queue == "observe" else "download")
+                own = u.conn.execute("SELECT 1 FROM capacity_holds WHERE capacity=? AND job_id=?", (capacity, row["id"])).fetchone()
+                if capacity and not own and self._capacity_free(u, capacity) <= 0:
                     continue
                 if queue == "dispatch" and capacity == "local_render":
                     ok, reason = self.resources.ok()
@@ -249,11 +298,11 @@ class Scheduler:
                     "UPDATE jobs SET lease_owner=?, lease_expires=?, "
                     "fencing_token=?, status=?, blocked_reason=NULL, "
                     "updated_at=?, version=version+1 WHERE id=?",
-                    (self.worker_id, expires.isoformat() + "Z", fencing,
+                    (self.worker_id, expires.strftime("%Y-%m-%dT%H:%M:%S.%fZ"), fencing,
                      {"dispatch": "reserved",
                       "observe": row["status"],
                       "collect": "output_available"}[queue],
-                     _now(), row["id"]))
+                     self.now(), row["id"]))
                 if capacity:
                     self._hold(u, capacity, row["id"], expires)
                 u.events.append(f"job:{row['id']}", "claimed",
@@ -275,7 +324,7 @@ class Scheduler:
             raise FencingError("stale_fencing", job_id,
                                f"owner={row['lease_owner']} "
                                f"token={row['fencing_token']}")
-        if row["lease_expires"] and row["lease_expires"] < _now():
+        if row["lease_expires"] and row["lease_expires"] < self.now():
             raise FencingError("lease_expired", job_id)
         return row
 
@@ -284,21 +333,33 @@ class Scheduler:
             self._verify_lease(u, job_id, fencing)
             u.conn.execute(
                 "UPDATE jobs SET status='succeeded', updated_at=?, "
-                "version=version+1 WHERE id=?", (_now(), job_id))
+                "version=version+1 WHERE id=?", (self.now(), job_id))
             self._release_holds(u, job_id)
             u.events.append(f"job:{job_id}", "succeeded",
                             {"worker": self.worker_id})
             return self._propagate_ready(u)
 
+    def defer(self, job_id, fencing, reason, delay_s=2):
+        """Successful observation of unfinished work is not a failed retry."""
+        with self.db.uow() as u:
+            self._verify_lease(u, job_id, fencing)
+            next_at = (self.clock() + timedelta(seconds=delay_s)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+            u.conn.execute("UPDATE jobs SET status='ready',blocked_reason=?,next_attempt_at=?,lease_owner=NULL,lease_expires=NULL WHERE id=?", (reason, next_at, job_id))
+            self._release_holds(u, job_id)
+
     def fail(self, job_id, fencing, reason, retryable=False):
         with self.db.uow() as u:
             row = self._verify_lease(u, job_id, fencing)
+            count = row["retry_count"] + 1
+            retryable = retryable and count <= 5
             status = "ready" if retryable else "failed"
+            next_at = (self.clock() + timedelta(seconds=min(60, 2 ** count))).strftime("%Y-%m-%dT%H:%M:%S.%fZ") if retryable else None
+            u.conn.execute("UPDATE jobs SET next_attempt_at=?,retry_count=? WHERE id=?", (next_at, count, job_id))
             u.conn.execute(
                 "UPDATE jobs SET status=?, blocked_reason=?, "
                 "lease_owner=NULL, lease_expires=NULL, updated_at=?, "
                 "version=version+1 WHERE id=?",
-                (status, reason, _now(), job_id))
+                (status, reason, self.now(), job_id))
             self._release_holds(u, job_id)
             u.events.append(f"job:{job_id}", "failed" if not retryable
                             else "retry", {"reason": reason})
@@ -312,7 +373,7 @@ class Scheduler:
             self._verify_lease(u, job_id, fencing)
             u.conn.execute(
                 "UPDATE jobs SET status=?, updated_at=?, "
-                "version=version+1 WHERE id=?", (status, _now(), job_id))
+                "version=version+1 WHERE id=?", (status, self.now(), job_id))
             u.events.append(f"job:{job_id}", "transition",
                             {"to": status})
 
@@ -321,7 +382,7 @@ class Scheduler:
     def reclaim_expired(self):
         """Return expired-lease jobs to ready; unfinished remote ops keep
         their capacity hold (retained_reason) until reconciled."""
-        now = _now()
+        now = self.now()
         with self.db.uow() as u:
             rows = u.conn.execute(
                 "SELECT id, status FROM jobs WHERE lease_expires IS NOT "
@@ -334,7 +395,7 @@ class Scheduler:
                 u.conn.execute(
                     "UPDATE jobs SET lease_owner=NULL, lease_expires=NULL,"
                     " status=CASE WHEN status IN ('accepted','running',"
-                    "'output_available','unknown') THEN status ELSE "
+                    "'output_available','unknown','awaiting_review','downloaded') THEN status ELSE "
                     "'ready' END, updated_at=?, version=version+1 "
                     "WHERE id=?", (now, r["id"]))
                 self._release_holds(u, r["id"], keep_unfinished=True)
@@ -348,15 +409,15 @@ class Scheduler:
             "SELECT id,phase,status,lease_owner,fencing_token,"
             "blocked_reason FROM jobs ORDER BY created_at").fetchall()]
         holds = [dict(r) for r in self.db.conn.execute(
-            "SELECT * FROM capacity_holds WHERE expires_at>?",
-            (_now(),)).fetchall()]
+            "SELECT * FROM capacity_holds WHERE expires_at>? OR retained_reason='unfinished_remote_op'",
+            (self.now(),)).fetchall()]
         caps = {r["name"]: r["limit_n"] for r in self.db.conn.execute(
             "SELECT * FROM capacities").fetchall()}
         used = {}
         for h in holds:
             used[h["capacity"]] = used.get(h["capacity"], 0) + 1
         return {"jobs": jobs, "capacities":
-                {k: {"limit": v, "used": used.get(k, 0)}
+                {k: {"limit": v, "used": self._capacity_used(self.db.conn, k)}
                  for k, v in caps.items()},
                 "paused": self.paused,
                 "draining": self._flag("draining")}

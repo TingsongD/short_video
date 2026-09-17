@@ -47,17 +47,14 @@ class MusicService:
             u.records.put(bed)
         return bed
 
-    def generate(self, bed_id, job_id, brief, lines=None, attempt_seq=1):
+    def generate(self, bed_id, job_id, brief, lines=None, attempt_seq=1, attempt_id=None):
         """Authorized music generation through F05/F07 — its own
         route/credential, not implied by Vertex video OAuth."""
         req = {"kind": "music", "brief": brief}
-        res = self.budget.reserve(
-            __import__("hashlib").sha256(json.dumps(
-                req, sort_keys=True).encode()).hexdigest(), lines) \
-            if self.budget and lines else None
-        attempt_id = self.executor.prepare(
-            job_id, attempt_seq, req, kind="music_generation",
-            reservation_id=res, provider=self.generator.name)
+        prepared = self.executor.require_request(attempt_id, req)
+        if prepared["job_id"] != job_id:
+            raise ContractError("operation_identity_conflict", "job_id", job_id)
+        res = prepared["reservation_id"]
         op = self.executor.submit(
             attempt_id, lambda: self.generator.submit(req))
         return {"attempt_id": attempt_id, "reservation_id": res,
@@ -93,7 +90,7 @@ class MusicService:
                                        request_hash=request_hash)
         if rec is None:
             return {"status": "no_remote_trace",
-                    "action": "new_attempt_allowed"}
+                    "action": "reconcile_or_review_evidence"}
         if rec.get("status") == "succeeded":
             return self.collect(bed_id, rec["operation_id"], model_ref,
                                 now)

@@ -1,3 +1,4 @@
+from modules.factory.testing.authority import FixtureEffects
 """F10 — outlier discovery and baseline evidence."""
 import json
 from datetime import datetime, timezone
@@ -184,7 +185,7 @@ def env(tmp_path):
     src = FakeDiscovery("vo-disc", tmp_path / "remote", ids, clock)
     ex = Executor(db, src, clock)
     reg = SeedRegistry(db)
-    svc = DiscoveryService(db, reg, ex, src)
+    svc = DiscoveryService(db, reg, ex, src, effects=FixtureEffects(db, ex))
     return {"db": db, "src": src, "svc": svc, "reg": reg}
 
 
@@ -241,7 +242,7 @@ class TestService:
                              IdFactory(Path(env["db"].path).parent /
                                        "ids.json"), FakeClock())
         ex2 = Executor(env["db"], src2, FakeClock())
-        svc2 = DiscoveryService(env["db"], env["reg"], ex2, src2)
+        svc2 = DiscoveryService(env["db"], env["reg"], ex2, src2, effects=FixtureEffects(env["db"], ex2))
         run2 = svc2.scan(["haul"], pages=2, run_id="drun-r4")
         assert src2.counters()["charges"] == 1   # page 1 from cache
         assert run2.status == "partial"          # still no credits

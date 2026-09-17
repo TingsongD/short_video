@@ -1,3 +1,4 @@
+from modules.factory.testing.authority import FixtureEffects
 """F12 manual scenarios: six-beat blueprint, long-haul structure,
 honest unknowns, and interrupt/edit recovery."""
 import json
@@ -39,7 +40,7 @@ def _stack(ctx, name, script=None):
                             scripts=script or {})
     ex = Executor(db, analyzer, ctx.clock)
     return (db, arts, reg, analyzer, ex,
-            AnalysisService(db, reg, arts, ex, analyzer))
+            AnalysisService(db, reg, arts, ex, analyzer, effects=FixtureEffects(db, ex)))
 
 
 def _seed_with_media(reg, arts, fixture_root, media, url_id):

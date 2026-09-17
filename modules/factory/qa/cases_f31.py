@@ -1,3 +1,5 @@
+from modules.factory.testing.authority import FixtureEffects
+from modules.factory.execution import Executor
 """F31 manual scenarios: manual mapping conflicts, wire-contract
 inspection, lost-ack reconcile + cadence, live-gate shape."""
 import json
