@@ -197,7 +197,7 @@ def test_registry_144_cases():
     assert len(ids) == 144
     assert case_status(specs["F01-M01"]) == "implemented"
     assert case_status(specs["F02-M01"]) == "implemented"
-    assert case_status(specs["F05-M01"]) == "missing_prerequisite"
+    assert case_status(specs["F06-M01"]) == "missing_prerequisite"
 
 
 def test_cli_run_and_idempotent_replay(space, capsys):
@@ -217,7 +217,7 @@ def test_cli_run_unknown_and_unimplemented(space):
     assert qa_main(["run", "--workspace", str(space.path),
                     "--case", "NOPE"]) == 1
     assert qa_main(["run", "--workspace", str(space.path),
-                    "--case", "F05-M01"]) == 1  # missing prerequisite
+                    "--case", "F06-M01"]) == 1  # missing prerequisite
 
 
 def test_cli_live_mode_requires_authorization(space):
@@ -235,7 +235,7 @@ def test_cli_inspect_views(space):
     assert qa_main(["inspect", "--workspace", str(space.path),
                     "--view", "health", "--json"]) == 0
     assert qa_main(["inspect", "--workspace", str(space.path),
-                    "--view", "budgets", "--json"]) == 1  # F05 not built
+                    "--view", "jobs", "--json"]) == 1  # F06 not built
     assert qa_main(["inspect", "--workspace", str(space.path),
                     "--view", "nonsense"]) == 1
 

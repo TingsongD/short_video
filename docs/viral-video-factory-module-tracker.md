@@ -58,7 +58,7 @@ Dependencies below define implementation prerequisites, not permission to spend.
 | [F02 — Factory contracts and immutable revisions](viral-video-factory-implementation-modules.md#f02) | F01 | passed | in_progress | not_applicable | Devin; [report](factory-reports/F02.md); 35 tests green in 404-suite; M01–M04 agent-verified |
 | [F03 — SQLite store and migrations](viral-video-factory-implementation-modules.md#f03) | F02 | passed | in_progress | not_applicable | Devin; [report](factory-reports/F03.md); 15 tests green in 419-suite; M01–M04 agent-verified |
 | [F04 — Artifact registry, media intake and provenance](viral-video-factory-implementation-modules.md#f04) | F03 | passed | in_progress | not_applicable | Devin; [report](factory-reports/F04.md); 16 tests green in 435-suite; M01–M04 agent-verified |
-| [F05 — Prices, budgets, approvals and reservations](viral-video-factory-implementation-modules.md#f05) | F03 | planned | not_run | not_applicable | Unassigned; no evidence yet |
+| [F05 — Prices, budgets, approvals and reservations](viral-video-factory-implementation-modules.md#f05) | F03 | passed | in_progress | not_applicable | Devin; [report](factory-reports/F05.md); 15 tests green in 450-suite; M01–M04 agent-verified |
 | [F06 — Dependency scheduler, capacities and leases](viral-video-factory-implementation-modules.md#f06) | F05 | planned | not_run | not_applicable | Unassigned; no evidence yet |
 | [F07 — Submission recovery and retry policy](viral-video-factory-implementation-modules.md#f07) | F06 | planned | not_run | not_applicable | Unassigned; no evidence yet |
 | [F08 — Events, timing and observability](viral-video-factory-implementation-modules.md#f08) | F06, F07 | planned | not_run | not_applicable | Unassigned; no evidence yet |

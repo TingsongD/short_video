@@ -1,7 +1,7 @@
 """Ordered migrations. Every DB carries meta.schema_version; an older
 binary refuses a newer database rather than reinterpreting it."""
 
-CURRENT_VERSION = 3
+CURRENT_VERSION = 4
 
 MIGRATIONS = [
     (1, """
@@ -127,6 +127,44 @@ CREATE TABLE artifact_sources (
   detail TEXT NOT NULL,
   created_at TEXT NOT NULL,
   PRIMARY KEY (artifact_id, source_key)
+);
+"""),
+    (4, """
+CREATE TABLE budgets (
+  id TEXT PRIMARY KEY,
+  unit TEXT NOT NULL,
+  scope TEXT NOT NULL,
+  scope_key TEXT NOT NULL DEFAULT '',
+  cap_amount INTEGER,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE reservations (
+  id TEXT PRIMARY KEY,
+  authorization_id TEXT,
+  request_hash TEXT,
+  status TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  settled_at TEXT,
+  evidence TEXT
+);
+CREATE UNIQUE INDEX reservations_request ON reservations(request_hash)
+  WHERE request_hash IS NOT NULL;
+
+CREATE TABLE reservation_lines (
+  reservation_id TEXT NOT NULL REFERENCES reservations(id),
+  budget_id TEXT NOT NULL REFERENCES budgets(id),
+  amount INTEGER NOT NULL,
+  settled_amount INTEGER,
+  kind TEXT,
+  PRIMARY KEY (reservation_id, budget_id)
+);
+
+CREATE TABLE ledger_imports (
+  import_key TEXT PRIMARY KEY,
+  source_hash TEXT NOT NULL,
+  body TEXT NOT NULL,
+  imported_at TEXT NOT NULL
 );
 """),
 ]
