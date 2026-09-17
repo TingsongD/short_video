@@ -1,0 +1,145 @@
+{
+  "review": "post-S8 remaining issues",
+  "created_at": "2026-09-17T20:01:52.626234+00:00",
+  "source_revision": "c6ffad204ed3a182fa0cb8c5d206e0d774472547",
+  "branch": "feat/factory",
+  "application_code_changed": false,
+  "live_effects": false,
+  "spend": 0,
+  "pre_existing_worktree_paths": [
+    "DEV_LOG.md",
+    "LONGFORM_PLAN.md (deleted)",
+    "apps/factory-dashboard/tsconfig.tsbuildinfo",
+    "docs/factory-reports/REPAIRS.md"
+  ],
+  "findings": {
+    "total": 20,
+    "P1": 11,
+    "P2": 9,
+    "reproduced_findings": 18,
+    "static_call_path_findings": [
+      "N15",
+      "N20"
+    ]
+  },
+  "checks": {
+    "backend_initial": {
+      "passed": 942,
+      "failed": 10,
+      "seconds": 334.53,
+      "environment": "restricted sandbox",
+      "failure_explanation": "ps unavailable; dependent supervisor/cleanup tests fail or time out"
+    },
+    "backend_exact_failed_tests_rerun": {
+      "passed": 10,
+      "failed": 0,
+      "seconds": 114.46,
+      "environment": "local process inspection permitted",
+      "native_external_transports": "fakes only"
+    },
+    "backend_combined_accounted_tests": 952,
+    "frontend_tests": {
+      "passed": 28,
+      "files": 4,
+      "seconds": 0.951
+    },
+    "frontend_build": "passed",
+    "review_probes": {
+      "passed": 19,
+      "failed": 0,
+      "seconds": 28.56,
+      "passing_means": "current defect reproduced, not fixed",
+      "module": "docs/factory-reports/probes/review_post_repair_2026_09_17.py",
+      "sha256": "8884c2a0a92dc67b5e4062c11d45b382456d6536d35ea4a957b777f1a0d6b5a0",
+      "functions": [
+        "test_ack_loss_reconcile_leaves_production_failed",
+        "test_vertex_cannot_recover_saved_acceptance_by_executor_hash",
+        "test_vertex_nested_settings_ignored",
+        "test_canvas_distinct_attempts_share_one_operation",
+        "test_canvas_quote_flush_can_lose_other_worker_receipts",
+        "test_treatment_dependency_declaration_allows_stale_speech",
+        "test_repeated_render_failure_is_cached_forever",
+        "test_failed_renderer_is_successful_job",
+        "test_delivery_failed_before_upload_has_no_application_retry",
+        "test_tts_normalization_breaks_real_public_audio_flow",
+        "test_withdrawn_creative_acceptance_still_publishes",
+        "test_still_images_rejected_by_production_qc",
+        "test_restore_paths_change_render_identity",
+        "test_research_application_bypasses_cache_and_reports_no_calls",
+        "test_authorization_uses_latest_product_instead_of_pin",
+        "test_unsupported_variant_claims_are_accepted",
+        "test_canvas_reference_shape_conflicts_with_router",
+        "test_new_learning_policy_blocked_by_old_revision_posts"
+      ]
+    },
+    "frozen_contracts": {
+      "git_diff_against_head": "empty",
+      "tracked_files": 29,
+      "path_and_content_sha256": "c3e3a547791264ed92fd8890a24040a0f967c78578342b6754bfeee415865319"
+    }
+  },
+  "source_sha256": {
+    "apps/factory-dashboard/src/App.tsx": "cdcbbd68e243bd7e2e6d1bf7a759610a1e15bbf45d1d6285a1a888d0f5d22f24",
+    "apps/factory-dashboard/src/features/operations/OperationsScreen.tsx": "0e5083947d6c68886ef993f3a7ee1eedf0fe2cd12ce9604feb0b661a3595674b",
+    "modules/factory/api/app.py": "cb03eaf2ad224de2246196cf5f4515d037325744e1e62b8e8a697ef34579b482",
+    "modules/factory/audio/mix.py": "ef3eceff8317924a49e19a0266113f3b4685367e2574495c03ff032556023b42",
+    "modules/factory/bootstrap.py": "b295216f88231941a83b4b0880131d8b8906037fa90dc1380d684bcd63d9b5b2",
+    "modules/factory/delivery/service.py": "95ba96443a04394f4d272fc605b8af374ff828d143021d8a52b605be7c2b065f",
+    "modules/factory/discovery/service.py": "94cd897a719892f49a99862fbb5871f207320c454b74b4159dc9354a95a87d14",
+    "modules/factory/execution/executor.py": "f3b58bfe1ff50368b0d6f338fa53e320168d592cc4bb06db8bbf217edd84f703",
+    "modules/factory/experiments/diff.py": "a9d61fc91a9edae749a7593c0099ba5006747144e3154619c4d3e8ca0ab26e58",
+    "modules/factory/experiments/service.py": "81e094540fb7bf72142f766f4bf1cc14e497fb30d6d6279ef9c202b66defad42",
+    "modules/factory/learning/service.py": "dd4d48179c6920d12dfd6fc60e006074a8c5daf36e536e4ec2376ebc97305c1a",
+    "modules/factory/operations/paths.py": "7b110a1a5eae4f26ce703ecac4bb99d1e4c8cec3da04e3634f69314e1873c416",
+    "modules/factory/production/plan.py": "adcdcec256b8dcac6e177c217ca919f9b1d13e70a089cab2371317cfdec0ead6",
+    "modules/factory/providers/canvas.py": "6532eb173beb45ef3fed7e3f3433fa218477ba20c6a0374296bf317d81ec6dcd",
+    "modules/factory/providers/router.py": "12f2cff708f9c5d67c6f51d0ed3707856068668da27d5196ed4461d02b95ed09",
+    "modules/factory/providers/state.py": "c538023c9d8eb9e1cd6441b86c51a85e218f716813f1ca6eff68e40dc974c9cb",
+    "modules/factory/providers/vertex.py": "099976ffad9bdb23153c8ec941cec4a6c8d6f4b7ea217709448a3efe07d45605",
+    "modules/factory/quality/technical.py": "1f40c2270e84ede664ded339646f2f8012510fb124d2de3965ea780efad31869",
+    "modules/factory/rendering/ffmpeg_fast.py": "cb29fe556facde24ee809f216a626a8f08f21df261ef4a29888809a924131e7a",
+    "modules/factory/rendering/service.py": "1998ee2fe176d44f4488bdb2d68d9c3b39ef31744c68668ea5cec12f4770a848",
+    "modules/factory/resources/runner.py": "7f50f2410a3081feb86b8d6c6039fdab90af76246ae9a5ea173a6f74eeb1cad1",
+    "modules/factory/services/app.py": "6c1b40e8211230f93d986aad21ef51401d0bec60afb6717dbb8d68b5b67de1f3",
+    "modules/factory/services/audio_work.py": "4a8573d4d713a056cf7a7df56c8819f1282bfad71e31f2914b812b6f0548b3bf",
+    "modules/factory/services/effect_work.py": "3271b8b33a6656ef8e08b18d084ff67cd1a2aacf8c1e4b51c33d27e5129819bf",
+    "modules/factory/services/publication_work.py": "dbb60f923e955b36366f1564bb8da990d98cfa1e99add7c05441e6438bda0aa0",
+    "modules/factory/services/recovery.py": "4c44a102fb7506745dc8bc342bb23403c796408f3f6b148635cdb500bfc3e909",
+    "modules/factory/services/worker.py": "a48c6e7baa2f4db5856d728073e3b37cfb69b0afa435ae4b9677b501f13237f2"
+  },
+  "log_sha256": {
+    "backend_initial": {
+      "path": "/tmp/factory-review-backend.log",
+      "sha256": "0617b0aab6f4b8aa7745586caf72ac29b3ab73bdfe79fa1c67254cee615432b8"
+    },
+    "backend_process_rerun": {
+      "path": "/tmp/factory-review-permitted.log",
+      "sha256": "3c7b2d27d42f7df756118fefd372ccb38416235c13cef6c68ad371cea7eda28a"
+    },
+    "frontend_tests": {
+      "path": "/tmp/factory-review-frontend.log",
+      "sha256": "7aa2e0b4fd864c6fb388663b9e05e99945783db2defc071439a9f891db3ee037"
+    },
+    "frontend_build": {
+      "path": "/tmp/factory-review-build.log",
+      "sha256": "47d1afdd07fdd3e25e1c2f0a8ea99a4c55ea802dbe26735d45ecbf7b7914d527"
+    },
+    "negative_probes": {
+      "path": "/tmp/factory-review-consolidated-probes.log",
+      "sha256": "b1d305dca82eb1b7b9cf8922b88c3677c1f614b4f61a9310f31e63ba02f00b34"
+    }
+  },
+  "not_repeated": [
+    "live native provider pilots",
+    "new interactive browser journey",
+    "four 5091-frame release exports",
+    "elapsed real publication horizons"
+  ],
+  "limitations": [
+    "Review probes use disposable state and fake external services.",
+    "The restore render probe isolates path identity; it is not a complete restore-and-render run.",
+    "N15 and N20 are static call-path findings without new loudness or live readiness latency benchmarks.",
+    "The full suite and exact failing subset were separate runs; no claim of a new single-run 952-pass result."
+  ]
+}
+
