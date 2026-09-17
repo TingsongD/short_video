@@ -13,6 +13,8 @@ import hashlib
 import json
 from pathlib import Path
 
+from ..integrations.drive import DriveAdapter
+
 
 class ProviderError(RuntimeError):
     """Typed provider failure. `code` is stable; `transient` marks reads/
@@ -1398,3 +1400,85 @@ class FakeAudioAnalyzer:
     def analyze(self, artifact):
         return {"duration": (artifact.probe or {}).get("duration_s"),
                 "bpm": self.bpm, "structure": self.structure}
+
+
+class FakeDrive(DriveAdapter):
+    """Persistent Drive fake (F25): files by id with name/parent/md5/
+    size/content; drills for lost acks, auth expiry, checksum gaps."""
+
+    def __init__(self, path, authed=True):
+        self.path = Path(path)
+        if self.path.exists():
+            self.doc = json.loads(self.path.read_text())
+        else:
+            self.doc = {"seq": 0, "files": {}, "uploads": 0,
+                        "lost_next": False, "authed": authed,
+                        "no_md5": False}
+            self._save()
+
+    def _save(self):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self.path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(self.doc, indent=1, sort_keys=True))
+        tmp.replace(self.path)
+
+    def _auth(self):
+        if not self.doc["authed"]:
+            raise ProviderError("auth_expired")
+
+    def lose_next_upload(self):
+        self.doc["lost_next"] = True
+        self._save()
+
+    def set_auth(self, ok):
+        self.doc["authed"] = bool(ok)
+        self._save()
+
+    def set_no_md5(self, on=True):
+        self.doc["no_md5"] = on
+        self._save()
+
+    def list_files(self, parent_id):
+        self._auth()
+        return [{"id": f["id"], "name": f["name"], "md5": f["md5"],
+                 "size": f["size"], "parent": f["parent"]}
+                for f in self.doc["files"].values()
+                if f["parent"] == parent_id]
+
+    def upload(self, parent_id, path, name):
+        self._auth()
+        data = Path(path).read_bytes()
+        self.doc["seq"] += 1
+        self.doc["uploads"] += 1
+        fid = f"drv-{self.doc['seq']:05d}"
+        self.doc["files"][fid] = {
+            "id": fid, "name": name, "parent": parent_id,
+            "size": len(data), "md5": hashlib.md5(data).hexdigest(),
+            "sha256": hashlib.sha256(data).hexdigest()}
+        if self.doc["lost_next"]:
+            self.doc["lost_next"] = False
+            self._save()
+            raise ProviderError("transport_timeout")   # ack lost; file exists
+        self._save()
+        return {"id": fid}
+
+    def stat(self, file_id):
+        self._auth()
+        f = self.doc["files"].get(file_id)
+        if f is None:
+            return None
+        out = dict(f)
+        if self.doc["no_md5"]:
+            out["md5"] = None
+        return out
+
+    def plant(self, parent_id, name, content):
+        """Pre-existing remote file (conflict/reuse scenarios)."""
+        self.doc["seq"] += 1
+        fid = f"drv-{self.doc['seq']:05d}"
+        self.doc["files"][fid] = {
+            "id": fid, "name": name, "parent": parent_id,
+            "size": len(content), "md5": hashlib.md5(content).hexdigest(),
+            "sha256": hashlib.sha256(content).hexdigest()}
+        self._save()
+        return fid
