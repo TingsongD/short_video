@@ -48,10 +48,14 @@ class RenderService:
         ws = Path(b["workspace"])
         ws.mkdir(parents=True, exist_ok=True)
         def bound_media(items):
-            return [{**item,"sha256":hashlib.sha256(Path(item["src"]).read_bytes()).hexdigest()} for item in items]
+            # Content identity, not transport location: absolute src paths
+            # change on restore into a different root while the bytes —
+            # which are what the render consumes — stay identical.
+            return [{**{k:v for k,v in item.items() if k not in ("src","path","workspace","hypit_workspace")},
+                     "sha256":hashlib.sha256(Path(item["src"]).read_bytes()).hexdigest()} for item in items]
         inputs_hash = content_hash({"segments":bound_media(segments), "audio":bound_media(audio),
                                    "captions":captions,"clock":clock,"extra":inputs,
-                                   "composition":b["composition_hash"],"renderer":b["renderer"],"version":"render.v3"})
+                                   "composition":b["composition_hash"],"renderer":b["renderer"],"version":"render.v4"})
         if b.get("inputs_hash") and b["inputs_hash"] != inputs_hash:
             raise ContractError("render_input_revision_mismatch", "build_id")
         if b["status"] in ("succeeded","collected"):
