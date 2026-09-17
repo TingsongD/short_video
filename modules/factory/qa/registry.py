@@ -59,7 +59,7 @@ MODULES = {
 
 # Modules whose service code exists. Grows as phases land; a case can only
 # run when its module is in this set.
-IMPLEMENTED = {"F00", "F01"}
+IMPLEMENTED = {"F00", "F01", "F02"}
 
 LIVE_CASES = {  # cases that can only qualify under funded/connected scope
     "F16-M04", "F17-M04", "F25-M04", "F31-M04", "F32-M04",
@@ -76,6 +76,10 @@ EXPECTED = {
     "F01-M02": "absent module, unknown fault and occupied init each error clearly",
     "F01-M03": "fake provider retains op; acceptance vs acknowledgement distinguished",
     "F01-M04": "manual verdict required before pass; report includes reviewer+hash",
+    "F02-M01": "30 s/6-beat and 169.7 s/20-take plans validate; totals 900 and 5,091 frames",
+    "F02-M02": "overlap, unknown provenance and zero denominator each get typed field errors",
+    "F02-M03": "accepted revision immutable; edit creates child with parent hash + reason",
+    "F02-M04": "compatible Jimeng converts and validates; Vertex/long-haul refuse with reasons",
 }
 
 
@@ -86,8 +90,8 @@ def _default_expected(module, n):
 
 def all_cases():
     """The full 144-case registry; impl callables attach in case modules."""
-    from . import cases_f01
-    impls = cases_f01.implementations()
+    from . import cases_f01, cases_f02
+    impls = {**cases_f01.implementations(), **cases_f02.implementations()}
     specs = {}
     for mid in MODULES:
         for n in range(1, 5):

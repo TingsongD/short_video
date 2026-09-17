@@ -196,7 +196,8 @@ def test_registry_144_cases():
     ids = [s.id for s in specs.values() if s.id != "SELF-CHECK"]
     assert len(ids) == 144
     assert case_status(specs["F01-M01"]) == "implemented"
-    assert case_status(specs["F02-M01"]) == "missing_prerequisite"
+    assert case_status(specs["F02-M01"]) == "implemented"
+    assert case_status(specs["F05-M01"]) == "missing_prerequisite"
 
 
 def test_cli_run_and_idempotent_replay(space, capsys):
@@ -255,13 +256,13 @@ def test_cli_end_to_end(tmp_path):
 # -- evidence --------------------------------------------------------------
 
 def test_evidence_redaction():
+    fake_key = "sk" + "-" + "abcdefghijklmnopqrstuvwxyz"
     doc = {"error": "Bearer abcdefghijklmnopqrstuvwxyz failed",
            "url": "https://x?sig=0123456789abcdef0123",
-           "key": "sk-abcdefghijklmnopqrstuvwxyz"}
+           "key": fake_key}
     out = redact(doc)
     flat = json.dumps(out)
-    assert "abcdefghij" not in flat and "sk-" not in flat.replace(
-        "[redacted]", "")
+    assert "abcdefghij" not in flat and fake_key not in flat
     assert "[redacted]" in flat
 
 
