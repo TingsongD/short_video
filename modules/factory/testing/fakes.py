@@ -8,6 +8,7 @@ Counters record billable submissions, polls, downloads, uploads and
 publishes. Fault scripts from qa.faults modify behavior at named points;
 an accepted operation retains its identity and reservation semantics.
 """
+import base64
 import hashlib
 import json
 from pathlib import Path
@@ -966,3 +967,188 @@ class _Fault(Exception):
 
 class _Malformed(Exception):
     pass
+
+
+class FakeOAuthLoader:
+    """Persistent OAuth credential source for VertexAuth (F17).
+    Drills: expire(), reauth(), switch_project(), api_key_only(),
+    revoke_scope(), set_quota(ok)."""
+
+    def __init__(self, path, project="factory-proj",
+                 identity="builder@example.com"):
+        self.path = Path(path)
+        if self.path.exists():
+            self.doc = json.loads(self.path.read_text())
+        else:
+            self.doc = {"kind": "oauth",
+                        "access_token": "ya29.fake-token",
+                        "expiry": "2099-01-01T00:00:00Z",
+                        "expired": False, "identity": identity,
+                        "project": project,
+                        "scopes": ["cloud-platform"],
+                        "quota_ok": True}
+            self._save()
+
+    def _save(self):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self.path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(self.doc, indent=1, sort_keys=True))
+        tmp.replace(self.path)
+
+    def __call__(self):
+        return dict(self.doc)
+
+    def expire(self):
+        self.doc["expired"] = True
+        self._save()
+
+    def reauth(self, project=None, identity=None):
+        self.doc.update({"kind": "oauth", "expired": False,
+                         "project": project or self.doc["project"],
+                         "identity": identity or self.doc["identity"],
+                         "quota_ok": True})
+        self._save()
+
+    def api_key_only(self):
+        self.doc["kind"] = "api_key"
+        self._save()
+
+    def switch_project(self, project):
+        self.doc["project"] = project
+        self._save()
+
+    def revoke_scope(self):
+        self.doc["scopes"] = []
+        self._save()
+
+    def set_quota(self, ok):
+        self.doc["quota_ok"] = bool(ok)
+        self._save()
+
+
+class FakeVertexTransport:
+    """Persistent Interactions-API transport (F17): enforces the pilot's
+    lessons — API key → 401, expired OAuth → 401, wrong project → 404,
+    `delivery: uri` without `gcs_uri` → accepted-then-terminal
+    invalid_request, and a lost POST response leaves a real remote
+    interaction behind."""
+
+    KNOWN_MODELS = {"gemini-omni-1.1-flash-preview"}
+
+    def __init__(self, path, auth_loader):
+        self.path = Path(path)
+        self.auth_loader = auth_loader
+        if self.path.exists():
+            self.doc = json.loads(self.path.read_text())
+        else:
+            self.doc = {"seq": 0, "interactions": {}, "polls": {},
+                        "faults": [], "lost_posts": []}
+            self._save()
+
+    def _save(self):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self.path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(self.doc, indent=1, sort_keys=True))
+        tmp.replace(self.path)
+
+    def set_fault(self, name):
+        if name not in self.doc["faults"]:
+            self.doc["faults"].append(name)
+            self._save()
+
+    def clear_fault(self, name):
+        if name in self.doc["faults"]:
+            self.doc["faults"].remove(name)
+            self._save()
+
+    def lose_next_post(self):
+        self.doc["lost_posts"].append("pending")
+        self._save()
+
+    # -------------------------------------------------- transport ----
+    def __call__(self, method, url, headers, body):
+        cred = self.auth_loader()
+        if cred.get("kind") == "api_key" or cred.get("expired") \
+                or not cred.get("access_token"):
+            return 401, {"error": {"code": 401,
+                                   "message": "unauthenticated"}}
+        # project in URL must match the credential's project
+        if f"/projects/{cred['project']}/" not in url:
+            return 404, {"error": {"code": 404,
+                                   "message": "project not found"}}
+        if "quota_429" in self.doc["faults"]:
+            return 429, {"error": {"code": 429,
+                                   "message": "quota exhausted"}}
+        if method == "POST" and url.endswith(":cancel"):
+            return self._cancel(url.rsplit("/", 1)[1][:-7])
+        if method == "POST":
+            return self._post(body or {})
+        return self._get(url.rsplit("/", 1)[1])
+
+    def _post(self, body):
+        iid = f"int-{self.doc['seq'] + 1:05d}"
+        self.doc["seq"] += 1
+        interaction = {"interactionId": iid, "request": body,
+                       "status": "RUNNING", "errors": [],
+                       "output": {}, "usage": None}
+        # pilot failure: URI delivery without a configured bucket is
+        # accepted then fails terminally on the resource itself
+        if body.get("delivery") == "uri" and not body.get("gcs_uri"):
+            interaction["status"] = "FAILED"
+            interaction["errors"] = [
+                {"code": "invalid_request",
+                 "message": "URI delivery requires gcs_uri"}]
+        if "http200_terminal" in self.doc["faults"]:
+            interaction["status"] = "FAILED"
+            interaction["errors"] = [
+                {"code": "content_filtered",
+                 "message": "terminal failure after acceptance"}]
+        if body.get("model") not in self.KNOWN_MODELS:
+            interaction["status"] = "FAILED"
+            interaction["errors"] = [
+                {"code": "model_not_found",
+                 "message": str(body.get("model"))}]
+        self.doc["interactions"][iid] = interaction
+        self._save()
+        if self.doc["lost_posts"]:
+            self.doc["lost_posts"].pop()
+            self._save()
+            raise TimeoutError("response lost after acceptance")
+        return 200, {"interactionId": iid, "status": "RUNNING"}
+
+    def _get(self, iid):
+        it = self.doc["interactions"].get(iid)
+        if it is None:
+            return 404, {"error": {"code": 404,
+                                   "message": "interaction not found"}}
+        if "download_fails" in self.doc["faults"] \
+                and it["status"] == "SUCCEEDED":
+            raise ConnectionError("media retrieval transport failure")
+        n = self.doc["polls"].get(iid, 0)
+        self.doc["polls"][iid] = n + 1
+        if it["status"] == "RUNNING" and n >= 1:
+            if "missing_output" in self.doc["faults"]:
+                it["status"] = "SUCCEEDED"
+            elif "malformed_b64" in self.doc["faults"]:
+                it["status"] = "SUCCEEDED"
+                it["output"] = {"video": {"base64": "!!!not-b64!!!"}}
+            else:
+                it["status"] = "SUCCEEDED"
+                payload = f"vertex-media:{iid}".encode()
+                it["output"] = {"video": {
+                    "base64": base64.b64encode(payload).decode()}}
+                it["usage"] = {"input_tokens": 103,
+                               "output_tokens": 23168,
+                               "thought_tokens": 421}
+        self._save()
+        return 200, {"interactionId": iid, "status": it["status"],
+                     "errors": it["errors"], "output": it["output"],
+                     "usage": it["usage"]}
+
+    def _cancel(self, iid):
+        it = self.doc["interactions"].get(iid)
+        if it is None:
+            return 404, {"error": {"code": 404}}
+        it["status"] = "CANCELLED"
+        self._save()
+        return 200, {"interactionId": iid, "status": "CANCELLED"}
