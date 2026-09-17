@@ -37,8 +37,10 @@ def _color_mp4(path, duration, size="360x640", rate=24, color="0x3366cc",
 
 
 def _png(path, size="360x640", color="0xcc3366"):
+    # Force the PNG encoder+image2 muxer even when `path` ends in .mp4 —
+    # reference-defects relies on PNG bytes under a video name.
     _ffmpeg(["-f", "lavfi", "-i", f"color=c={color}:s={size}:d=0.1",
-             "-frames:v", "1", str(path)])
+             "-frames:v", "1", "-c:v", "png", "-f", "image2", str(path)])
 
 
 def _sha256(path):

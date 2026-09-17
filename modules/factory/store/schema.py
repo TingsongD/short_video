@@ -1,7 +1,7 @@
 """Ordered migrations. Every DB carries meta.schema_version; an older
 binary refuses a newer database rather than reinterpreting it."""
 
-CURRENT_VERSION = 2
+CURRENT_VERSION = 3
 
 MIGRATIONS = [
     (1, """
@@ -111,5 +111,22 @@ CREATE TABLE artifacts (
   version INTEGER NOT NULL DEFAULT 1
 );
 CREATE INDEX artifacts_sha ON artifacts(sha256);
+"""),
+    (3, """
+CREATE TABLE artifact_links (
+  artifact_id TEXT NOT NULL,
+  owner_kind TEXT NOT NULL,
+  owner_id TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (artifact_id, owner_kind, owner_id)
+);
+
+CREATE TABLE artifact_sources (
+  artifact_id TEXT NOT NULL,
+  source_key TEXT NOT NULL,
+  detail TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (artifact_id, source_key)
+);
 """),
 ]

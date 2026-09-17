@@ -34,7 +34,8 @@ class TestSchemaAndMigration:
 
     def test_migration_applies_in_order(self, tmp_path):
         conn = connection.open(str(tmp_path / "m.db"))
-        assert connection.current_version(conn) == 2
+        assert connection.current_version(conn) == \
+            connection._schema.CURRENT_VERSION
         # every migration's tables exist
         tables = {r[0] for r in conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table'")}
@@ -180,7 +181,8 @@ class TestBackupRestore:
             u.events.append("experiment:exp:1", "created", {})
         dest = tmp_path / "backup.db"
         info = backup.backup(db.path, dest)
-        assert info == {"integrity": "ok", "schema_version": 2}
+        assert info == {"integrity": "ok",
+                        "schema_version": connection._schema.CURRENT_VERSION}
         conn = sqlite3.connect(str(dest))
         n = conn.execute("SELECT COUNT(*) FROM records").fetchone()[0]
         assert n == 1
