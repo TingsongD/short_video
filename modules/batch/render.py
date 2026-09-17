@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[2]
 HYPIT = ROOT / "scripts/hypit.sh"
 
 
-def cues(words):
+def cues(words, frames=5091):
     groups, group, result = [], [], []
     for word in words:
         group.append(word)
@@ -29,7 +29,7 @@ def cues(words):
             start = max(43, round(word["start"] * 30))
             # Same-frame words share the later, complete progressive caption;
             # forcing an earlier prefix to last a frame stacks text on itself.
-            end = min(5091, round(following * 30))
+            end = min(frames, round(following * 30))
             if end > start and word["end"] > 43 / 30:
                 result.append({"start": start, "end": end,
                                "text": " ".join(w["text"] for w in group[:wi + 1])})
@@ -37,6 +37,7 @@ def cues(words):
 
 
 def author(folder, brief, v, selected=None):
+    frames = brief.get("timeline_frames", 5091)
     takes = brief["takes"] if selected is None else [selected]
     name = "final" if selected is None else "export-" + selected["id"]
     lines = ['<?svml using="@hypit/markup@1"?>', '<svml>']
@@ -45,7 +46,7 @@ def author(folder, brief, v, selected=None):
                            ("typo", "typography-track"), ("film", "film"), ("render", "render-hyperframes")]:
         lines.append(f'<import as="{short}" from="@hypit/{package}@1"/>')
     lines += ['<import as="look" source="./style.svs"/>', '<time:Clock id="clock" frame-rate="30"/>',
-              '<time:Timeline id="program" clock={clock} end="5091f"/>', '<space:Canvas id="canvas" width="1080" height="1920"/>']
+              f'<time:Timeline id="program" clock={{clock}} end="{frames}f"/>', '<space:Canvas id="canvas" width="1080" height="1920"/>']
     for key, l, t, r, b in [("full", 0, 0, 100, 100), ("caption-frame", 8, 68, 92, 76),
                            ("label-frame", 8, 76, 92, 82), ("headline-frame", 9, 49, 96, 59)]:
         lines.append(f'<space:Frame id="{key}" within={{canvas}} left="{l}%" top="{t}%" right="{r}%" bottom="{b}%"/>')
@@ -61,8 +62,8 @@ def author(folder, brief, v, selected=None):
     for take in takes:
         lines.append(f'<media:Item id="picture-{take["id"]}" media={{{take["id"]}.media}} frame={{full}} start="{take["start_frame"]}f" end="{take["end_frame"]}f" appearance={{look.media.full}}/>')
     lines += ['</media:Track>', '<typo:Track id="titles" timeline={program.timeline}>']
-    start, stop = (0, 5091) if selected is None else (selected["start_frame"], selected["end_frame"])
-    for index, cue in enumerate(cues(read(folder / "audio/words.json"))):
+    start, stop = (0, frames) if selected is None else (selected["start_frame"], selected["end_frame"])
+    for index, cue in enumerate(cues(read(folder / "audio/words.json"), frames)):
         if cue["start"] < stop and cue["end"] > start:
             lines.append(f'<typo:Area id="caption-{index}" placement={{caption-frame}} style={{caption-style}} start="{cue["start"]}f" end="{cue["end"]}f">{esc(cue["text"])}</typo:Area>')
     for product in brief["products"]:
@@ -78,7 +79,7 @@ def author(folder, brief, v, selected=None):
         for audio_name in ("narration", "music-bed"):
             lines += [f'<asset:Audio id="{audio_name}-file" src="./audio/{audio_name}.wav"/>',
                 f'<pipeline:Normalize id="{audio_name}" source={{{audio_name}-file}} clock={{clock}} video="none" audio="default" span-authority="audio"/>',
-                f'<audio:Track id="{audio_name}-track" timeline={{program.timeline}}><audio:Item id="{audio_name}-sound" source={{{audio_name}.media}} start="0f" end="5091f" gain="{1.25 if audio_name == "narration" else 1}"/></audio:Track>']
+                f'<audio:Track id="{audio_name}-track" timeline={{program.timeline}}><audio:Item id="{audio_name}-sound" source={{{audio_name}.media}} start="0f" end="{frames}f" gain="{1.25 if audio_name == "narration" else 1}"/></audio:Track>']
     lines += ['<film:Film id="main" canvas={canvas} timeline={program.timeline} appearance={look.film.main}>',
               '<film:Track source={footage.visual}/><film:Track source={titles.track}/>']
     if selected is None:
@@ -179,7 +180,7 @@ class Render:
         final = self.folder / name
         join_sections(self.local, paths, brief["takes"], self.folder / "audio/narration.wav",
                       self.folder / "audio/music-bed.wav", final)
-        report = verify_media(self.local, final, "video", 169.7, final=True)
+        report = verify_media(self.local, final, "video", brief.get("timeline_frames", 5091) / 30, final=True)
         self.v.update(state="rendered", final_path=str(final), technical_qc=report)
         write(self.folder / "technical-qc.json", report)
         self.batch.save()

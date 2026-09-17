@@ -378,3 +378,24 @@ def test_section_join_preserves_frame_clock_despite_rounded_mp4_duration(tmp_pat
     packets = json.loads(subprocess.check_output(["ffprobe", "-v", "error", "-select_streams", "v",
         "-show_packets", "-show_entries", "packet=pts", "-of", "json", str(final)]))["packets"]
     assert sorted(p["pts"] for p in packets) == [i * 512 for i in range(30)]
+
+
+def test_short_haul_preserves_selected_products_and_explicit_duration():
+    selection = {'products': [{'product_id': str(i)} for i in range(5)], 'timeline_frames': 2700}
+    brief = {'products': selection['products'], 'timeline_frames': 2700, 'delivery_name': 'short.mp4',
+             'takes': [{'id': str(i), 'slot': i // 2 + 1, 'start_frame': i * 270,
+                        'end_frame': (i + 1) * 270, 'text': 'Original copy.'} for i in range(10)]}
+    validate_brief(brief, selection)
+    brief['timeline_frames'] = 5091
+    with pytest.raises(Pause, match='duration'):
+        validate_brief(brief, selection)
+    brief['timeline_frames'] = 2700
+    brief['takes'][-1]['end_frame'] = 2699
+    with pytest.raises(Pause, match='timeline'):
+        validate_brief(brief, selection)
+
+
+def test_short_captions_stop_at_selected_end():
+    words = [{'text': 'Finish.', 'start': 89.8, 'end': 90.0}]
+    assert cues(words, 2700)[-1]['end'] == 2700
+    assert cues(words)[-1]['end'] == 2704

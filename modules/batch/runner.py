@@ -21,19 +21,25 @@ PREVIOUS = ROOT / "data/production/v-product-variation-Db9SrsBsIUg/hypit-full-le
 
 def validate_brief(brief, selection):
     products, takes = brief["products"], brief["takes"]
-    if len(products) != 10 or [p["product_id"] for p in products] != [p["product_id"] for p in selection["products"]]:
-        raise Pause("The ten selected products and their order must be preserved")
-    if len({t["id"] for t in takes}) != len(takes) or not takes or takes[0]["start_frame"] != 0 or takes[-1]["end_frame"] != 5091:
-        raise Pause("Takes must uniquely cover the complete 169.7-second video")
+    count = len(selection["products"])
+    frames = selection.get("timeline_frames", 5091)
+    if type(frames) is not int or frames < 120 or not 1 <= count <= 10:
+        raise Pause("Invalid selected product count or timeline")
+    if brief.get("timeline_frames", 5091) != frames:
+        raise Pause("Brief duration differs from the selected timeline")
+    if len(products) != count or [p["product_id"] for p in products] != [p["product_id"] for p in selection["products"]]:
+        raise Pause("The selected products and their order must be preserved")
+    if len({t["id"] for t in takes}) != len(takes) or not takes or takes[0]["start_frame"] != 0 or takes[-1]["end_frame"] != frames:
+        raise Pause("Takes must uniquely cover the complete selected timeline")
     cursor = 0
     for take in takes:
-        count = take["end_frame"] - take["start_frame"]
-        if take["start_frame"] != cursor or not 120 <= count <= 450 or take["slot"] not in range(1, 11):
+        shot_frames = take["end_frame"] - take["start_frame"]
+        if take["start_frame"] != cursor or not 120 <= shot_frames <= 450 or take["slot"] not in range(1, count + 1):
             raise Pause("Invalid shot order, gap, overlap or unsupported duration")
         if not take["text"].strip() or any(x in take["text"] for x in ("&#", "<", ">", "[", "]")):
             raise Pause("Narration must contain clean spoken copy")
         cursor = take["end_frame"]
-    if set(t["slot"] for t in takes) != set(range(1, 11)):
+    if set(t["slot"] for t in takes) != set(range(1, count + 1)):
         raise Pause("Every selected product needs footage")
     if sum(len(t["text"]) for t in takes) > 4000:
         raise Pause("Rewrite narration within the video's 4,000-credit ceiling before synthesis")

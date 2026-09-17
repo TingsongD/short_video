@@ -162,15 +162,17 @@ class Audio:
         # This avoids forcing a long sentence into half of an arbitrary equal split.
         for take in brief["takes"]:
             self.generate(take, defer_fit=True)
+        frames = brief.get("timeline_frames", 5091)
+        target_duration = frames / 30
         weights = [self.v["tts_jobs"][t["id"]]["compact_seconds"] for t in brief["takes"]]
         total = sum(weights)
-        if total / (169.7 - .08 * len(weights)) > 1.18:
+        if total / (target_duration - .08 * len(weights)) > 1.18:
             raise Pause("Whole narration is too long even after pause removal; review an intentional copy correction")
         cursor, cumulative = 0, 0.
         old_times = [{"id": t["id"], "start_frame": t["start_frame"], "end_frame": t["end_frame"]} for t in brief["takes"]]
         for take, weight in zip(brief["takes"], weights):
             cumulative += weight
-            end = round(5091 * cumulative / total)
+            end = round(frames * cumulative / total)
             if not 120 <= end - cursor <= 450:
                 raise Pause("Measured performance needs a different shot split before generation")
             take.update(start_frame=cursor, end_frame=end)
@@ -180,7 +182,7 @@ class Audio:
         write(brief_path, brief)
         self.v["brief_sha256"] = digest(brief_path)
         self.v.setdefault("timing_revisions", []).append({"basis": "Measured accepted speech after pause removal",
-                          "before": old_times, "compact_seconds": total, "frames": 5091})
+                          "before": old_times, "compact_seconds": total, "frames": frames})
         self.batch.save()
         all_words, paths = [], []
         for take in brief["takes"]:
@@ -192,7 +194,7 @@ class Audio:
         self.local.run(["ffmpeg", "-v", "error", "-y", "-f", "concat", "-safe", "0", "-i", playlist,
                         "-c:a", "pcm_s16le", self.folder / "narration.wav"])
         duration = float(probe(self.local, self.folder / "narration.wav")["format"]["duration"])
-        if abs(duration - 169.7) > .005:
+        if abs(duration - target_duration) > .005:
             raise Pause("Measured narration does not match the complete timeline")
         import shutil
         shutil.copy2(music, self.folder / "music-bed.wav")

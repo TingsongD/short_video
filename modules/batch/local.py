@@ -151,9 +151,9 @@ def verify_media(local, path, kind, duration=0, final=False):
     if kind == "video" and float(info["format"].get("duration", 0)) + .04 < duration:
         raise Pause("Generated clip cannot cover its assigned duration")
     if final:
-        if (picture["width"], picture["height"], picture["avg_frame_rate"], int(picture.get("nb_frames", 0))) != (1080, 1920, "30/1", 5091):
+        if (picture["width"], picture["height"], picture["avg_frame_rate"], int(picture.get("nb_frames", 0))) != (1080, 1920, "30/1", round((duration or 169.7) * 30)):
             raise Pause("Final video dimensions, frame rate or frame count failed")
-        if abs(float(info["format"]["duration"]) - 169.7) > .05 or not any(s["codec_type"] == "audio" for s in info["streams"]):
+        if abs(float(info["format"]["duration"]) - (duration or 169.7)) > .05 or not any(s["codec_type"] == "audio" for s in info["streams"]):
             raise Pause("Final audio/duration failed")
     local.run(["ffmpeg", "-v", "error", "-i", path, "-f", "null", "-"], timeout=240)
     return {"sha256": digest(path), "bytes": Path(path).stat().st_size, "probe": info}

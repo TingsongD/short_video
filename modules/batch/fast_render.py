@@ -72,7 +72,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     def add(start, end, style, x, y, text):
         events.append(f"Dialogue: 0,{ass_time(start)},{ass_time(end)},{style},,0,0,0,,"
                       + "{\\pos(" + f"{x},{y}" + ")}" + literal(text))
-    for cue in cues(words):
+    for cue in cues(words, brief.get("timeline_frames", 5091)):
         add(cue["start"], cue["end"], "Caption", 540, 1306, cue["text"])
     for product in brief["products"]:
         start = next(t["start_frame"] for t in brief["takes"] if t["slot"] == product["slot"]) + 14
@@ -130,9 +130,9 @@ class FastRender:
             "[1:a]volume=1.25[voice];[voice][2:a]amix=inputs=2:duration=first:normalize=0,alimiter=limit=0.95:level=false[a]",
             "-map", "[v]", "-map", "[a]", "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
             "-threads", "4", "-pix_fmt", "yuv420p", "-r", "30", "-fps_mode", "cfr", "-c:a", "aac", "-b:a", "192k",
-            "-t", "169.7", "-movflags", "+faststart", temp], timeout=600)
+            "-t", str(brief.get("timeline_frames", 5091) / 30), "-movflags", "+faststart", temp], timeout=600)
         doc["encode_seconds"] = time.monotonic() - started
-        report = verify_media(self.local, temp, "video", 169.7, final=True)
+        report = verify_media(self.local, temp, "video", brief.get("timeline_frames", 5091) / 30, final=True)
         temp.replace(final)
         report["probe"]["format"]["filename"] = str(final)
         doc.update(state="verified", completed_at=now(), sha256=digest(final), total_seconds=time.monotonic()-started)
