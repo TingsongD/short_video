@@ -985,6 +985,36 @@ class MetricSnapshot(Record):
 
 
 @dataclass
+class DecisionPolicy(Record):
+    """Frozen BEFORE publication: what evidence could change our mind.
+    Immutable once bound — a revision is a new record, not an edit."""
+    experiment_id: str = ""
+    experiment_revision: int = 0
+    policy_version: str = ""
+    primary_metric: str = ""
+    horizon: str = ""                # 48h|7d|28d
+    exposure_metric: str = "thumbnail_impressions"
+    min_exposure: int = 0
+    practical_lift: float = 0.0      # minimum meaningful relative lift
+    guardrails: dict = field(default_factory=dict)  # metric -> min
+    comparison_rule: str = "any"     # any|all treatments vs control
+    promote_min_independent_experiments: int = 2
+    status: str = "frozen"           # frozen|revised
+    content_hash: str = ""
+
+    def validate(self):
+        e = super().validate()
+        if self.status == "frozen":
+            for f in ("primary_metric", "horizon", "policy_version"):
+                if not getattr(self, f):
+                    e.append(ContractError("missing_field", f))
+            if self.min_exposure < 0 or self.practical_lift < 0:
+                e.append(ContractError("invalid_policy_value",
+                                       "min_exposure|practical_lift"))
+        return e
+
+
+@dataclass
 class Decision(Record):
     experiment_id: str = ""
     experiment_revision: int = 0
@@ -995,8 +1025,10 @@ class Decision(Record):
     conclusion: str = ""             # waiting_for_data|insufficient_exposure|
                                      # inconclusive|provisional_winner|
                                      # no_improvement|needs_retest
+    winner: str = ""                 # variant key when provisional_winner
     evidence_ids: list = field(default_factory=list)
     limitations: list = field(default_factory=list)
+    inputs_hash: str = ""            # identical inputs → identical decision
     superseded_by: str = ""
 
     CONCLUSIONS = ("waiting_for_data", "insufficient_exposure",
@@ -1008,6 +1040,30 @@ class Decision(Record):
         if self.conclusion and self.conclusion not in self.CONCLUSIONS:
             e.append(ContractError("bad_conclusion", "conclusion",
                                    self.conclusion))
+        return e
+
+
+@dataclass
+class Hypothesis(Record):
+    """A searchable lesson: claim + evidence + uncertainty. Accepted
+    lessons inform recommendations; they never silently rewrite
+    generation defaults."""
+    claim: str = ""
+    evidence_ids: list = field(default_factory=list)
+    uncertainty: str = "medium"      # low|medium|high
+    limitations: list = field(default_factory=list)
+    status: str = "candidate"        # candidate|accepted|retired
+    source: str = ""                 # decision:<id> | operator:<name>
+    attributed_to: str = ""          # operator name for overrides
+
+    def validate(self):
+        e = super().validate()
+        if self.uncertainty not in ("low", "medium", "high"):
+            e.append(ContractError("bad_uncertainty", "uncertainty",
+                                   self.uncertainty))
+        if self.status not in ("candidate", "accepted", "retired"):
+            e.append(ContractError("bad_hypothesis_status", "status",
+                                   self.status))
         return e
 
 

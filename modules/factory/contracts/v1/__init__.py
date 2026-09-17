@@ -25,6 +25,8 @@ SCHEMA_VERSIONS = {
     "publication.v1": "Publication",
     "metric_snapshot.v1": "MetricSnapshot",
     "decision.v1": "Decision",
+    "decision_policy.v1": "DecisionPolicy",
+    "hypothesis.v1": "Hypothesis",
     "outbox_event.v1": "OutboxEvent",
     "experiment_state.v1": "ExperimentState",
     "variant_state.v1": "VariantState",

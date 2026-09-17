@@ -6,7 +6,8 @@ from .records import (
     ReferenceBlueprint, Slot, FormatTemplate, ProviderPolicy,
     ExperimentRevision, VariantPlan, GenerationRequest, PriceAssessment,
     Authorization, Job, Attempt, Artifact, AssetUse, Review, Delivery,
-    Publication, MetricSnapshot, Decision, VARIANT_KEYS, JOB_STATES,
+    Publication, MetricSnapshot, Decision, DecisionPolicy,
+    Hypothesis, VARIANT_KEYS, JOB_STATES,
     content_hash,
 )
 from .revisions import accept, revise, check_revision_chain
