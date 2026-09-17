@@ -148,6 +148,7 @@ class MetricObservation(Record):
 
 @dataclass
 class ProductSnapshot(Record):
+    revision: int = 0                # catalog refresh => revision+1
     shop: str = ""
     product_id: str = ""
     variant_id: str = ""
@@ -159,6 +160,8 @@ class ProductSnapshot(Record):
     claims: list = field(default_factory=list)
     observed_at: str = ""
     pagination_complete: bool = False
+    media_coverage: dict = field(default_factory=dict)  # {images, videos}
+    warnings: list = field(default_factory=list)
 
     def validate(self):
         e = super().validate()

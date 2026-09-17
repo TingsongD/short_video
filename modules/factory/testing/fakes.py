@@ -463,3 +463,108 @@ class FakeDiscovery:
         return {"submit": self.state.doc["counters"]["submit"],
                 "charges": len(self.state.doc["charges"]),
                 "credits": self.state.doc["credits"]}
+
+
+class FakeShopify:
+    """Scriptable read-only Shopify adapter (F11): paginated catalog
+    from the shopify-catalog fixture shape, media downloads from a local
+    directory, expiring URLs, and removable read permissions."""
+
+    def __init__(self, name, state_dir, ids, clock, catalog=None,
+                 media_dir=None):
+        self.name = name
+        self.ids = ids
+        self.clock = clock
+        self.media_dir = Path(media_dir) if media_dir else None
+        self.state = FakeProviderState(Path(state_dir) / f"{name}.json")
+        d = self.state.doc
+        d.setdefault("catalog", catalog or {"shop": "", "pages": []})
+        d.setdefault("refreshed", {})      # media_id -> fresh url
+        d.setdefault("denied", [])         # media ids w/o read permission
+        d.setdefault("graphql_calls", 0)
+        self.state.save()
+
+    # -- adapter interface -------------------------------------------------
+    def products_page(self, cursor=None, page_size=10):
+        pages = self.state.doc["catalog"]["pages"]
+        idx = int(cursor) if cursor else 0
+        if idx >= len(pages):
+            raise ProviderError("bad_cursor", http_status=400)
+        page = pages[idx]
+        return {"products": page["products"],
+                "hasNextPage": bool(page.get("hasNextPage")),
+                "endCursor": str(idx + 1)}
+
+    def media_page(self, product_id, cursor=None, page_size=10):
+        for p in self._products():
+            if p["id"] == product_id:
+                return {"media": p.get("media", []), "hasNextPage": False,
+                        "endCursor": None}
+        raise ProviderError("product_not_found", http_status=404)
+
+    def product_by_handle(self, handle):
+        for p in self._products():
+            if p.get("handle") == handle:
+                return p
+        raise ProviderError("product_not_found", http_status=404)
+
+    def product_by_id(self, product_id):
+        for p in self._products():
+            if p["id"] == product_id:
+                return p
+        raise ProviderError("product_not_found", http_status=404)
+
+    def refresh_media_url(self, media_id):
+        """Fresh signed URL for an expired media link."""
+        url = f"https://cdn.fixture/refreshed-{media_id.rsplit('/', 1)[-1]}"
+        self.state.doc["refreshed"][media_id] = url
+        self.state.save()
+        return url
+
+    def media_download(self, url):
+        media_id = self._media_id_for(url)
+        if media_id in self.state.doc["denied"]:
+            raise ProviderError("missing_scope", http_status=403)
+        m = self._media_entry(media_id)
+        if m and m.get("expires") and media_id not in \
+                self.state.doc["refreshed"]:
+            raise ProviderError("expired_source", http_status=410)
+        name = url.split("?")[0].rsplit("/", 1)[-1]
+        if self.media_dir:
+            path = self.media_dir / name
+            if path.is_file():
+                return path.read_bytes(), "application/octet-stream"
+        if name.startswith("refreshed-"):
+            orig = self._media_entry(media_id)
+            if orig:
+                base = orig["url"].split("?")[0].rsplit("/", 1)[-1]
+                path = self.media_dir / base if self.media_dir else None
+                if path and path.is_file():
+                    return path.read_bytes(), "application/octet-stream"
+        raise ProviderError("media_unavailable", http_status=404)
+
+    # -- manipulation for drills --------------------------------------------
+    def remove_permission(self, media_id):
+        denied = self.state.doc["denied"]
+        if media_id not in denied:
+            denied.append(media_id)
+            self.state.save()
+
+    def _products(self):
+        return [p for page in self.state.doc["catalog"]["pages"]
+                for p in page["products"]]
+
+    def _media_id_for(self, url):
+        for p in self._products():
+            for m in p.get("media", []):
+                if m.get("url") == url or \
+                        self.state.doc["refreshed"].get(m["id"]) == url:
+                    return m["id"]
+        return url.rsplit("/", 1)[-1]
+
+    def _media_entry(self, media_id):
+        for p in self._products():
+            for m in p.get("media", []):
+                if m["id"] == media_id:
+                    return m
+        return None
