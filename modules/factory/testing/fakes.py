@@ -169,7 +169,9 @@ class FakeProvider:
             raise ProviderError("download_transport_failed", transient=True)
         self.state.bump("download")
         self.state.save()
-        payload = f"fake-media:{self.name}:{operation_id}".encode()
+        payload_fn = getattr(self, "payload_fn", None)
+        payload = payload_fn(operation_id) if payload_fn else \
+            f"fake-media:{self.name}:{operation_id}".encode()
         if "corrupt-bytes" in op["faults"]:
             payload = b"garbage-not-media"
         if destination is not None:

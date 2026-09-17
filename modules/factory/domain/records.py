@@ -1009,3 +1009,69 @@ class DiscoveryRun(Record):
         if self.status not in ("running", "complete", "partial"):
             e.append(ContractError("bad_run_status", "status", self.status))
         return e
+
+
+# ------------------------------------------------------------ production
+
+WORK_KINDS = {"picture", "download", "review", "compose", "deliver"}
+WORK_STATES = {"planned", "blocked", "ready", "submitted", "downloaded",
+               "reviewing", "accepted", "rejected", "uncertain",
+               "manual", "needs_manual", "done", "failed"}
+
+
+@dataclass
+class WorkItem(Record):
+    """One unique node in the production graph. Shared work carries all
+    consuming takes; per-variant work carries exactly one."""
+    revision: int = 0
+    plan_id: str = ""
+    kind: str = ""                   # picture|download|review|compose|deliver
+    node_key: str = ""               # stable key inside the plan
+    request_hash: str = ""           # canonical dedupe key (picture)
+    takes: list = field(default_factory=list)     # [{variant,slot,duration_s}]
+    consumers: list = field(default_factory=list)  # variant keys downstream
+    allocations: list = field(default_factory=list)
+    # [{duration_s, offset_s, split}] provider-duration fitting
+    provider: str = ""
+    model: str = ""
+    request: dict = field(default_factory=dict)
+    inputs: dict = field(default_factory=dict)    # ref/speech/artifact hashes
+    price: dict = field(default_factory=dict)     # {unit, amount}
+    status: str = "planned"
+    depends: list = field(default_factory=list)   # node_keys
+    artifact_ids: list = field(default_factory=list)
+    operation_id: str = ""
+    problem: str = ""
+
+    def validate(self):
+        e = super().validate()
+        _id_errors(e, self.plan_id, "plan_id")
+        if self.kind not in WORK_KINDS:
+            e.append(ContractError("unknown_work_kind", "kind", self.kind))
+        if self.status not in WORK_STATES:
+            e.append(ContractError("unknown_work_status", "status",
+                                   self.status))
+        return e
+
+
+@dataclass
+class ProductionPlan(Record):
+    """Priced unique-work DAG for one accepted experiment revision."""
+    experiment_id: str = ""
+    experiment_revision: int = 0
+    revision: int = 0
+    status: str = "draft"            # draft|active|halted|complete
+    plan_hash: str = ""
+    stats: dict = field(default_factory=dict)
+    # {takes, unique_pictures, shared_pictures, splits, manual_needed}
+    total_price: dict = field(default_factory=dict)   # {unit: micros}
+    variants: list = field(default_factory=list)
+    stale_reason: str = ""
+
+    def validate(self):
+        e = super().validate()
+        _id_errors(e, self.experiment_id, "experiment_id")
+        if self.status not in ("draft", "active", "halted", "complete"):
+            e.append(ContractError("unknown_plan_status", "status",
+                                   self.status))
+        return e
