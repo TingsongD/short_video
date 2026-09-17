@@ -12,12 +12,28 @@ from ..testing.fakes import ProviderError
 class ElevenLabsAdapter(SynchronousAdapter):
     name = "elevenlabs"
 
-    def __init__(self, state_dir, credentials=None, transport=None, policy=None):
+    def __init__(self, state_dir, credentials=None, transport=None, policy=None, account=None, pricing=None):
         super().__init__(state_dir)
+        self.account,self.pricing=account,pricing
         self.credentials = credentials or (lambda: {})
         self.live = transport is None
         self.policy = policy or ExecutionPolicy()
         self.transport = transport or BoundedHTTP("elevenlabs", self.policy, 64 * 1024 * 1024)
+
+    def readiness(self):
+        return {'ready':bool(self.account and self.pricing),'installed':True,'authenticated':False,
+                'catalog_visible':True,'contract_tested':True,'live_qualified':getattr(self,'qualified',False),
+                'reason':'Credential verification occurs at the transport boundary; model eleven_v3'}
+
+    def price(self,request):
+        from ..domain.errors import ContractError
+        if not self.pricing or request.get('model')!='eleven_v3' or not isinstance(request.get('text'),str):
+            raise ContractError('pricing_unavailable','elevenlabs')
+        rate=self.pricing.get('credits_per_character')
+        if type(rate) is not int or rate<=0:raise ContractError('pricing_unavailable','credits_per_character')
+        amount=len(request['text'])*rate
+        return {'kind':'usage_estimate','unit':'elevenlabs_credits','amount':amount,'reserve_amount':amount,
+                'valid_until':self.pricing.get('valid_until',''),'rate_basis':self.pricing.get('evidence','')}
 
     def execute(self, request):
         if request.get("model") != "eleven_v3" or not re.fullmatch(r"[A-Za-z0-9]+", request.get("voice_id", "")):

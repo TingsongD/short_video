@@ -77,7 +77,8 @@ class VertexAdapter(GenerationAdapter):
     # ------------------------------------------------------ readiness
 
     def readiness(self):
-        return self.auth.status()
+        status=self.auth.status()
+        return {**status,"installed":True,"authenticated":status.get("ready") is True,"catalog_visible":bool(self._caps),"contract_tested":True,"live_qualified":bool(self._caps) and all(c.get("live_qualified") is True for c in self._caps.values())}
 
     def capabilities(self, model):
         if model not in self._caps:

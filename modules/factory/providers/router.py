@@ -33,6 +33,42 @@ class ProviderRouter:
         self.catalog = catalog or CapabilityCatalog(db)
         self.executor = executor
 
+    def preflight(self, provider, model, request, duration, experiment_id='', authorization=None):
+        """Production boundary: validate the pinned route without quoting or effects."""
+        from .base import GenerationAdapter
+        adapter = self.adapters.get(provider)
+        if adapter is None: raise ContractError('generation_route_unavailable','provider',provider)
+        if request.get('model',model) != model or request.get('provider',provider) != provider:
+            raise ContractError('pinned_route_mismatch','provider/model')
+        settings=request.get('settings') or {}
+        roles=request.get('reference_roles') or {}
+        for i,ref in enumerate(request.get('refs') or []):
+            if not isinstance(ref,dict) or ref.get('kind') not in ('image','video','audio'):
+                raise ContractError('invalid_reference','refs')
+            roles={**roles,str(i):ref['kind']}
+        neutral=GenerationRequest(schema_version='generation_request.v1',id='preflight',created_at='',
+            provider=provider,model=model,requested_duration_s=duration,reference_roles=roles,
+            region=request.get('region',getattr(adapter,'location','')),
+            aspect=settings.get('aspect',request.get('aspect','9:16')),
+            resolution=settings.get('resolution',request.get('resolution','720p')),
+            native_audio_policy=request.get('native_audio_policy','strip'))
+        entry=self.catalog.latest(provider,model,neutral.region,self._input_mode(neutral),utcnow())
+        if not entry or entry['stale'] or not entry['snapshot'].valid_until:
+            raise ContractError('capability_evidence_required','provider/model/input_mode')
+        if entry['snapshot'].support not in (('qualified',) if self.live else ('observed','qualified')):
+            raise ContractError('route_not_qualified','provider/model/input_mode')
+        caps=entry['snapshot'].capabilities
+        problems=GenerationAdapter.validate(adapter,neutral,caps)
+        if duration not in (caps.get('durations_s') or []):problems.append('unsupported_duration')
+        if problems:raise ContractError('unsupported_generation_settings','request',','.join(problems))
+        if experiment_id:
+            rows=self.db.conn.execute("SELECT a.id FROM attempts a JOIN intents i ON json_extract(i.body,'$.attempt_id')=a.id JOIN jobs j ON j.id=a.job_id WHERE j.experiment_id=? AND json_extract(i.body,'$.provider')<>? AND i.kind='generation'",(experiment_id,provider)).fetchall()
+            for row in rows:
+                if self.fallback_blocked_reason(row['id']):raise ContractError('original_unresolved','attempt_id',row['id'])
+        if authorization and (provider not in authorization.allowed_providers or model not in authorization.allowed_models.get(provider,[])):
+            raise ContractError('route_outside_authority','provider/model')
+        return {'provider':provider,'model':model,'input_mode':self._input_mode(neutral),'capability_revision':entry['revision']}
+
     # --------------------------------------------------------- route
 
     def route(self, request, policy, authorization=None, now=None, original_attempt_id=None):

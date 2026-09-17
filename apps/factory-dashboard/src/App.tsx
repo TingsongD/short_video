@@ -4,13 +4,15 @@ import { ProvidersScreen } from "./features/providers/ProvidersScreen";
 import { CompareScreen } from "./features/compare/CompareScreen";
 import { ReviewsScreen } from "./features/reviews/ReviewsScreen";
 import { DeliveryScreen } from "./features/delivery/DeliveryScreen";
+import { GenerationApproval } from "./features/operations/GenerationApproval";
+import { OperationsScreen } from "./features/operations/OperationsScreen";
 import { QueueScreen, JobView } from "./features/queue/QueueScreen";
 
 // The server owns these JSON domain records. The editor round-trips unknown
 // optional fields; IDs, revision and hashes always come from the selected row.
 type Row = Record<string, any>;
-const TABS = ["Seeds", "Plan", "Queue", "Compare", "Reviews", "Delivery", "Studio", "Providers"] as const;
-const names = ["seeds","blueprints","templates","experiments","plans","assets","reviews","deliveries","products"];
+const TABS = ["Seeds", "Plan", "Queue", "Compare", "Reviews", "Delivery", "Studio", "Providers", "Products", "Budgets", "Research", "Analysis", "Audio", "Publishing", "Learning"] as const;
+const names = ["seeds","blueprints","templates","experiments","plans","assets","reviews","deliveries","products","budgets","research","effect_plans","publications","metrics","policies","decisions"];
 
 export default function App() {
   const [tab,setTab]=useState<(typeof TABS)[number]>("Seeds");
@@ -50,15 +52,16 @@ export default function App() {
   const media=(id:string)=>`/api/assets/${encodeURIComponent(id)}/media`;
   const videoAssets=(data.assets||[]).filter(x=>x.kind==='video');
   const selectedSeed=(data.seeds||[]).find(x=>x.id===selected?.experiment?.seed_id);
+  const clock=selected?.experiment?.output_clock;const fps=clock?clock.num/clock.den:30;
   const compare=[...(selectedSeed?.source_asset_id?[{key:'source',label:'Reference',media_url:media(selectedSeed.source_asset_id),media_sha:''}]:[]),
     ...finals.map(v=>({key:v.variant_key,label:`${v.variant_key} · revision ${v.experiment_revision}`,media_url:media(v.final.artifact_id),media_sha:v.final.sha256,
-      duration_s:v.target_frames/30,regions:v.allowed_regions.map((r:Row)=>({start_s:r.start/30,end_s:r.end/30,label:v.changed_factor}))}))];
+      duration_s:v.target_frames/fps,regions:v.allowed_regions.map((r:Row)=>({start_s:r.start/fps,end_s:r.end/fps,label:v.changed_factor}))}))];
   async function makeDraft(){
     if(!blueprint||blueprint.status!=='accepted'||!seed?.source_asset_id)throw new Error('Accept a source blueprint first.');
     let template=(data.templates||[]).find(t=>t.derived_from_blueprint===blueprint.content_hash);
     if(!template)template=(await call<{template:Row}>('POST','/api/templates',{body:{blueprint_id:blueprint.id}})).template;
     const segments=blueprint.beats.map((b:Row)=>({id:b.id,slot_id:b.id,role:b.role,target:b.target,copy:'',speech:{},
-      picture:{artifact_id:seed.source_asset_id,source_in_s:b.target.start_frame/30},captions:[],transition:'cut',claims:[]}));
+      picture:{artifact_id:seed.source_asset_id,source_in_s:b.target.start_frame/(blueprint.clock.num/blueprint.clock.den)},captions:[],transition:'cut',claims:[]}));
     const variations=['B','C','D'].map((key,i)=>{const pos=[0,Math.floor(segments.length/2),segments.length-1][i];const changed=structuredClone(segments);
       changed[pos].captions=[{text:`Write your ${['hook','body','ending'][i]} caption`,...changed[pos].target}];
       return{key,factor:['hook','body','ending'][i],regions:[segments[pos].target],segments:changed,hypothesis:'Write the specific hypothesis',primary_metric:'retention',allowed_fields:['captions']};});
@@ -85,12 +88,14 @@ export default function App() {
     </section>}
     {tab==='Plan'&&<section><h2>Four-variant plan</h2><p>Edit the planned assets, copy and declared changes before requesting a quote. Reuse only source footage you have permission to use.</p>
       <textarea aria-label="Experiment plan" rows={22} value={draft} onChange={e=>setDraft(e.target.value)}/><button onClick={()=>act(async()=>{const body=JSON.parse(draft);const r=await api.createExperiment(body) as Row;setExperiment(r.experiment.id);},'Experiment created')}>Save new experiment</button>
-      {selected&&<><p>Selected revision {selected.revision} · {selected.status}</p><button onClick={()=>act(()=>api.quote(experimentId,selected.revision),'Quote queued')}>Prepare current quote</button>
-      {plan&&<><pre>{JSON.stringify({plan_hash:plan.plan_hash,native_unit_totals:plan.total_price,work:plan.stats},null,2)}</pre><button onClick={()=>act(()=>call('POST',`/api/experiments/${experimentId}/authorize`,{rev:selected.revision,body:{plan_hash:plan.plan_hash,reviewer:requireReviewer()}}),'Local plan approved')}>Approve imported-media plan</button></>}
+      {selected&&<><button onClick={()=>setDraft(JSON.stringify({segments:selected.experiment.packaging.segments,voice:selected.experiment.voice,music:selected.experiment.music,variants:selected.variants.filter((v:Row)=>v.variant_key!=='A').map((v:Row)=>({key:v.variant_key,factor:v.changed_factor,regions:v.allowed_regions,segments:v.segments,hypothesis:v.hypothesis,primary_metric:v.primary_metric,allowed_fields:v.allowed_fields,dependent_fields:v.dependent_fields})),reason:'Operator revision'},null,2))}>Load current draft</button>
+      <button onClick={()=>act(()=>api.patchDraft(experimentId,JSON.parse(draft),selected.revision),'New revision saved; prepare a new quote')}>Save revised draft</button>
+      <p>Selected revision {selected.revision} · {selected.status}</p><button onClick={()=>act(()=>api.quote(experimentId,selected.revision),'Quote queued')}>Prepare current quote</button>
+      {plan&&<><pre>{JSON.stringify({plan_hash:plan.plan_hash,native_unit_totals:plan.total_price,work:plan.stats},null,2)}</pre><GenerationApproval plan={plan} selected={selected} budgets={data.budgets||[]} reviewer={reviewer} act={act}/></>}
       <button onClick={()=>act(()=>api.run(experimentId,selected.revision),'Production queued')}>Start / recover this revision</button></>}
     </section>}
     {tab==='Queue'&&<QueueScreen jobs={jobs.filter(j=>!experimentId||j.experiment_id===experimentId).map(j=>({id:j.id,variant:j.variant_key||'',stage:j.phase,state:(j.status==='succeeded'?'done':['failed','blocked'].includes(j.status)?j.status:j.status==='awaiting_review'?'blocked':['ready','waiting_dependencies'].includes(j.status)?'queued':'running') as JobView['state']}))}
-      onPause={()=>act(()=>api.pause(experimentId))} onResume={()=>act(()=>api.resume(experimentId))} onReconcile={id=>act(()=>call('POST',`/api/jobs/${id}/reconcile`,{body:{}}))}/>}
+      onRetry={id=>act(()=>call("POST",`/api/jobs/${id}/retry-local`,{body:{reviewer:requireReviewer()}}),"Local retry queued")} onRelease={id=>act(()=>call("POST",`/api/jobs/${id}/release-local`,{body:{reviewer:requireReviewer()}}),"Owned cleanup queued")} onPause={()=>act(()=>api.pause(experimentId))} onResume={()=>act(()=>api.resume(experimentId))} onReconcile={id=>act(()=>call('POST',`/api/jobs/${id}/reconcile`,{body:{}}))}/>}
     {tab==='Compare'&&<CompareScreen entries={compare}/>}
     {tab==='Reviews'&&<section><h2>Review assets and finals</h2>{plan&&<><p>Inspect the imported or generated picture assets before approving their use.</p>{videoAssets.map(a=><details key={a.id}><summary>{a.id}</summary><video controls src={media(a.id)} style={{maxHeight:300}}/><button onClick={()=>act(()=>call('POST',`/api/experiments/${experimentId}/assets/review`,{rev:selected?.revision,body:{plan_hash:plan.plan_hash,reviewer:requireReviewer(),artifact_ids:[a.id],verdict:'pass'}}))}>Accept this asset for this plan</button></details>)}</>}
       {finals.map(v=><ReviewsScreen key={v.id} target={{variant:v.variant_key,sha256:v.final.sha256,revision:v.experiment_revision,stale:!!v.stale_reason,failures:reviews.filter(r=>v.final.check_ids.includes(r.id)&&r.verdict!=='pass').map(r=>({check:r.check_type,detail:(r.limitations||[]).join(', ')}))}}
@@ -108,6 +113,7 @@ export default function App() {
       <label>Time in seconds <input value={at} onChange={e=>setAt(e.target.value)}/></label><label>Proposed edit <textarea value={comment} onChange={e=>setComment(e.target.value)}/></label><button onClick={()=>act(()=>call('POST',`/api/variants/${studioVariant}/comments`,{rev:selected?.revision,body:{at_s:Number(at),text:comment}}),'Change proposed; no generation started')}>Save proposed change</button>
     </section>}
     {tab==='Providers'&&<ProvidersScreen providers={providers}/>}
+    {['Products','Budgets','Research','Analysis','Audio','Publishing','Learning'].includes(tab)&&<OperationsScreen section={tab} data={data} selected={selected} reviewer={reviewer} act={act}/>}
     </fieldset>
   </main>;
 }

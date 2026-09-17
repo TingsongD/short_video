@@ -38,6 +38,7 @@ def main(argv=None):
     sp = sub.add_parser("stop"); sp.add_argument("service")
     sub.add_parser("drain")
     sub.add_parser("gate")
+    activation=sub.add_parser("activate-restore"); activation.add_argument("evidence")
     b = sub.add_parser("backup"); b.add_argument("dest")
     b.add_argument("--ledger", action="append", default=[])
     r = sub.add_parser("restore"); r.add_argument("backup_dir")
@@ -69,6 +70,13 @@ def main(argv=None):
         print(json.dumps(out, indent=1))
         return 0 if out["allowed"] else 1
 
+    if args.cmd == 'activate-restore':
+        from .operations.reconcile import activate_restore
+        from .artifacts.registry import ArtifactStore
+        from .operations.paths import data_root
+        db=_db(root)
+        print(json.dumps(activate_restore(db,ArtifactStore(data_root(root)/'artifacts',db),json.loads(Path(args.evidence).read_text())),indent=1))
+        return 0
     mgr = ServiceManager(ResourceRegistry(_db(root)))
     if args.cmd == "start":
         if not args.argv:

@@ -170,7 +170,6 @@ class LearningService:
             return body                         # identical → no new row
         if latest:
             new_id = f"{did}-v{len(priors)}"
-            self._supersede(latest, new_id)
             did = new_id
         dec = Decision(
             schema_version="decision.v1", id=did, created_at=now,
@@ -183,6 +182,7 @@ class LearningService:
             limitations=limitations, inputs_hash=inputs_hash)
         dec.validate_or_raise()
         with self.db.uow() as u:
+            if latest:self._supersede(latest,did)
             u.records.put(dec)
             u.events.append(f"experiment:{experiment_id}",
                             "decision_computed",

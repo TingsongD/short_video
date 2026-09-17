@@ -51,8 +51,8 @@ class FactoryAnalyticsClient:
         self.oauth_token = oauth_token
         self.transport = transport
 
-    def _call(self, url, oauth=False):
-        req = {"url": url, "headers": {}}
+    def _call(self, url, oauth=False, format=None):
+        req = {"url": url, "headers": {}, "format":format}
         if oauth:
             req["headers"]["Authorization"] = \
                 f"Bearer {self.oauth_token}"
@@ -138,7 +138,7 @@ class FactoryAnalyticsClient:
         for report in sorted(reports,key=lambda r:r.get('createTime','')):
             url=report.get('downloadUrl','');parsed=urllib.parse.urlsplit(url)
             if parsed.scheme!='https' or parsed.hostname not in ('youtubereporting.googleapis.com','www.googleapis.com') or parsed.username or parsed.port not in (None,443):raise AnalyticsTransportError('untrusted_report_url')
-            payload=self._call(url,oauth=True)
+            payload=self._call(url,oauth=True,format="csv")
             if not isinstance(payload,(str,bytes)):raise AnalyticsTransportError('report_csv_required')
             if len(payload)>32*1024*1024:raise AnalyticsTransportError('report_too_large')
             if isinstance(payload,bytes):payload=payload.decode('utf-8-sig')

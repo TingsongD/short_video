@@ -6,6 +6,7 @@ from ..domain.errors import ContractError
 from ..domain.records import content_hash
 from ..execution.effects import EffectService
 from ..store.uow import utcnow
+from ..testing.fakes import ProviderError
 
 
 class ApplicationWorker:
@@ -17,7 +18,7 @@ class ApplicationWorker:
         with self.s.db.uow() as u:
             u.conn.execute("INSERT OR REPLACE INTO meta(key,value) VALUES('worker_heartbeat',?)",(json.dumps({'at':utcnow(),'worker':self.scheduler.worker_id}),))
         self.scheduler.reclaim_expired()
-        job = self.scheduler.claim('collect') or self.scheduler.claim()
+        job = self.scheduler.claim('collect') or self.scheduler.claim('observe') or self.scheduler.claim()
         if not job: return None
         try:
             with self.scheduler.heartbeat(job['id'],job['fencing_token']):
@@ -38,13 +39,19 @@ class ApplicationWorker:
                 self.scheduler.complete(job['id'],job['fencing_token'])
             return {'job_id':job['id'], **result}
         except ContractError as error:
-            if error.code in ('remote_unfinished','capacity_full'):
+            if error.code in ('remote_unfinished','capacity_full','retry_backoff'):
                 self.scheduler.defer(job['id'],job['fencing_token'],error.code)
             else:
                 self.scheduler.fail(job['id'],job['fencing_token'],error.code)
             with self.s.db.uow() as u:
                 u.events.append('factory','command_blocked',{'job_id':job['id'],'error':error.code,'detail':error.detail})
             return {'job_id':job['id'],'status':'blocked','error':error.code,'detail':error.detail}
+        except ProviderError as error:
+            # Only observation/transfer failures may repeat. A submit timeout
+            # remains an unresolved attempt and is reconciled by its identity.
+            retryable=error.transient and error.code in ('download_transport_failed','poll_failed')
+            self.scheduler.fail(job['id'],job['fencing_token'],error.code,retryable=retryable)
+            return {'job_id':job['id'],'status':'retry' if retryable and job['retry_count']<5 else 'failed','error':error.code}
         except Exception as error:
             self.scheduler.fail(job['id'],job['fencing_token'],'handler_error:'+type(error).__name__)
             with self.s.db.uow() as u:
@@ -55,6 +62,11 @@ class ApplicationWorker:
 
     def execute(self,kind,body,job):
         s=self.s
+        if kind in ('retry_local','release_local'):
+            from .recovery import retry_local,release_local
+            return (retry_local if kind=='retry_local' else release_local)(s,body['job_id'],body['reviewer'])
+        if kind=='analysis_collect':return s.analysis_work.collect(body)
+        if kind=='speech_fit':return s.audio_work.fit(body)
         if kind=='publish':return s.publication_work.execute(body,job)
         if kind=='publication_observe':return {'publication':s.publishing.reconcile(body['publication_id'])}
         if kind=='readback':return {'snapshot':s.require('readback').collect(body['publication_id'],body['horizon']).to_dict()}
@@ -94,7 +106,11 @@ class ApplicationWorker:
                     takes.append({'variant':key,'slot':seg['id'],'duration_s':(seg['target']['end_frame']-seg['target']['start_frame'])/fps,
                                   'handle_s':picture.get('handle_s',0),'request':req})
             provider='google_vertex' if exp.provider_policy.choice=='vertex' else 'jimeng_canvas'
-            model=next(iter(exp.provider_policy.allowed_models.get(provider,[])),'')
+            allowed=exp.provider_policy.allowed_models.get(provider,[])
+            pinned={t['request'].get('model') for t in takes if t['request'].get('model')}
+            if len(pinned)>1 or pinned and not pinned.issubset(set(allowed)):
+                raise ContractError('pinned_route_mismatch','model')
+            model=next(iter(pinned),allowed[0] if len(allowed)==1 else '')
             imported=all(t['request'].get('artifact_id') for t in takes)
             adapter=s.providers.get(provider)
             if not imported and (adapter is None or not model):
@@ -114,7 +130,12 @@ class ApplicationWorker:
         if kind=='reconcile':
             rows=s.db.conn.execute('SELECT id FROM attempts WHERE job_id=?',(body['job_id'],)).fetchall()
             if not rows: raise ContractError('no_remote_attempt','job_id')
-            return {'attempts':[s.executor.reconcile(r['id']) for r in rows]}
+            results=[]
+            for r in rows:
+                spec=s.executor._intent_body(r['id']);adapter=s.providers.get(spec.get('provider'))
+                if adapter is None:raise ContractError('reconcile_route_unavailable','provider')
+                s.executor.provider=adapter;results.append(s.executor.reconcile(r['id']))
+            return {'attempts':results}
         if kind=='studio_open':
             variant,final,path,binding=s._final(body['variant_id'])
             if binding!=body['binding']:raise ContractError('stale_revision','studio')
@@ -128,6 +149,10 @@ class ApplicationWorker:
             result=s.cleanup.cleanup(body['variant_id'])
             s.delivery._set(body['delivery_id'],cleanup_receipt=json.dumps(result))
             if result['state']!='verified':raise ContractError('cleanup_incomplete','resources')
+            v=s.detail('variantplan',body['variant_id']);plan=s.plan_for(v['experiment_id'])
+            with s.db.uow() as u:
+                u.conn.execute("UPDATE jobs SET status='succeeded',lease_owner=NULL,lease_expires=NULL WHERE id=? AND status='awaiting_review'",(plan['id']+':del:'+v['variant_key'],))
+                u.events.append('factory','video_completed',{'variant_id':v['id'],'delivery_id':body['delivery_id'],'link':receipt['drive_link']})
             return {'status':'verified','cleanup':result,'link':receipt['drive_link']}
         if kind=='delivery':
             v,final,path,binding=s._final(body['variant_id'])

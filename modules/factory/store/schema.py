@@ -1,7 +1,7 @@
 """Ordered migrations. Every DB carries meta.schema_version; an older
 binary refuses a newer database rather than reinterpreting it."""
 
-CURRENT_VERSION = 9
+CURRENT_VERSION = 10
 
 MIGRATIONS = [
     (1, """
@@ -236,4 +236,16 @@ CREATE TABLE remote_holds (
 ALTER TABLE jobs ADD COLUMN next_attempt_at TEXT;
 ALTER TABLE jobs ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0;
 """),
+    (10, """
+CREATE TABLE intents_new (
+ intent_key TEXT PRIMARY KEY, request_hash TEXT NOT NULL, kind TEXT NOT NULL,
+ body TEXT NOT NULL, reservation_id TEXT, remote_id TEXT, status TEXT NOT NULL,
+ created_at TEXT NOT NULL
+);
+INSERT INTO intents_new SELECT intent_key,request_hash,kind,body,reservation_id,remote_id,status,created_at FROM intents;
+DROP TABLE intents;
+ALTER TABLE intents_new RENAME TO intents;
+CREATE INDEX intents_request ON intents(request_hash,kind);
+"""),
+
 ]

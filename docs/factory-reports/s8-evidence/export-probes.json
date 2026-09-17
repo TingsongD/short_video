@@ -1,0 +1,106 @@
+[
+  {
+    "journey": "short",
+    "variant": "A",
+    "frames": 900,
+    "fps": "30/1",
+    "resolution": [
+      180,
+      320
+    ],
+    "duration_s": 30.0,
+    "audio_sample_rate": "48000",
+    "sha256": "20d796a1340c5b15bb595bb07ba75600afd858ec1ce52f8f9a6c6c5b2017d359"
+  },
+  {
+    "journey": "short",
+    "variant": "B",
+    "frames": 900,
+    "fps": "30/1",
+    "resolution": [
+      180,
+      320
+    ],
+    "duration_s": 30.0,
+    "audio_sample_rate": "48000",
+    "sha256": "05dd77fde932bdc82522748707d72c7dfa9be57d604914b2771b61bab932bf0f"
+  },
+  {
+    "journey": "short",
+    "variant": "C",
+    "frames": 900,
+    "fps": "30/1",
+    "resolution": [
+      180,
+      320
+    ],
+    "duration_s": 30.0,
+    "audio_sample_rate": "48000",
+    "sha256": "64530fc68473ead3d08934dcb8b553be4962a3b71057f23c5571947025015c9c"
+  },
+  {
+    "journey": "short",
+    "variant": "D",
+    "frames": 900,
+    "fps": "30/1",
+    "resolution": [
+      180,
+      320
+    ],
+    "duration_s": 30.0,
+    "audio_sample_rate": "48000",
+    "sha256": "e742d856b97f20947b618d1b8b0797dd57e3844146fab582538191f6599b4fd0"
+  },
+  {
+    "journey": "long",
+    "variant": "A",
+    "frames": 5091,
+    "fps": "30/1",
+    "resolution": [
+      180,
+      320
+    ],
+    "duration_s": 169.7,
+    "audio_sample_rate": "48000",
+    "sha256": "0fa9ac12dd353c5d39cbcc56a4a8f22a691a869d60f1b84b7620408737ae9762"
+  },
+  {
+    "journey": "long",
+    "variant": "B",
+    "frames": 5091,
+    "fps": "30/1",
+    "resolution": [
+      180,
+      320
+    ],
+    "duration_s": 169.7,
+    "audio_sample_rate": "48000",
+    "sha256": "79b3590c46f7c35d7a2ada7c71471a31b792a9442c6c195aed5bbfa95015bddb"
+  },
+  {
+    "journey": "long",
+    "variant": "C",
+    "frames": 5091,
+    "fps": "30/1",
+    "resolution": [
+      180,
+      320
+    ],
+    "duration_s": 169.7,
+    "audio_sample_rate": "48000",
+    "sha256": "38ee2bd739a418fe1578017d1bde5552c8b984dbb65c8a593e2885d326a9610c"
+  },
+  {
+    "journey": "long",
+    "variant": "D",
+    "frames": 5091,
+    "fps": "30/1",
+    "resolution": [
+      180,
+      320
+    ],
+    "duration_s": 169.7,
+    "audio_sample_rate": "48000",
+    "sha256": "fa8a06be8c84fa197b2cb90858782e5ec15164a79b17292b07215aef2e70501f"
+  }
+]

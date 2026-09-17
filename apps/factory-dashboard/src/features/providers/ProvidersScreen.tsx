@@ -21,7 +21,7 @@ export function ProvidersScreen(
           const blocked = !p.installed
             ? `${name} is not installed`
             : !p.authenticated
-              ? `Reconnect ${name === "vertex" ? "Google" : "Jimeng"}`
+              ? `Reconnect ${["vertex","google_vertex"].includes(name) ? "Google" : name === "jimeng_canvas" ? "Jimeng" : name}`
               : !p.qualified
                 ? `${name} is not qualified for this mode`
                 : null;
@@ -41,6 +41,7 @@ export function ProvidersScreen(
                              ? "Set Google budget to enable Vertex."
                              : "Re-run connection check."} />
                 : <span>Ready</span>}
+              {Boolean(p.detail?.reason)&&<p>{String(p.detail?.reason)}</p>}
               <p>Provider changes require a revised plan and a new quote.</p>
             </li>
           );

@@ -1,0 +1,322 @@
+{
+  "experiment_id": "fixture-e01aa65b0f",
+  "frames": 5091,
+  "stages": [
+    {
+      "stage": "analyzed",
+      "at": "2026-09-17T19:09:22.115840+00:00"
+    },
+    {
+      "stage": "quoted",
+      "at": "2026-09-17T19:09:23.100414+00:00",
+      "plan_hash": "787bbb101ec1b49ef4ab3149d5973eccc0e9ecb526001cfb151f6078eec825bd"
+    },
+    {
+      "stage": "queued",
+      "at": "2026-09-17T19:09:23.327994+00:00"
+    },
+    {
+      "stage": "four_exports",
+      "at": "2026-09-17T19:10:06.053821+00:00",
+      "finals": [
+        {
+          "variant": "A",
+          "artifact_id": "art:0fa9ac12dd353c5d",
+          "sha256": "0fa9ac12dd353c5d39cbcc56a4a8f22a691a869d60f1b84b7620408737ae9762",
+          "composition_id": "comp-0eed1c0b52b8116a35db4b3c",
+          "build_id": "build-c6aee40114f4528e1fb91298",
+          "check_ids": [
+            "technical-build-c6aee40114f4528e1fb91298"
+          ],
+          "binding": {
+            "composition_id": "comp-0eed1c0b52b8116a35db4b3c",
+            "composition_revision": 1,
+            "composition_hash": "85ea5c540b5566ca6454e59025a1497578534968b7bda38c45aa71a32619e3be",
+            "plan_hash": "787bbb101ec1b49ef4ab3149d5973eccc0e9ecb526001cfb151f6078eec825bd",
+            "artifact_id": "art:0fa9ac12dd353c5d",
+            "artifact_sha256": "0fa9ac12dd353c5d39cbcc56a4a8f22a691a869d60f1b84b7620408737ae9762",
+            "variant_key": "A"
+          }
+        },
+        {
+          "variant": "B",
+          "artifact_id": "art:79b3590c46f7c35d",
+          "sha256": "79b3590c46f7c35d7a2ada7c71471a31b792a9442c6c195aed5bbfa95015bddb",
+          "composition_id": "comp-3751995d9963d9b3b2af421f",
+          "build_id": "build-5f26183521e8554b08d303d8",
+          "check_ids": [
+            "technical-build-5f26183521e8554b08d303d8",
+            "regions-build-5f26183521e8554b08d303d8"
+          ],
+          "binding": {
+            "composition_id": "comp-3751995d9963d9b3b2af421f",
+            "composition_revision": 1,
+            "composition_hash": "a549d1a03414868a73268e2206cb8aac218750e24b36ca964e552540cb07d92d",
+            "plan_hash": "787bbb101ec1b49ef4ab3149d5973eccc0e9ecb526001cfb151f6078eec825bd",
+            "artifact_id": "art:79b3590c46f7c35d",
+            "artifact_sha256": "79b3590c46f7c35d7a2ada7c71471a31b792a9442c6c195aed5bbfa95015bddb",
+            "variant_key": "B"
+          }
+        },
+        {
+          "variant": "C",
+          "artifact_id": "art:38ee2bd739a418fe",
+          "sha256": "38ee2bd739a418fe1578017d1bde5552c8b984dbb65c8a593e2885d326a9610c",
+          "composition_id": "comp-fc483ab9a47e367a70267a76",
+          "build_id": "build-5424252d1aad3c3c1cc26314",
+          "check_ids": [
+            "technical-build-5424252d1aad3c3c1cc26314",
+            "regions-build-5424252d1aad3c3c1cc26314"
+          ],
+          "binding": {
+            "composition_id": "comp-fc483ab9a47e367a70267a76",
+            "composition_revision": 1,
+            "composition_hash": "d39df7a2212f7f028e01fc69d937ca053284707a747ef6a7a5d23c2b3f60c2ba",
+            "plan_hash": "787bbb101ec1b49ef4ab3149d5973eccc0e9ecb526001cfb151f6078eec825bd",
+            "artifact_id": "art:38ee2bd739a418fe",
+            "artifact_sha256": "38ee2bd739a418fe1578017d1bde5552c8b984dbb65c8a593e2885d326a9610c",
+            "variant_key": "C"
+          }
+        },
+        {
+          "variant": "D",
+          "artifact_id": "art:fa8a06be8c84fa19",
+          "sha256": "fa8a06be8c84fa197b2cb90858782e5ec15164a79b17292b07215aef2e70501f",
+          "composition_id": "comp-1dc3a7f188a2935e35ee7a91",
+          "build_id": "build-608c9f5f0569fe20571f17b2",
+          "check_ids": [
+            "technical-build-608c9f5f0569fe20571f17b2",
+            "regions-build-608c9f5f0569fe20571f17b2"
+          ],
+          "binding": {
+            "composition_id": "comp-1dc3a7f188a2935e35ee7a91",
+            "composition_revision": 1,
+            "composition_hash": "1de280c4bae2cd9a8443ccf80b18596642074b0dfdee99d045ff6dafc395190d",
+            "plan_hash": "787bbb101ec1b49ef4ab3149d5973eccc0e9ecb526001cfb151f6078eec825bd",
+            "artifact_id": "art:fa8a06be8c84fa19",
+            "artifact_sha256": "fa8a06be8c84fa197b2cb90858782e5ec15164a79b17292b07215aef2e70501f",
+            "variant_key": "D"
+          }
+        }
+      ]
+    },
+    {
+      "stage": "delivery_cleanup",
+      "at": "2026-09-17T19:10:08.716575+00:00",
+      "receipts": [
+        {
+          "status": "verified",
+          "file_id": "3e550e2d65f34078822ffa1b2b6b1145",
+          "link": "https://drive.invalid/file/3e550e2d65f34078822ffa1b2b6b1145",
+          "reused": false,
+          "cleanup": {
+            "owner": "fixture-e01aa65b0f:a",
+            "at": "2026-09-17T19:10:06.238669+00:00",
+            "before": {
+              "resources": 0,
+              "listeners": {
+                "54541": 957,
+                "7000": 1062,
+                "5000": 1062,
+                "6379": 1671,
+                "5432": 1681,
+                "18088": 1688,
+                "44950": 1841,
+                "44960": 1841,
+                "48765": 29471,
+                "20241": 29521,
+                "19789": 32873,
+                "56803": 33418,
+                "56812": 33935,
+                "56816": 33935,
+                "45358": 34675,
+                "60389": 34675,
+                "35602": 40647,
+                "61898": 40647,
+                "10086": 42598,
+                "39845": 49977,
+                "57824": 49977,
+                "5202": 56154,
+                "59000": 63924,
+                "56389": 63924,
+                "55439": 63924,
+                "8080": 63924,
+                "5433": 63924,
+                "64017": 66206,
+                "18099": 72339,
+                "18679": 85707,
+                "18681": 85707
+              }
+            },
+            "stopped": [],
+            "retained": [],
+            "pid_reuse_untouched": [],
+            "survivors": [],
+            "ports_checked": [],
+            "port_conflicts": [],
+            "state": "verified"
+          }
+        },
+        {
+          "status": "verified",
+          "file_id": "897f77e76a174b2192f7073bd772498f",
+          "link": "https://drive.invalid/file/897f77e76a174b2192f7073bd772498f",
+          "reused": false,
+          "cleanup": {
+            "owner": "fixture-e01aa65b0f:b",
+            "at": "2026-09-17T19:10:06.909210+00:00",
+            "before": {
+              "resources": 0,
+              "listeners": {
+                "54541": 957,
+                "7000": 1062,
+                "5000": 1062,
+                "6379": 1671,
+                "5432": 1681,
+                "18088": 1688,
+                "44950": 1841,
+                "44960": 1841,
+                "48765": 29471,
+                "20241": 29521,
+                "19789": 32873,
+                "56803": 33418,
+                "56812": 33935,
+                "56816": 33935,
+                "45358": 34675,
+                "60389": 34675,
+                "35602": 40647,
+                "61898": 40647,
+                "10086": 42598,
+                "39845": 49977,
+                "57824": 49977,
+                "5202": 56154,
+                "59000": 63924,
+                "56389": 63924,
+                "55439": 63924,
+                "8080": 63924,
+                "5433": 63924,
+                "64017": 66206,
+                "18099": 72339,
+                "18679": 85707,
+                "18681": 85707
+              }
+            },
+            "stopped": [],
+            "retained": [],
+            "pid_reuse_untouched": [],
+            "survivors": [],
+            "ports_checked": [],
+            "port_conflicts": [],
+            "state": "verified"
+          }
+        },
+        {
+          "status": "verified",
+          "file_id": "f2779df6e00446b3a2b989ff3931c4c6",
+          "link": "https://drive.invalid/file/f2779df6e00446b3a2b989ff3931c4c6",
+          "reused": false,
+          "cleanup": {
+            "owner": "fixture-e01aa65b0f:c",
+            "at": "2026-09-17T19:10:07.639832+00:00",
+            "before": {
+              "resources": 0,
+              "listeners": {
+                "54541": 957,
+                "7000": 1062,
+                "5000": 1062,
+                "6379": 1671,
+                "5432": 1681,
+                "18088": 1688,
+                "44950": 1841,
+                "44960": 1841,
+                "48765": 29471,
+                "20241": 29521,
+                "19789": 32873,
+                "56803": 33418,
+                "56812": 33935,
+                "56816": 33935,
+                "45358": 34675,
+                "60389": 34675,
+                "35602": 40647,
+                "61898": 40647,
+                "10086": 42598,
+                "39845": 49977,
+                "57824": 49977,
+                "5202": 56154,
+                "59000": 63924,
+                "56389": 63924,
+                "55439": 63924,
+                "8080": 63924,
+                "5433": 63924,
+                "64017": 66206,
+                "18099": 72339,
+                "18679": 85707,
+                "18681": 85707
+              }
+            },
+            "stopped": [],
+            "retained": [],
+            "pid_reuse_untouched": [],
+            "survivors": [],
+            "ports_checked": [],
+            "port_conflicts": [],
+            "state": "verified"
+          }
+        },
+        {
+          "status": "verified",
+          "file_id": "8856fd3793014f51aaa90bc057c8cde3",
+          "link": "https://drive.invalid/file/8856fd3793014f51aaa90bc057c8cde3",
+          "reused": false,
+          "cleanup": {
+            "owner": "fixture-e01aa65b0f:d",
+            "at": "2026-09-17T19:10:08.300159+00:00",
+            "before": {
+              "resources": 0,
+              "listeners": {
+                "54541": 957,
+                "7000": 1062,
+                "5000": 1062,
+                "6379": 1671,
+                "5432": 1681,
+                "18088": 1688,
+                "44950": 1841,
+                "44960": 1841,
+                "48765": 29471,
+                "20241": 29521,
+                "19789": 32873,
+                "56803": 33418,
+                "56812": 33935,
+                "56816": 33935,
+                "45358": 34675,
+                "60389": 34675,
+                "35602": 40647,
+                "61898": 40647,
+                "10086": 42598,
+                "39845": 49977,
+                "57824": 49977,
+                "5202": 56154,
+                "59000": 63924,
+                "56389": 63924,
+                "55439": 63924,
+                "8080": 63924,
+                "5433": 63924,
+                "64017": 66206,
+                "18099": 72339,
+                "18679": 85707,
+                "18681": 85707
+              }
+            },
+            "stopped": [],
+            "retained": [],
+            "pid_reuse_untouched": [],
+            "survivors": [],
+            "ports_checked": [],
+            "port_conflicts": [],
+            "state": "verified"
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -33,6 +33,10 @@ def bootstrap(root, *, providers=None, drive=None, settings=None,publisher=None,
     if providers is None and drive is None:
         from .providers.configured import configured_adapters
         providers,drive=configured_adapters(db,data,settings['mode'],artifacts)
+    from .providers.configured import configured_auxiliary
+    extra_providers,configured_publisher,configured_analytics,extra_settings=configured_auxiliary(root,data,settings["mode"],artifacts)
+    providers={**extra_providers,**(providers or {})};publisher=publisher or configured_publisher;analytics_client=analytics_client or configured_analytics
+    settings={**extra_settings,**settings}
     seeds=SeedRegistry(db); scheduler=Scheduler(db); executor=Executor(db)
     registry=ResourceRegistry(db); cleanup=CleanupService(registry)
     services=FactoryServices(db,seeds=seeds,experiments=ExperimentService(db),scheduler=scheduler,
@@ -43,10 +47,16 @@ def bootstrap(root, *, providers=None, drive=None, settings=None,publisher=None,
         composition=CompositionService(db,artifacts,data/'compositions'),
         rendering=RenderService(db,artifacts,data/'renders'),resources=registry,cleanup=cleanup,
         studio=StudioService(db,registry,cleanup=cleanup),config=settings)
+    from .providers.router import ProviderRouter
+    services.production.router=ProviderRouter(db,services.providers,executor=executor,live=settings["mode"]=="live")
     from .studio.launcher import LocalStudioLauncher
     services.studio.launcher=LocalStudioLauncher(registry,data/'studio')
     from .services.effect_work import EffectWork
     services.effect_work=EffectWork(services)
+    from .services.audio_work import AudioWork
+    services.audio_work=AudioWork(services)
+    from .services.analysis_work import AnalysisWork
+    services.analysis_work=AnalysisWork(services)
     from .publishing.service import PublishingService
     from .analytics.service import ReadbackService
     from .learning.service import LearningService

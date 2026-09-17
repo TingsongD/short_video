@@ -22,11 +22,32 @@ class ReviewInput(Command):
     target_hash: str
     reviewer: str=Field(min_length=1,max_length=256)
 
+class TargetInput(Command):
+    start_frame:int=Field(ge=0)
+    end_frame:int=Field(gt=0)
+
+class SegmentInput(Command):
+    id:str=Field(min_length=1,max_length=256)
+    target:TargetInput
+    picture:dict
+    speech:dict={}
+    spoken_copy:str=Field(default='',alias='copy')
+    captions:list[dict]=[]
+
+class BranchInput(Command):
+    key:str
+    factor:str
+    regions:list[dict]
+    segments:list[SegmentInput]=Field(min_length=1,max_length=100)
+    hypothesis:str
+    primary_metric:str
+    allowed_fields:list[str]
+
 class ExperimentInput(Command):
     blueprint_id: str
     template_id: str
-    segments: list[dict]=Field(min_length=1,max_length=100)
-    variants: list[dict]=Field(min_length=3,max_length=3)
+    segments: list[SegmentInput]=Field(min_length=1,max_length=100)
+    variants: list[BranchInput]=Field(min_length=3,max_length=3)
 
 class DeliveryInput(MediaInput):
     folder_id: str
@@ -49,7 +70,11 @@ async def json_command(request):
             AnalysisInput if path.endswith('/analyze') else \
             ReviewInput if path.endswith('/reviews') else DeliveryInput if path.endswith('/deliver') else Command
         schema.model_validate(body)
+        from ..events.redact import redact
+        if redact(body)!=body:raise ContractError('sensitive_input','body','Use configured credentials and registered artifacts')
         return body
+    except ContractError:
+        raise
     except (ValueError,ValidationError) as exc:
         # Never return raw inputs from Pydantic errors (they may contain secrets).
         detail='JSON object required'

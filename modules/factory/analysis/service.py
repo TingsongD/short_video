@@ -60,7 +60,7 @@ class AnalysisService:
 
     # --------------------------------------------------------- run
 
-    def import_observations(self, seed_id, observations, reviewer, target_rate=FPS_30):
+    def import_observations(self, seed_id, observations, reviewer, target_rate=FPS_30, provenance=None):
         """Operator observations use the same parser and real media evidence."""
         if not reviewer.strip():
             raise ContractError("reviewer_required", "reviewer")
@@ -77,6 +77,7 @@ class AnalysisService:
                          audio_characteristics(src), detect_scenes(src), analysis,
                          target_rate, utcnow(), src)
         bp.provenance.update(analyzer="manual_observations", model="", reviewer=reviewer)
+        bp.provenance.update(provenance or {})
         bp.content_hash = self._hash(bp)
         bp.validate_or_raise()
         self._persist(bp, "manual_observations")

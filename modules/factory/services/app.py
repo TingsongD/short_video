@@ -50,7 +50,7 @@ class FactoryServices:
             "draining":bool(self.scheduler and self.scheduler._flag('draining'))}, "mode":self.config.get('mode','offline')}
 
     def providers_readiness(self):
-        out = {}
+        out = {name:{'installed':False,'authenticated':False,'catalog_visible':False,'contract_tested':False,'live_qualified':False,'tested':False,'qualified':False,'detail':{'reason':'Route not configured and currently qualified; use imports or complete the recorded qualification gate'}} for name in ('jimeng_canvas','google_vertex','elevenlabs','viral_outliers','generated_music','audiovisual_analysis')}
         for name, adapter in self.providers.items():
             try:
                 ready = adapter.readiness()
@@ -66,7 +66,7 @@ class FactoryServices:
         if name=='budgets':
             from ..budget import BudgetService
             ledger=BudgetService(self.db)
-            return [{**dict(r),'available':ledger.available(r['id'])} for r in self.db.conn.execute('SELECT * FROM budgets')]
+            return [{**dict(r),'retired':bool(self.db.conn.execute('SELECT 1 FROM meta WHERE key=?',('retired:budget:'+r['id'],)).fetchone()),'available':ledger.available(r['id'])} for r in self.db.conn.execute('SELECT * FROM budgets')]
         if name == 'queue':
             return self.require('scheduler').status_snapshot()
         if name == 'assets':
@@ -163,6 +163,12 @@ class FactoryServices:
 
     def _validate_segments(self,segments,total):
         from ..domain.clocks import FrameInterval, check_partition
+        from ..api.inputs import SegmentInput
+        from pydantic import ValidationError
+        if not isinstance(segments,list):raise ContractError('invalid_segments','segments')
+        try:
+            for item in segments:SegmentInput.model_validate(item)
+        except ValidationError:raise ContractError('invalid_segments','segments') from None
         intervals=[]
         if not segments or len({s['id'] for s in segments})!=len(segments):
             raise ContractError('invalid_segments','segments')

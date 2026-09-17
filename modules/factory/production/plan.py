@@ -21,7 +21,7 @@ EXECUTABLE = {"picture", "download", "review"}   # compose/deliver: F22+
 
 class ProductionService:
     def __init__(self, db, scheduler=None, executor=None, adapter=None,
-                 artifacts=None, selector=None, budget=None):
+                 artifacts=None, selector=None, budget=None, router=None):
         self.db = db
         self.scheduler = scheduler
         self.executor = executor
@@ -31,6 +31,7 @@ class ProductionService:
         # requires an explicit reviewer; no default approval
         self.selector = selector or (lambda n: "uncertain")
         self.budget = budget
+        self.router = router
 
     # ---------------------------------------------------------- build
 
@@ -63,6 +64,7 @@ class ProductionService:
             unit = ""
             if self.adapter is not None:
                 for a in n["allocations"]:
+                    if self.router: self.router.preflight(provider,model,n["request"],a["duration_s"],experiment_id)
                     if hasattr(self.adapter, "prepare_quote"):
                         n["request"].setdefault("video_id", f"{experiment_id}-{n['consumers'][0].lower()}")
                         quote = self.adapter.prepare_quote(dict(n["request"], duration_s=a["duration_s"], model=model))
@@ -222,14 +224,26 @@ class ProductionService:
             if job is None:
                 raise ContractError("worker_lease_required", "job")
             effects = EffectService(self.db, self.executor)
-            authority_id = self._authority(plan_id)
+            authority_id = None
             for i, a in enumerate(node["allocations"]):
                 req = dict(node["request"], duration_s=a["duration_s"], model=node["model"])
-                att = effects.prepare(authority_id, f"{node['node_key']}:{i}",
-                    job["id"], job["fencing_token"], self.scheduler.worker_id, i + 1)
-                price = Money(**a["price"])
-                op = self.executor.submit(
-                    att, lambda: self.adapter.submit(req, price=price))
+                prior=self.db.conn.execute('SELECT id,status FROM attempts WHERE job_id=? AND attempt_seq=?',(job['id'],i+1)).fetchone()
+                if prior and prior['status']!='prepared':
+                    att=prior['id']
+                    if prior['status'] in ('dispatching','unknown'):
+                        op=self.executor.reconcile(att)
+                    else:op=self.executor.poll(att)
+                    if not op or op.get('status')=='unknown':raise ContractError('remote_unfinished','attempt',att)
+                    if op.get('status') in ('failed','cancelled'):raise ContractError('remote_terminal_failure','attempt',att)
+                else:
+                    authority_id=authority_id or self._authority(plan_id)
+                    if self.router:
+                        self.router.preflight(node['provider'],node['model'],req,a['duration_s'],
+                            self._plan(plan_id)['experiment_id'],effects._scope(authority_id))
+                    att = effects.prepare(authority_id, f"{node['node_key']}:{i}",
+                        job['id'], job['fencing_token'], self.scheduler.worker_id, i + 1)
+                    price = Money(**a['price'])
+                    op = self.executor.submit(att, lambda: self.adapter.submit(req, price=price))
                 op_ids.append(op["operation_id"])
             self._set(plan_id, node["node_key"], status="submitted",
                       operation_id=";".join(op_ids))
@@ -256,6 +270,9 @@ class ProductionService:
                 if op.get("status") != "succeeded":
                     raise ContractError("remote_unfinished", "attempt",
                                         a["id"])
+                from ..execution.effects import EffectService
+                actual=op.get('actual_usd_micros') if pic['provider']=='google_vertex' else op.get('actual_credits')
+                if type(actual) is int:EffectService(self.db,self.executor).settle(a['id'],actual,'reported_usage',op.get('operation_id') or a['id'])
                 dl = self.executor.download(a["id"])
                 art = self.artifacts.intake_bytes(
                     dl["bytes"], provenance=pic["provider"],
@@ -344,6 +361,9 @@ class ProductionService:
         """Manual coverage for a needs_manual/rejected node: same
         coverage + provenance checks as generated work."""
         node = self._node(plan_id, node_key)
+        jid = f'{plan_id}:{node_key}'
+        if self.db.conn.execute("SELECT 1 FROM attempts WHERE job_id=? AND status IN ('prepared','dispatching','unknown','accepted','running','cancel_requested')",(jid,)).fetchone():
+            raise ContractError('remote_unfinished','node_key','Collect the original operation before replacing its asset')
         row = self.db.uow().artifacts.get(artifact_id)
         if row is None:
             raise ContractError("unknown_artifact", "artifact_id",
@@ -356,6 +376,8 @@ class ProductionService:
                     ), default=0)
         if row["kind"] != "video" or row["status"] != "registered":
             raise ContractError("invalid_manual_video", "artifact_id", artifact_id)
+        need += node.get("request",{}).get("source_in_s",0)
+        self.artifacts.verified_path(artifact_id)
         have = probe.get("duration_s") or 0
         if have + 1e-6 < need:
             raise ContractError("insufficient_coverage", "duration_s",

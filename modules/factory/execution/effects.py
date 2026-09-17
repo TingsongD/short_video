@@ -40,6 +40,9 @@ class EffectService:
         if not authorization.authorizing_action or not authorization.valid_until:
             raise ContractError("incomplete_authorization", "authorizing_action/valid_until")
         with self.db.uow() as u:
+            for bid in budget_ids:
+                if not u.conn.execute('SELECT 1 FROM budgets WHERE id=?',(bid,)).fetchone():
+                    raise ContractError('budget_required','budget_id',bid)
             record = u.records.get(record_kind, record_id)
             if record is None:
                 raise ContractError("not_found", "scope", record_id)
@@ -95,6 +98,8 @@ class EffectService:
         return authorization.id
 
     def _scope(self, authority_id):
+        if self.db.conn.execute("SELECT 1 FROM meta WHERE key=?",("retired:authorization:"+authority_id,)).fetchone():
+            raise ContractError("restored_authority_retired","authorization_id")
         row = self.db.uow().records.get("authorization", authority_id)
         if row is None:
             raise ContractError("authority_required", "authorization_id")
@@ -142,9 +147,10 @@ class EffectService:
             if spec["kind"] in PAID:
                 self.budget.authorize_or_raise(auth, auth.scope_hash, spec["provider"], spec["model"], wire_hash(spec["request"]), price, now=self.clock())
                 applicable = self._budgets(auth, spec, price)
-                if price.reserve_amount:
-                    rid = self.budget.reserve(f"effect:{authority_id}:{operation_key}",
-                        [(bid, price.reserve_amount) for bid in applicable], auth.id)
+                # A zero quote still needs an auditable settlement; an
+                # unexpected nonzero charge must become an overrun, not vanish.
+                rid = self.budget.reserve(f"effect:{authority_id}:{operation_key}",
+                    [(bid, price.reserve_amount) for bid in applicable], auth.id)
             capacity = REMOTE_CAPACITY.get(spec["provider"]) if spec["kind"] == "generation" else None
             if capacity:
                 from ..scheduler.scheduler import CAPACITIES
@@ -165,8 +171,11 @@ class EffectService:
 
     def _budgets(self, auth, spec, price):
         ids = set(auth.binding["budget_ids"])
+        retired={r[0][len('retired:budget:'):] for r in self.db.conn.execute("SELECT key FROM meta WHERE key LIKE 'retired:budget:%'")}
+        if ids & retired:raise ContractError('restored_budget_retired','budget_ids')
         applicable = []
         for row in self.db.conn.execute("SELECT * FROM budgets WHERE unit=?", (price.unit,)):
+            if row["id"] in retired:continue
             match = (row["id"] in ids or row["scope"] == "aggregate" or
                      (row["scope"] == "provider" and row["scope_key"] == spec["provider"]) or
                      (row["scope"] == "category" and row["scope_key"] == spec["kind"]))

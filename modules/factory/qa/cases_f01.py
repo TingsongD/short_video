@@ -34,7 +34,7 @@ class CaseContext:
 
 def _result(ctx, status, actual, **kw):
     failed = [a for a in ctx.assertions if not a["ok"]]
-    if failed and status == "passed":
+    if failed:
         status = "failed"
     return {"status": status, "actual": actual,
             "assertions": ctx.assertions,

@@ -34,7 +34,7 @@ def _toml(path):
     return tomllib.loads(path.read_text())
 
 
-def load_config(root, env=None):
+def _resolved(root, env=None):
     """→ {values, sources, credential_refs_present, missing_safe}.
     env vars win only when nonempty — an empty string never shadows
     a configured value."""
@@ -58,6 +58,19 @@ def load_config(root, env=None):
             values[k], sources[k] = dotenv[k], "env_file"
         elif k in flat_toml:
             values[k], sources[k] = flat_toml[k], "toml"
+    return values,sources
+
+
+def credential_loader(root, keys):
+    """Resolve requested private values only when a transport is invoked."""
+    def load():
+        values,_=_resolved(root)
+        return {key:values.get(key,'') for key in keys}
+    return load
+
+
+def load_config(root, env=None):
+    values,sources=_resolved(root,env)
     safe = {k: v for k, v in values.items() if k in SAFE_KEYS}
     creds = {k: ("set" if values.get(k) else "absent")
              for k in CREDENTIAL_REFS}

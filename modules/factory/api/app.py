@@ -120,6 +120,98 @@ def create_app(services, session_token=None):
                 lambda:(201,{"artifact":services.import_file(name,path=temp.name)}))
         return JSONResponse(resp,status_code=status)
 
+    @app.post('/api/seeds/{seed_id}/analysis/prepare')
+    async def analysis_prepare(seed_id:str,request:Request):
+        body=await json_command(request)
+        status,resp=mutation(request,body,lambda:(201,{'plan':services.require('analysis_work').prepare(seed_id,body)}))
+        return JSONResponse(resp,status_code=status)
+
+    @app.post('/api/seeds/{seed_id}/analysis/collect')
+    async def analysis_collect(seed_id:str,request:Request):
+        body=await json_command(request)
+        status,resp=mutation(request,body,lambda:(202,services.require('analysis_work').queue_collect(seed_id,body)))
+        return JSONResponse(resp,status_code=status)
+
+    @app.post('/api/products/import-plan')
+    async def product_import_plan(request:Request):
+        body=await json_command(request)
+        if not body.get('reviewer'):raise ContractError('reviewer_required','reviewer')
+        status,resp=mutation(request,body,lambda:(201,{'plan':services.effect_work.prepare('research','shopify','admin-2026-04',[{'shop':body.get('shop',''),'selection':body.get('selection')}])}))
+        return JSONResponse(resp,status_code=status)
+
+    @app.post('/api/analytics/reporting/prepare')
+    async def reporting_prepare(request:Request):
+        body=await json_command(request)
+        if not body.get('reviewer'):raise ContractError('reviewer_required','reviewer')
+        status,resp=mutation(request,body,lambda:(201,{'plan':services.require('effect_work').prepare('research','youtube_reporting','channel_reach_basic_a1',[{'name':body.get('name','Factory thumbnail reach'),'report_type':'channel_reach_basic_a1'}])}))
+        return JSONResponse(resp,status_code=status)
+
+    @app.post('/api/effects/plans')
+    async def effect_plan(request:Request):
+        body=await json_command(request)
+        kind=body.get('kind');eid=body.get('experiment_id','')
+        if kind not in ('tts','music','analysis') or not eid:raise ContractError('invalid_effect_plan','kind/experiment_id')
+        revision=expected_rev(request);services._current(eid,revision,True)
+        status,resp=mutation(request,body,lambda:(201,{'plan':services.require('effect_work').prepare(kind,body.get('provider',''),body.get('model',''),body.get('requests'),eid,revision)}))
+        return JSONResponse(resp,status_code=status)
+
+    @app.post('/api/effects/plans/{plan_id}/authorize')
+    async def effect_authorize(plan_id:str,request:Request):
+        body=await json_command(request)
+        status,resp=mutation(request,body,lambda:(200,services.require('effect_work').authorize(plan_id,body)))
+        return JSONResponse(resp,status_code=status)
+
+    @app.post('/api/effects/plans/{plan_id}/run')
+    async def effect_run(plan_id:str,request:Request):
+        body=await json_command(request)
+        status,resp=mutation(request,body,lambda:(202,services.require('effect_work').queue(plan_id,body.get('authorization_id',''))))
+        return JSONResponse(resp,status_code=status)
+
+    @app.post('/api/experiments/{eid}/speech/fit')
+    async def speech_fit(eid:str,request:Request):
+        body=await json_command(request)
+        status,resp=mutation(request,body,lambda:(202,services.require('audio_work').queue_fit(eid,expected_rev(request),body)))
+        return JSONResponse(resp,status_code=status)
+
+    @app.get('/api/speech/{sid}')
+    async def speech_detail(sid:str):return services.detail('speechsegment',sid)
+
+    @app.post('/api/speech/{sid}/approve')
+    async def speech_approve(sid:str,request:Request):
+        body=await json_command(request)
+        status,resp=mutation(request,body,lambda:(200,services.require('audio_work').approve(sid,body)))
+        return JSONResponse(resp,status_code=status)
+
+    @app.post('/api/experiments/{eid}/speech/attach')
+    async def speech_attach(eid:str,request:Request):
+        body=await json_command(request)
+        status,resp=mutation(request,body,lambda:(200,services.require('audio_work').attach(eid,expected_rev(request),body.get('speech_ids'))))
+        return JSONResponse(resp,status_code=status)
+
+    @app.post('/api/jobs/{job_id}/retry-local')
+    async def retry_local_job(job_id:str,request:Request):
+        from ..services.recovery import retry_local
+        body=await json_command(request)
+        if not body.get('reviewer'):raise ContractError('reviewer_required','reviewer')
+        services.commands.get(job_id)
+        status,resp=mutation(request,body,lambda:(202,services.commands.enqueue('retry_local',{'job_id':job_id,'reviewer':body['reviewer']},phase='collect')))
+        return JSONResponse(resp,status_code=status)
+
+    @app.post('/api/jobs/{job_id}/release-local')
+    async def release_local_job(job_id:str,request:Request):
+        body=await json_command(request)
+        if not body.get('reviewer'):raise ContractError('reviewer_required','reviewer')
+        services.commands.get(job_id)
+        status,resp=mutation(request,body,lambda:(202,services.commands.enqueue('release_local',{'job_id':job_id,'reviewer':body['reviewer']},phase='collect')))
+        return JSONResponse(resp,status_code=status)
+
+    @app.post('/api/experiments/{eid}/assets/replace')
+    async def replace_picture(eid:str,request:Request):
+        from ..services.recovery import manual_replace
+        body=await json_command(request)
+        status,resp=mutation(request,body,lambda:(200,manual_replace(services,eid,expected_rev(request),body)))
+        return JSONResponse(resp,status_code=status)
+
     @app.post("/api/research/plans")
     async def research_plan(request: Request):
         body=await json_command(request)

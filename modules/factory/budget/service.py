@@ -77,6 +77,7 @@ class BudgetService:
             (budget_id,)).fetchone()
         if row is None:
             raise ContractError("unknown_budget", "budget_id", budget_id)
+        if self.db.conn.execute("SELECT 1 FROM meta WHERE key=?",("retired:budget:"+budget_id,)).fetchone():return 0
         cap = row[0]
         if cap is None:
             return 0
@@ -115,9 +116,9 @@ class BudgetService:
                 cap = row[0]
                 if cap is None:
                     raise ReservationBlocked(budget_id, "cap_unset")
-                if cap == 0:
+                if cap == 0 and amount != 0:
                     raise ReservationBlocked(budget_id, "cap_zero")
-                if type(amount) is not int or amount <= 0:
+                if type(amount) is not int or amount < 0:
                     raise ContractError("invalid_amount", budget_id,
                                         repr(amount))
                 committed = self._committed(u.conn, budget_id)

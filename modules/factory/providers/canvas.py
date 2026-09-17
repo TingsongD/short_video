@@ -52,7 +52,7 @@ class CanvasAdapter(GenerationAdapter):
             return {"ready": False, "reason": error.code}
         if self.expected_user and doc.get("userId") != self.expected_user:
             return {"ready": False, "reason": "account_mismatch"}
-        return dict(ready=True, reason="ok", **doc)
+        return dict(**doc,ready=True,reason="ok",installed=True,authenticated=True,catalog_visible=bool(self._caps),contract_tested=True,live_qualified=bool(self._caps) and all(c.get("live_qualified") is True for c in self._caps.values()))
 
     def refresh_models(self):
         items = self.cli.catalog("video")

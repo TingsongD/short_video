@@ -34,19 +34,37 @@ class DriveAdapter:
 class GdriveCLI(DriveAdapter):
     """Real adapter over `gdrive files …` (existing authorized CLI)."""
 
-    def __init__(self, runner=None, binary="gdrive", policy=None):
+    def __init__(self, runner=None, binary="gdrive", policy=None, expected_account=None):
         from ..execution.policy import live_transport
         if runner is None:
             runner = live_transport(subprocess.run, "drive", policy)
+            if not expected_account:
+                from ..domain.errors import ContractError
+                raise ContractError('delivery_account_required','account')
             real_runner = runner
             runner = lambda argv, timeout=300: real_runner(
                 argv, capture_output=True, text=True, timeout=timeout)
         self.binary = binary
+        self.expected_account = expected_account
         self.runner = runner or (
             lambda argv, timeout=300: subprocess.run(
                 argv, capture_output=True, text=True, timeout=timeout))
 
+    def _check_account(self, submitting=False):
+        if not self.expected_account:
+            return  # injected protocol fixtures; configured live routes require it
+        if submitting:
+            from ..execution.context import current_effect
+            from ..domain.errors import ContractError
+            grant=current_effect.get()
+            if not grant or grant.get('provider')!='drive' or grant.get('account')!=self.expected_account:
+                raise ContractError('delivery_account_scope_mismatch','account')
+        result=self.runner([self.binary,'account','current'])
+        if result.returncode or result.stdout.strip()!=self.expected_account:
+            raise RuntimeError('drive_account_mismatch')
+
     def list_files(self, parent_id):
+        self._check_account()
         # gdrive paginates internally up to --max. Grow that bound until the
         # returned count proves exhaustion; never treat a full page as complete.
         maximum = 1000
@@ -71,6 +89,7 @@ class GdriveCLI(DriveAdapter):
         raise RuntimeError("drive_listing_incomplete")
 
     def upload(self, parent_id, path, name):
+        self._check_account(submitting=True)
         if not name or name != Path(name).name or any(c in name for c in "\r\n\t"):
             raise ValueError("invalid_delivery_name")
         with tempfile.TemporaryDirectory(prefix="factory-drive-") as temporary:
@@ -86,6 +105,7 @@ class GdriveCLI(DriveAdapter):
         return {"id": fid}
 
     def stat(self, file_id):
+        self._check_account()
         r = self.runner([self.binary, "files", "info", "--size-in-bytes", file_id])
         if r.returncode != 0:
             return None

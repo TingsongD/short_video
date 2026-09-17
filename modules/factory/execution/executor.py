@@ -151,8 +151,11 @@ class Executor:
             self._set_status(attempt_id, "unknown", "ack_unparseable")
             raise ContractError("malformed_ack", attempt_id,
                                 "provider acknowledgement lacks an operation identity")
-        self._attach_remote(attempt_id, op["operation_id"], "accepted",
-                            "accepted")
+        status=op.get("status","accepted")
+        if status not in {"accepted","running","succeeded","failed","cancelled","unknown"}:
+            self._set_status(attempt_id,"unknown","ack_unparseable")
+            raise ContractError("malformed_ack","status")
+        self._attach_remote(attempt_id, op["operation_id"], status, "accepted")
         return op
 
     def _attach_remote(self, attempt_id, remote_id, status, event):
@@ -250,9 +253,11 @@ class Executor:
         Updates status from provider truth; never creates a new op."""
         row = self._attempt(attempt_id)
         body = self._intent_body(attempt_id)
-        op = self.provider.reconcile(
-            operation_id=row["remote_id"],
-            request_hash=row["request_hash"] or body.get("request_hash"))
+        from .context import dispatch_context
+        with dispatch_context({'attempt_id':attempt_id}):
+            op = self.provider.reconcile(
+                operation_id=row["remote_id"],
+                request_hash=row["request_hash"] or body.get("request_hash"))
         if op is None:
             self._set_status(attempt_id, "unknown", "reconcile_miss")
             return None

@@ -197,3 +197,127 @@ immutable decision; supersession is a separate relation. Four siblings count as
 one experiment. A superseded or stale winner cannot promote a template. All
 rankings remain observational. Live posting and elapsed readbacks remain separate
 qualification gates; offline fixtures do not authorize them.
+
+## Repair release (S8): operator workflow and limits
+
+The supported offline route is an actual application, with an independent worker
+and registered artifacts. Imported media is a first-class path. There is no
+permission to call real services merely because the application starts.
+
+- **Seeds / Analysis:** attach an imported video. Either enter observations, or
+  prepare a seed-bound audiovisual analysis quote, approve it against a USD
+  budget, run it, and collect the completed job. Accept the resulting blueprint
+  separately. The Vertex analysis adapter sends actual registered video bytes
+  using `Content.inlineData`; its conservative 20-MiB input limit requires a
+  smaller proxy or imported observations for larger media. Analysis is not the
+  Vertex video-generation route and needs separate qualification.
+- **Products:** prepare an explicitly selected, read-only Shopify import (up to
+  50 handles/IDs). It has a zero-USD quote, account-bound authority, durable job
+  and immutable snapshots. A zero-dollar budget records scope; it does not buy
+  credits. Imports paginate the catalog and media; interrupted ambiguous work
+  retains its receipt and requires reconciliation instead of blind repetition.
+- **Plan:** save A/B/C/D, declare each treatment region, select registered media
+  or a qualified provider/model, prepare quotes, record funding and approve the
+  exact plan. Edits create a new revision and invalidate old spending authority.
+- **Audio:** quote ElevenLabs `eleven_v3` for a selected segment and voice. After
+  synthesis, fit the actual waveform, listen, approve its hash and attach it to
+  a new revision. Existing authored variant captions are preserved. Raw synthesis
+  can be reused for fitting without another synthesis charge. Imported licensed
+  background music is supported. Generated music remains an optional unqualified
+  adapter route and is not enabled by this repair release.
+- **Queue:** reconcile original effects after uncertain responses. Retry local
+  failed work only after owned cleanup; retries are bounded and cannot create
+  paid replacements. Manual picture replacement is available through
+  `POST /api/experiments/{id}/assets/replace` with expected revision, reviewer,
+  current plan hash, picture node key and registered artifact ID. An unfinished
+  remote operation must be collected first. Cleanup releases failed render
+  capacity only after owned processes have stopped.
+- **Reviews / Compare / Delivery / Studio:** asset and final acceptance remain
+  explicit. Technical and unchanged-region QC cannot be substituted by a browser
+  verdict. Delivery verifies final hash, destination, filename, size and checksum,
+  then cleans up video-owned resources. Shared API/worker services remain running.
+  Studio edits are proposed changes, not permission to spend.
+- **Publishing / Learning:** freeze the evaluation policy before publication.
+  Approve exact final bytes, platform and account. Collect asynchronous post
+  identity before readbacks; manual declarations are not verification. Reporting
+  job creation uses `POST /api/analytics/reporting/prepare` followed by the generic
+  effect-plan approval/run endpoints. Observe existing jobs after ambiguous setup.
+  Calendar reports that do not cover the frozen rolling horizon remain partial.
+
+### Optional live connection configuration
+
+`connections.json` contains **no credentials**. Its `enabled` list is explicit.
+Canvas/Vertex generation additionally require a current capability snapshot for
+that exact model, region and input mode. Auxiliary routes require `account_id`,
+`contract_evidence`, `live_evidence`, and an unexpired `qualified_until`. These
+fields are evidence references, not switches to mark an untested route tested.
+Do not populate them until the corresponding live pilot passes.
+
+| Route key | Additional non-secret settings |
+| --- | --- |
+| `jimeng_canvas` | profile, region, account_id, location, qualified input_modes |
+| `google_vertex` | project, account_id, location, input_modes, verified rates |
+| `elevenlabs` | model `eleven_v3`; dated pricing with credits_per_character, valid_until, evidence |
+| `audiovisual_analysis` | project, model, location; pricing with estimate_usd_micros, reserve_usd_micros, valid_until, evidence |
+| `shopify` | authorized `shop` ending in `.myshopify.com` |
+| `viral_outliers` | current native-credit pricing snapshot |
+| `publish` | Upload Post user and configured platform/account mapping |
+| `youtube_analytics` | exact OAuth account_id and Reporting API qualification |
+| `drive` | exact account_id, current contract_evidence, live_evidence and qualified_until |
+
+Credentials resolve at the transport boundary. Google OAuth identity must match
+configuration; a key alone does not establish the configured OAuth account.
+Offline startup constructs none of these live transports. Unknown actual USD
+charges retain reservations until accounting evidence arrives. An overrun is
+recorded and blocks new dispatch; it never silently raises authority.
+
+### Restored activation and rollback
+
+Migration versions 8–10 are forward-only. Validate copies before operational
+migration. Never open a migrated database with an older application version.
+Use a compatible backup restored into a fresh root instead.
+
+Restore intentionally exits with code **3** when files were restored but dispatch
+is gated; this is not permission to start new effects. Inspect its JSON output.
+Historical process IDs are quarantined as unowned; restore cannot terminate
+processes in the original workspace. Their originals are retained under
+`restore-evidence/original-resources.json`.
+
+After verifying all registered assets, reconciling unresolved jobs/attempts and
+reviewing account effects and financial activity since `backup_at`, prepare a
+local JSON evidence file containing:
+
+```json
+{
+  "reviewer": "operator name",
+  "external_audit_reference": "location of reviewed account and charge evidence",
+  "backup_at": "exact timestamp recorded by restore_pending",
+  "financial_activity_through": "current reviewed UTC timestamp"
+}
+```
+
+Then run:
+
+```bash
+scripts/factory.sh --root /absolute/fresh-root activate-restore /absolute/audit.json
+```
+
+Activation verifies current audit coverage (within one hour), assets and lack of
+unresolved effects. It **retires all historical budgets and approvals** while
+preserving their original content. Record new funding and new approvals from
+current account evidence; old headroom is never restored. Keep original outputs,
+provider receipts and financial records even when rolling application code back.
+
+### Qualification evidence
+
+The final repair ledger is [REPAIRS.md](factory-reports/REPAIRS.md); reproducible
+release evidence is [REPAIR-S8-EVIDENCE.json](factory-reports/REPAIR-S8-EVIDENCE.json).
+The 180×320 fixture exports test timing, changed regions, audio, recovery and the
+application graph. They do not qualify production resolution, product identity,
+voice quality, provider economics or real publication performance.
+
+Primary protocol references for the new analysis adapter:
+[Vertex video understanding](https://cloud.google.com/vertex-ai/generative-ai/docs/multimodal/video-understanding)
+and [Vertex Content / inlineData](https://cloud.google.com/vertex-ai/generative-ai/docs/reference/rest/v1/Content).
+The model is configured from qualification evidence; documentation examples are
+not treated as proof of availability in this account.

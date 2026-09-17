@@ -146,7 +146,15 @@ def restore_into(backup_dir, new_root):
             new={name:str((new_root/'data/factory'/name).resolve()) for name in old}
             u.conn.execute("INSERT OR REPLACE INTO meta(key,value) VALUES('recovery_roots',?)",(json.dumps(new),))
             u.conn.execute("INSERT OR REPLACE INTO meta(key,value) VALUES('restore_path_mapping',?)",(json.dumps({old[k]:new[k] for k in old}),))
-        u.events.append('factory:restore', 'restored_blocked', {'backup_at': manifest['created_at']})
+        # Saved PIDs belong to the source workspace. Never acquire ownership
+        # of its still-running services simply by restoring their records.
+        resources=[dict(r) for r in u.conn.execute("SELECT id,revision,body FROM records WHERE kind='resource'")]
+        for resource in resources:
+            original=json.loads(resource['body'])
+            body={**original,'status':'not_owned_after_restore','pid':0,'birth':'restored-unowned'}
+            u.conn.execute("UPDATE records SET body=?,status='not_owned_after_restore' WHERE kind='resource' AND id=? AND revision=?",(json.dumps(body),resource['id'],resource['revision']))
+        (new_root/'data/factory/restore-evidence/original-resources.json').write_text(json.dumps(resources,indent=2))
+        u.events.append('factory:restore', 'restored_blocked', {'backup_at': manifest['created_at'],'quarantined_resources':len(resources)})
     db.close()
     return {'restored': str(new_root), 'database': str(target_db),
             'integrity': store_backup.verify(target_db),

@@ -380,3 +380,67 @@ application journey produced real local exports, collected fixture reviews and
 fake delivery, then four exactly authorized fake posts, source reports and a
 frozen-policy decision. No real posts, account calls, paid generation or live
 analytics qualification occurred. Evidence: REPAIR-S7-EVIDENCE.json.
+
+## 2026-09-17 — S8 repair qualification and correction of earlier completion claims
+
+**Scope:** user-authorized sequential S0–S8 repair of R01–R43 on `feat/factory`.
+Parent revision: `f282bce`. This entry belongs to the focused S8 checkpoint.
+The exact tested source manifest, final suite result, stage timestamps and limits
+are in `docs/factory-reports/REPAIR-S8-EVIDENCE.json`.
+
+### What changed in final integration
+
+- Qualified routing is checked in actual production quote and dispatch commands.
+  Paused experiments stop new submissions while existing remote work is collected.
+  Restarted generation reconciles the original attempt; synchronous responses
+  preserve immediate completion, with publication states normalized separately.
+- Schema 10 preserves populated v7 history while allowing distinct explicitly
+  approved operations with identical request content. Logical intent and attempt
+  identity still prevent duplicate effects.
+- Application routes now cover quoted ElevenLabs v3 synthesis, real waveform
+  fitting/alignment, explicit listening approval and revised composition binding;
+  quoted seed-bound audiovisual analysis; selected read-only Shopify imports;
+  Reporting job setup; terminal manual replacement and bounded local recovery.
+- Offline startup constructs no native transports. Optional live routes require
+  dated qualification references and explicit connection configuration. Drive
+  additionally checks its native current account against the scoped approval.
+  Zero-price actions retain auditable reservations/settlements; unknown actual
+  charges retain holds and reported overruns block further dispatch.
+- Fresh-root restore verifies registered bytes, quarantines original process IDs,
+  and requires current financial reconciliation. Activation retires historical
+  funding and approvals without rewriting their records.
+- Dashboard collections, generation approval, draft revisions, budgets, research,
+  analysis, audio, products, publishing, learning and recovery controls call real
+  domain commands. Native Studio remains an isolated, owned composition workspace.
+
+### Evidence and honest boundaries
+
+- Real HTTP API + independent worker produced four **900-frame** outputs and four
+  **5,091-frame** outputs at 30 fps, with distinct controlled caption treatments,
+  sound, explicit fixture reviews, verified durable fake Drive delivery and owned
+  cleanup. The smaller 180×320 test resolution bounds test cost; it is not a
+  production-quality claim. Narration fixtures are deterministic tones, not proof
+  of a natural voice; actual synthesis fitting is separately exercised.
+- Real worker deaths cover pre-submission, accepted remote work, download, render
+  and upload. Six independent workers exercise five Jimeng/one Vertex capacity
+  across death and expired leases; local render ownership survives caller loss.
+- Two-tab/refresh dashboard checks show the actual experiment, four finals and
+  delivery/cleanup receipts. Lost-response/idempotency and named-SSE behavior have
+  permanent regression tests. No claim is made that every browser network fault
+  was induced manually.
+- Populated migration/restore, retired funding, malformed requests, expired routes,
+  secret-output protection, no-budget effects, publication/readback/learning,
+  exact source bytes in analysis and current Drive account binding are covered.
+- The final report records the full backend suite plus 28 frontend tests and the
+  production build. Two existing dependency deprecation warnings remain; they do
+  not indicate failed checks.
+
+**Correction:** earlier F34/F-module “done/run” and broad completion statements
+were not proof of this integrated system. Their historical content is preserved,
+but every report now points to the repair evidence. Full F-module checklist/human
+sign-off remains explicitly `in_progress`; F35 awaits scoped live qualification.
+No real provider generation, paid research, Shopify import, Drive upload, post or
+analytics account request was performed. Optional generated music and unqualified
+reference modes remain unavailable. No live route or legacy G-gate is signed by
+these offline results. The existing operational database, credentials, assets,
+legacy ledger and unrelated working-tree changes were preserved.

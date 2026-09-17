@@ -33,6 +33,7 @@ class EffectWork:
         operations=[];totals={}
         for i,request in enumerate(requests):
             request=dict(request)
+            if request.get("model",model)!=model:raise ContractError("model_mismatch","model")
             from ..events.redact import redact
             if redact(request)!=request:raise ContractError('sensitive_request','request')
             price=adapter.price(request)
@@ -82,14 +83,15 @@ class EffectWork:
         effect=EffectService(s.db,s.executor)
         prior=s.db.conn.execute('SELECT id,status FROM attempts WHERE job_id=?',(job['id'],)).fetchone()
         aid=prior['id'] if prior and prior['status']!='prepared' else effect.prepare(body['authorization_id'],body['operation'],job['id'],job['fencing_token'],s.scheduler.worker_id)
-        if prior and prior['status']=='unknown':out=s.executor.reconcile(aid) or {'status':'unknown'}
+        if prior and prior['status'] in ('unknown','dispatching'):out=s.executor.reconcile(aid) or {'status':'unknown'}
         elif prior and prior['status']!='prepared':out=s.executor.poll(aid)
         else:out=s.executor.submit(aid)
         if out.get('status') in ('accepted','running','unknown'):
             with s.db.uow() as u:u.conn.execute("UPDATE jobs SET phase='collect' WHERE id=?",(job['id'],))
             return {'status':'pending','attempt_id':aid}
         if out.get('status')!='succeeded':raise ContractError('effect_failed','attempt',aid)
-        actual=out.get('actual_credits') if plan['provider']!='google_vertex' else out.get('actual_usd_micros')
+        operation=next(op for op in plan['operations'] if op['key']==body['operation'])
+        actual=out.get('actual_usd_micros') if operation['price']['unit']=='usd_micros' else out.get('actual_credits')
         if type(actual) is int:effect.settle(aid,actual,'reported_usage',out.get('operation_id') or aid)
         result={'status':'succeeded','attempt_id':aid,'result':out.get('result',{}),'charge_verified':type(actual) is int}
         if plan['kind'] in ('tts','music'):

@@ -36,7 +36,7 @@ class SynchronousAdapter:
                 if state["request_hash"] != digest:
                     raise ProviderError("request_conflict")
                 return self.poll(operation)
-            state.update(operation_id=operation, request_hash=digest, status="unknown")
+            state.update(operation_id=operation, request_hash=digest, request=redact(request), status="unknown")
             state.flush()
             result, payload, extra = self.execute(request)
             if payload is not None:
@@ -53,6 +53,13 @@ class SynchronousAdapter:
 
     def execute(self, request):
         raise NotImplementedError
+
+    def readiness(self):
+        return {'installed':True,'authenticated':False,
+                'catalog_visible':bool(getattr(self,'model',None) or getattr(self,'pricing',None)),
+                'contract_tested':bool(getattr(self,'contract_evidence',None)),
+                'live_qualified':bool(getattr(self,'qualified',False)),
+                'reason':'Credentials are verified at the transport boundary; no credential probe was performed'}
 
     def poll(self, operation_id):
         if not operation_id.startswith("sync-") or not operation_id[5:].isalnum():
@@ -86,6 +93,12 @@ class SynchronousAdapter:
     def reconcile(self, operation_id=None, request_hash=None):
         if operation_id:
             return self.poll(operation_id)
+        binding = current_effect.get()
+        if binding and binding.get('attempt_id'):
+            identity = 'sync-' + hashlib.sha256(binding['attempt_id'].encode()).hexdigest()[:32]
+            if (self.root / identity / 'receipt.json').is_file():
+                return self.poll(identity)
+            return None
         matches = [json.loads(p.read_text()) for p in self.root.glob("sync-*/receipt.json")]
         matches = [s for s in matches if s["request_hash"] == request_hash]
         return matches[0] if len(matches) == 1 else None

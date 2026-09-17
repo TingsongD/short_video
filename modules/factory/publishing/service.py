@@ -118,8 +118,9 @@ class PublishingService:
                 not auth.get("publication_authorized"):
             raise ContractError("publication_not_authorized",
                                 "authorization_id", authorization_id)
-        self._set(publication_id, authorization_id=authorization_id)
-        self._check_authorization(self._get(publication_id),now or _now())
+        with self.db.uow():
+            self._set(publication_id, authorization_id=authorization_id)
+            self._check_authorization(self._get(publication_id),now or _now())
         return {"authorization_id": authorization_id}
 
     # ----------------------------------------------------- publish --
@@ -166,7 +167,11 @@ class PublishingService:
                     f"{p['platform']}:{p['account_id']}", ""),
                 idempotency_key=p["idempotency_key"],
                 extra_fields={"hashtags": ",".join(meta.get("hashtags", [])), 'timezone':p.get('timezone','UTC')})
-            return dict(resp, operation_id=resp["request_id"])
+            publication_status=resp.get('status','unknown')
+            state=('succeeded' if publication_status in ('public','draft','scheduled') else
+                   'failed' if publication_status=='failed' else
+                   'accepted' if publication_status in ACCEPTED else 'unknown')
+            return dict(resp, operation_id=resp["request_id"],status=state,publication_status=publication_status)
         try:
             resp = self.executor.submit(aid, upload)
         except PublishTransportError as e:
@@ -181,7 +186,7 @@ class PublishingService:
         return self._apply(publication_id, resp, now)
 
     def _apply(self, publication_id, resp, now):
-        status = resp.get("status", "accepted")
+        status = resp.get("publication_status",resp.get("status", "accepted"))
         if status=='public' and self._get(publication_id).get('visibility')!='public':status='draft'
         fields = {"request_id": resp.get("request_id", "")}
         if resp.get('job_id'):fields['job_id']=resp['job_id']

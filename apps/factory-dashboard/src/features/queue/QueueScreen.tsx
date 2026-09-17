@@ -55,11 +55,13 @@ export function elapsedBreakdown(events: JobEvent[]): Record<string, number> {
 }
 
 export function QueueScreen(
-  { jobs, onPause, onResume, onReconcile }: {
+  { jobs, onPause, onResume, onReconcile, onRetry, onRelease }: {
     jobs: JobView[];
     onPause?: () => void;
     onResume?: () => void;
     onReconcile?: (jobId: string) => void;
+    onRetry?: (jobId: string) => void;
+    onRelease?: (jobId: string) => void;
   },
 ) {
   const done = jobs.filter((j) => j.state === "done").length;
@@ -82,10 +84,11 @@ export function QueueScreen(
               <td>{j.state === "running" ? "Waiting for provider"
                   : j.state}</td>
               <td>
-                {j.state === "failed" &&
+                {["failed","blocked"].includes(j.state) &&
                   <button onClick={() => onReconcile?.(j.id)}>
                     Reconcile
                   </button>}
+                {j.state === "failed" && <><button onClick={()=>onRetry?.(j.id)}>Retry local work</button>{j.stage === "render" && <button onClick={()=>onRelease?.(j.id)}>Clean up failed render</button>}</>}
               </td>
             </tr>
           ))}

@@ -132,10 +132,11 @@ class TestUnitOfWork:
                              {"request_hash": "r1"})
             u.intents.create("intent:1", "r1", "provider_submit", {})
         assert len(db.uow().outbox.pending()) == 1
-        # same request_hash+kind cannot create a second intent
+        # The same logical intent cannot be inserted twice. Distinct approved
+        # operations may intentionally have identical bytes (schema v10).
         with pytest.raises(ContractError):
             with db.uow() as u:
-                u.intents.create("intent:2", "r1", "provider_submit", {})
+                u.intents.create("intent:1", "r1", "provider_submit", {})
 
     def test_job_logical_key_unique(self, db):
         j = Job(schema_version="job.v1", id="j:1",

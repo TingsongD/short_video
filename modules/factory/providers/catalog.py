@@ -60,7 +60,10 @@ class CapabilityCatalog:
         if row is None:
             return None
         snap = CapabilitySnapshot(**json.loads(row["body"]))
-        stale = bool(snap.valid_until and now and
-                     snap.valid_until < now)
+        from datetime import datetime
+        try:
+            stale = bool(snap.valid_until and now and datetime.fromisoformat(snap.valid_until.replace('Z','+00:00')) <= datetime.fromisoformat(now.replace('Z','+00:00')))
+        except (ValueError,TypeError):
+            stale = True
         return {"snapshot": snap, "stale": stale,
                 "revision": row["revision"]}
