@@ -16,7 +16,7 @@ from ..domain.money import Money
 from ..execution.context import current_effect
 from ..execution.policy import ExecutionPolicy
 from ..testing.fakes import ProviderError
-from .base import GenerationAdapter
+from .base import GenerationAdapter, normalized_setting
 from .state import receipt_locked
 
 
@@ -44,6 +44,18 @@ class CanvasAdapter(GenerationAdapter):
     def _save(self):
         if hasattr(self.state, "flush"):
             self.state.flush()
+
+    def _merge_save(self, mutate):
+        """Reload, apply and flush under one receipt lock so a mutation
+        never flushes a stale whole-document snapshot over another
+        worker's accepted receipts."""
+        if hasattr(self.state, "locked"):
+            with self.state.locked():
+                mutate()
+                self._save()
+        else:
+            mutate()
+            self._save()
 
     def readiness(self):
         try:
@@ -106,6 +118,13 @@ class CanvasAdapter(GenerationAdapter):
         refs = request.get("reference_artifact_ids") or request.get("refs") or []
         out = []
         for ref in refs:
+            # The router emits typed {"kind": ..., "artifact_id": ...}
+            # references; "node:"/"resource:" ids pass straight through;
+            # anything else is a contract violation, not an AttributeError.
+            if isinstance(ref, dict):
+                ref = ref.get("artifact_id") or ref.get("id")
+            if not isinstance(ref, str):
+                raise ProviderError("malformed_reference")
             if ref.startswith("node:") or ref.startswith("resource:"):
                 out.append(ref)
                 continue
@@ -164,24 +183,23 @@ class CanvasAdapter(GenerationAdapter):
                 raise ProviderError("input_mode_not_qualified")
             if (request.get("duration_s") or request.get("requested_duration_s")) not in cap.get("durations_s", []):
                 raise ProviderError("unsupported_duration")
-            if (request.get("aspect") or "9:16") not in cap.get("aspects", []):
+            if normalized_setting(request, "aspect", "9:16") not in cap.get("aspects", []):
                 raise ProviderError("unsupported_aspect")
-            if (request.get("resolution") or "720p") not in cap.get("resolutions", []):
+            if normalized_setting(request, "resolution", "720p") not in cap.get("resolutions", []):
                 raise ProviderError("unsupported_resolution")
         if self.live and not video_id:
             raise ProviderError("video_scope_required")
         project_id = self._project(video_id or title, title)
         refs = self._references(request, project_id)
         kind = request.get("kind") or "video"
-        settings = request.get("settings") or {}
         prep = {"project_id": project_id, "node_id": new_node_id(), "update_id": str(uuid.uuid4()),
                 "submit_id": str(uuid.uuid4()), "request_hash": rh, "kind": kind, "stage": "saving", "refs": refs}
         self.state["preps"][rh] = prep
         self._save()
         mode = request.get("mode") or (("m2v" if refs else "t2v") if kind == "video" else ("i2i" if refs else "t2i"))
         prep["expected"] = {"model": request["model"], "mode": mode,
-            "ratio": request.get("aspect") or settings.get("aspect") or "9:16",
-            "resolution": request.get("resolution") or settings.get("resolution") or ("720p" if kind == "video" else "2K"),
+            "ratio": normalized_setting(request, "aspect", "9:16"),
+            "resolution": normalized_setting(request, "resolution", "720p" if kind == "video" else "2K"),
             "outputCount": 1, "prompt": request["prompt"]}
         if kind == "video":
             prep["expected"]["durationSeconds"] = request.get("duration_s") or request.get("requested_duration_s")
@@ -189,8 +207,8 @@ class CanvasAdapter(GenerationAdapter):
         args = ["node", "create", kind, "--project-id", project_id, "--node-id", prep["node_id"],
                 "--update-id", prep["update_id"], "--model", request["model"],
                 "--mode", mode,
-                "--prompt", request["prompt"], "--ratio", request.get("aspect") or settings.get("aspect") or "9:16",
-                "--resolution", request.get("resolution") or settings.get("resolution") or ("720p" if kind == "video" else "2K"), "--count", "1"]
+                "--prompt", request["prompt"], "--ratio", normalized_setting(request, "aspect", "9:16"),
+                "--resolution", normalized_setting(request, "resolution", "720p" if kind == "video" else "2K"), "--count", "1"]
         if kind == "video":
             args += ["--duration", request.get("duration_s") or request.get("requested_duration_s")]
         for ref in refs:
@@ -215,8 +233,12 @@ class CanvasAdapter(GenerationAdapter):
         prep = self.prepare(request)
         self._check_draft(prep)
         q = self.cli.quote(prep["project_id"], [prep["node_id"]])
+        def record():
+            saved = self.state["preps"].get(prep["request_hash"])
+            if saved is not None:
+                saved["quote"] = q
+        self._merge_save(record)
         prep["quote"] = q
-        self._save()
         return {"prep": prep, "max_credits": q["totalMaxCredits"], "items": q["items"], "draft_version": q["draftVersion"]}
 
     @receipt_locked
@@ -238,13 +260,17 @@ class CanvasAdapter(GenerationAdapter):
         if not isinstance(price, Money) or price.unit != self.unit:
             raise ProviderError("approved_price_required")
         prep = self.prepare(request)
-        previous = self.state["ops"].get(prep["submit_id"])
+        # Allocation identity: the same attempt reconciles to the same
+        # operation, while a separately approved take — even an identical
+        # request — gets a distinct operation and idempotency token.
+        key = binding["attempt_id"] if binding and binding.get("attempt_id") else prep["submit_id"]
+        previous = self.state["ops"].get(key)
         if previous:
-            return self.observe(prep["submit_id"])
+            return self.observe(key)
         quote = self.prepare_quote(request)
         if quote["max_credits"] > price.amount:
             raise ProviderError("quote_exceeds_approval")
-        op = {"operation_id": prep["submit_id"], "submit_id": prep["submit_id"], "project_id": prep["project_id"],
+        op = {"operation_id": key, "submit_id": str(uuid.uuid4()), "project_id": prep["project_id"],
               "node_id": prep["node_id"], "request_hash": prep["request_hash"], "kind": prep["kind"], "status": "unknown", "ceiling": price.amount}
         self.state["ops"][op["operation_id"]] = op
         self._save()
