@@ -26,7 +26,7 @@ PLAYLIST_API = "https://www.googleapis.com/youtube/v3/playlistItems"
 ANALYTICS_PER_VIDEO = {
     "views", "estimatedMinutesWatched", "averageViewDuration",
     "averageViewPercentage", "subscribersGained", "subscribersLost",
-    "likes", "dislikes", "comments", "shares",
+    "likes", "dislikes", "comments", "shares", "engagedViews",
 }
 REACH_REPORT = "channel_reach_basic_a1"
 REACH_METRICS = {

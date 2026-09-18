@@ -19,12 +19,16 @@ from ..domain.records import MetricSnapshot
 from .client import (ANALYTICS_PER_VIDEO, AnalyticsTransportError,
                      REACH_METRICS)
 
-HORIZONS = {"48h": 48, "7d": 168, "28d": 672}
+HORIZONS = {"24h": 24, "48h": 48, "72h": 72, "7d": 168, "28d": 672}
+# Complete source-reporting-day windows (PL-04). Only platforms with a
+# qualified reporting-window source may collect these — see
+# WINDOW_SOURCES / window_capability.
+COMPLETE_DAYS = {"7d_complete": 7, "28d_complete": 28}
 QUERY_VERSION = "f32.v2"
 
 PULL_METRICS = {"views", "averageViewDuration",
                 "averageViewPercentage", "subscribersGained",
-                "likes", "comments"}
+                "likes", "comments", "shares", "engagedViews"}
 
 # normalized metric -> (source route, source column)
 NORMALIZED = {
@@ -34,11 +38,56 @@ NORMALIZED = {
     "subs_gained": ("analytics", "subscribersGained"),
     "likes": ("analytics", "likes"),
     "comments": ("analytics", "comments"),
+    "shares": ("analytics", "shares"),
     "thumbnail_impressions": ("reach",
                               "video_thumbnail_impressions"),
     "thumbnail_ctr": ("reach",
                       "video_thumbnail_impressions_ctr"),
     "public_views": ("data", "viewCount"),
+    "engaged_views": ("analytics", "engagedViews"),
+}
+
+# Metrics a snapshot may legitimately lack without downgrading —
+# lifetime counters, optional reach-route thumbnail fields and other
+# provider-optional columns (§8.2: "missing optional thumbnail reach
+# must not prevent a valid Shorts comparison"). The decision layer
+# consumes only policy-declared metrics; absence stays recorded.
+OPTIONAL_COMPLETENESS = {"public_views", "engaged_views", "shares",
+                         "thumbnail_impressions", "thumbnail_ctr"}
+
+# Per-platform normalized metric -> provider field (PL-04). The
+# YouTube entry is the historical route-based map above; other
+# platforms normalize publisher analytics responses. Provider field
+# names are provisional until live-qualified (handover §8.3).
+PLATFORM_METRICS = {
+    "youtube": NORMALIZED,
+    "tiktok": {"views": "views", "likes": "likes", "comments": "comments",
+               "shares": "shares", "saves": "saves",
+               "avg_view_duration_s": "avg_watch_time_s",
+               "avg_view_pct": "completion_rate"},
+    "instagram": {"views": "views", "likes": "likes",
+                  "comments": "comments", "shares": "shares",
+                  "saves": "saves", "reach": "reach",
+                  "avg_view_duration_s": "avg_watch_time_s",
+                  "avg_view_pct": "completion_rate"},
+    "facebook": {"views": "views", "likes": "likes",
+                 "comments": "comments", "shares": "shares",
+                 "saves": "saves", "reach": "reach",
+                 "avg_view_duration_s": "avg_watch_time_s",
+                 "avg_view_pct": "completion_rate"},
+}
+
+# Which window kinds a qualified source can supply per platform
+# (handover §8.2 gate). Publisher caches deliver captured-at snapshots
+# only — they never supply source_calendar_window. Extend when a route
+# is live-qualified; never declare a kind a route cannot prove.
+WINDOW_SOURCES = {
+    "youtube": {"observed_lifetime_at_age": "youtube_analytics",
+                "source_calendar_window": "youtube_analytics",
+                "exact_elapsed_window": "youtube_analytics_day_aligned"},
+    "tiktok": {"observed_lifetime_at_age": "publisher"},
+    "instagram": {"observed_lifetime_at_age": "publisher"},
+    "facebook": {"observed_lifetime_at_age": "publisher"},
 }
 
 
@@ -56,10 +105,59 @@ def _day(dt):
 
 
 class ReadbackService:
-    def __init__(self, db, client,clock=None):
+    def __init__(self, db, client,clock=None,publisher_metrics=None):
         self.db = db
         self.client = client
         self.clock=clock or _now
+        # {provider_name: callable(remote_post_id, post_url) -> dict}
+        # for non-YouTube platforms measured through a publisher (PL-04).
+        self.publisher_metrics = publisher_metrics or {}
+
+    def window_capability(self, platform, window_kind):
+        """Qualified source name for (platform, window_kind) or None —
+        the §8.2 freeze gate consults this; it is honest, not optimistic."""
+        return WINDOW_SOURCES.get(platform or "youtube", {}).get(window_kind)
+
+    def _window_for(self, pub, horizon, t0):
+        """(start, end, due_at, window_kind) for a collect call.
+        Elapsed horizons keep the existing LA-day logic; complete-days
+        horizons take the N source days after the partial publish day."""
+        from zoneinfo import ZoneInfo
+        zone=ZoneInfo('America/Los_Angeles')
+        if horizon in COMPLETE_DAYS:
+            platform = pub.get('platform', 'youtube')
+            if self.window_capability(platform, 'source_calendar_window') is None:
+                raise ContractError('window_capability_missing', 'horizon',
+                                    f'{platform}:{horizon}')
+            days = COMPLETE_DAYS[horizon]
+            local_t0 = t0.astimezone(zone)
+            pub_day = local_t0.date()
+            # §8.2: exclude a partial publication day, but include it
+            # when it begins exactly at the source-day boundary.
+            aligned = local_t0 == datetime.combine(
+                pub_day, datetime.min.time(), tzinfo=zone)
+            start_d = pub_day if aligned else pub_day + timedelta(days=1)
+            end_d = start_d + timedelta(days=days - 1)
+            # eligible once the final source day has fully ended
+            due_local = datetime.combine(
+                end_d + timedelta(days=1), datetime.min.time(),
+                tzinfo=zone)
+            return (start_d.isoformat(), end_d.isoformat(),
+                    due_local.astimezone(timezone.utc),
+                    'source_calendar_window')
+        due_at = t0 + timedelta(hours=HORIZONS[horizon])
+        if pub.get('platform', 'youtube') != 'youtube':
+            # A publisher cache captures counters AT an age — never a
+            # source-reporting-day window (handover §8.1).
+            return (_day(t0.astimezone(zone)),
+                    _day(due_at.astimezone(zone)),
+                    due_at, 'observed_lifetime_at_age')
+        local_start=t0.astimezone(zone);local_end=due_at.astimezone(zone)
+        exact=all(x.hour==x.minute==x.second==x.microsecond==0 for x in (local_start,local_end))
+        return (_day(local_start),
+                _day(local_end-timedelta(microseconds=1)),
+                due_at,
+                'exact_rolling' if exact else 'source_calendar')
 
     # -------------------------------------------------------- due --
 
@@ -73,8 +171,15 @@ class ReadbackService:
                                 publication_id)
         t0 = _parse(pub["published_at"])
         out = []
-        for name, hours in HORIZONS.items():
-            due_at = t0 + timedelta(hours=hours)
+        due_map = {n: t0 + timedelta(hours=h)
+                   for n, h in HORIZONS.items()}
+        for name in COMPLETE_DAYS:
+            try:
+                _, _, d, _ = self._window_for(pub, name, t0)
+                due_map[name] = d
+            except ContractError:
+                continue  # platform lacks a qualified reporting window
+        for name, due_at in due_map.items():
             snap = self._snap(publication_id, name)
             if _parse(now) < due_at:
                 status = "not_due"
@@ -97,23 +202,32 @@ class ReadbackService:
         """Pull all three routes for one due horizon; store raw +
         normalized snapshot. Idempotent per (pub, horizon, version)."""
         now = now or self.clock()
-        if horizon not in HORIZONS:
+        if horizon not in HORIZONS and horizon not in COMPLETE_DAYS:
             raise ContractError("unknown_horizon", "horizon", horizon)
         pub = self._pub(publication_id)
         if not pub or pub["status"] != "public":
             raise ContractError("publication_not_public", "id",
                                 publication_id)
         t0 = _parse(pub["published_at"])
-        due_at = t0 + timedelta(hours=HORIZONS[horizon])
+        start, end, due_at, window_kind = self._window_for(
+            pub, horizon, t0)
         if _parse(now) < due_at:
             raise ContractError("horizon_not_due", "horizon", horizon)
         post_id = pub["remote_post_id"]
+        if pub.get("platform", "youtube") != "youtube":
+            return self._collect_platform(
+                pub, publication_id, horizon, now, start, end,
+                due_at, window_kind, t0)
+        if self.client is None:
+            raise ContractError("metrics_route_unconfigured", "youtube")
         from zoneinfo import ZoneInfo
         zone=ZoneInfo('America/Los_Angeles')
         local_start=t0.astimezone(zone);local_end=due_at.astimezone(zone)
         exact=all(x.hour==x.minute==x.second==x.microsecond==0 for x in (local_start,local_end))
-        start=_day(local_start);end=_day(local_end-timedelta(microseconds=1))
-        expected_days=[];cursor=local_start.date()
+        # Expected days = the requested window's days — for complete-
+        # days horizons that is start..end (publish day excluded unless
+        # midnight-aligned), matching the query actually sent.
+        expected_days=[];cursor=datetime.fromisoformat(start).date()
         while cursor<=datetime.fromisoformat(end).date():
             expected_days.append(cursor.isoformat());cursor+=timedelta(days=1)
         sid = self._snap_id(publication_id, horizon)
@@ -158,22 +272,40 @@ class ReadbackService:
                 body=raw[route];cols=body.get('columns',[])
                 if 'day' in cols:normalized[route]={**body,'rows':[r for r in body.get('rows',[]) if len(r)==len(cols) and start<=r[cols.index('day')]<=end]}
         for name, (route, col) in NORMALIZED.items():
-            value, reason = self._extract(normalized, route, col)
+            value, reason, denominator = self._extract(
+                normalized, route, col)
             metrics[name] = value
             availability[name] = reason
-        if failures:
-            completeness = ("failed" if len(failures) == 3
-                            else "partial")
+            coverage['metrics'][name]['denominator'] = denominator
+        coverage['failed_routes'] = list(failures)
+        required_bad = [
+            m for m in NORMALIZED if m not in OPTIONAL_COMPLETENESS
+            and (not coverage['metrics'][m]['complete']
+                 or availability[m] != 'ok')]
+        # Optional-only routes (data api, reach) carry no required
+        # metric — their failure degrades the snapshot but cannot block
+        # a usable one (§8.2 required-metric readiness). A failed
+        # analytics route is blocking: it feeds required metrics.
+        blocking = [f for f in failures if f == "analytics_api"]
+        if len(failures) == 3:
+            completeness = "failed"
             reason = f"routes_failed:{','.join(failures)}"
-        elif coverage["days"] == 0:
+        elif blocking:
+            completeness = "partial"
+            reason = f"routes_failed:{','.join(failures)}"
+        elif not coverage['routes']['analytics']['days']:
+            # pending means the core analytics route has no source days
+            # yet — optional reach-route absence never forces pending.
             completeness = "pending"
             reason = "no_rows_yet"
-        elif any(not coverage['metrics'][m]['complete'] or availability[m]!='ok' for m in NORMALIZED if m!='public_views'):
+        elif required_bad:
             completeness = "partial"
             reason = "coverage_short_of_horizon"
-        elif not exact:
-            completeness='partial';reason='source_calendar_not_exact_horizon'
         else:
+            # Coverage is complete for the requested source days. Whether
+            # the days form an exact elapsed window is recorded in
+            # coverage['exact_horizon'] and requested_period.window_kind —
+            # it qualifies the measurement definition, not completeness.
             completeness = "complete"
             reason = ""
 
@@ -187,10 +319,11 @@ class ReadbackService:
                 "analytics_metrics": sorted(PULL_METRICS),
                 "reach_metrics": sorted(REACH_METRICS),
                 "reach_report": "channel_reach_basic_a1",'public_views':'lifetime_at_observation',
-                'thumbnail_ctr':'impression-weighted percent','avg_view_duration_s':'view-weighted seconds',
-                'avg_view_pct':'view-weighted percent'},
+                'thumbnail_ctr':'impression-weighted percent','avg_view_duration_s':'engaged-view weighted seconds (views fallback)',
+                'avg_view_pct':'engaged-view weighted percent (views fallback)'},
             requested_period={"start": start, "end": end,
-                              "horizon_hours": HORIZONS[horizon],'window_kind':'exact_rolling' if exact else 'source_calendar',
+                              "horizon_hours": (COMPLETE_DAYS.get(horizon, 0) * 24 or HORIZONS.get(horizon)),
+                              'window_kind': window_kind,
                               'published_at':t0.isoformat(),'due_at':due_at.isoformat()},
             actual_coverage=coverage,
             source="data_api+analytics_api+reporting_api",
@@ -204,6 +337,89 @@ class ReadbackService:
                      "attempt": attempts})
         return snap
 
+    # ------------------------------------------- other platforms --
+
+    def _collect_platform(self, pub, publication_id, horizon, now,
+                          start, end, due_at, window_kind, t0):
+        """Publisher-route collection for non-YouTube destinations
+        (PL-04). Same MetricSnapshot shape; raw provider response
+        preserved; upstream freshness recorded separately from our
+        fetch time; missing fields are null with a reason."""
+        platform = pub.get("platform", "")
+        provider = pub.get("provider", "upload_post")
+        fetch = self.publisher_metrics.get(provider)
+        metrics_map = PLATFORM_METRICS.get(platform, {})
+        sid = self._snap_id(publication_id, horizon)
+        existing = self._snap(publication_id, horizon)
+        attempts = (existing or {}).get("attempts", 0) + 1
+        raw, metrics, availability = {}, {}, {}
+        upstream_freshness = ""
+        if fetch is None:
+            for name in metrics_map:
+                metrics[name] = None
+                availability[name] = "route_unconfigured"
+            completeness, reason = "failed", "metrics_route_unconfigured"
+        else:
+            try:
+                raw["publisher"] = fetch(pub.get("remote_post_id", ""),
+                                         pub.get("post_url", ""))
+            except Exception as e:
+                raw["publisher_error"] = str(e)
+                for name in metrics_map:
+                    metrics[name] = None
+                    availability[name] = "route_failed"
+                completeness, reason = "failed", "route_failed:publisher"
+            else:
+                body = raw["publisher"] or {}
+                upstream_freshness = (body.get("fetched_at") or
+                                      body.get("updated_at") or "")
+                missing = []
+                for name, field_name in metrics_map.items():
+                    value = body.get(field_name)
+                    if value is None:
+                        metrics[name] = None
+                        availability[name] = "field_absent"
+                        missing.append(name)
+                    else:
+                        metrics[name] = value
+                        availability[name] = "ok"
+                completeness = "partial" if missing else "complete"
+                reason = ("missing:" + ",".join(missing)) if missing else ""
+        # observed age vs requested age — late evidence stays honest
+        age_s = (_parse(now) - t0).total_seconds()
+        requested_s = (COMPLETE_DAYS.get(horizon, 0) * 86400 or
+                       HORIZONS.get(horizon, 0) * 3600)
+        late = requested_s and age_s > requested_s * 1.25
+        snap = MetricSnapshot(
+            schema_version="metric_snapshot.v1", id=sid,
+            created_at=(existing or {}).get("created_at", now),
+            publication_id=publication_id,
+            post_id=pub.get("remote_post_id", ""),
+            horizon=horizon, query_version=QUERY_VERSION,
+            timezone=pub.get("timezone", "UTC"),
+            metric_definitions={"platform": platform,
+                                "field_map": dict(metrics_map)},
+            requested_period={
+                "window_kind": window_kind,
+                "horizon_hours": requested_s / 3600,
+                "published_at": t0.isoformat(),
+                "due_at": due_at.isoformat(),
+                "observed_at": now,
+                "upstream_freshness": upstream_freshness},
+            actual_coverage={"observed_age_hours": round(age_s / 3600, 2),
+                             "requested_age_hours": requested_s / 3600,
+                             "late": bool(late)},
+            source=f"{provider}_publisher",
+            observed_at=now, metrics=metrics,
+            availability=availability, raw=raw, attempts=attempts,
+            completeness=completeness, missing_reason=reason)
+        snap.validate_or_raise()
+        self._put(snap)
+        self._event(publication_id, "readback_collected",
+                    {"horizon": horizon, "completeness": completeness,
+                     "attempt": attempts, "platform": platform})
+        return snap
+
     def _extract(self, raw, route, col):
         """(value|None, reason) — distinguish zero/missing/delayed/
         unsupported/failed. Values pass through natively (retention
@@ -211,34 +427,42 @@ class ReadbackService:
         key = {"data": "data", "analytics": "analytics",
                "reach": "reach"}[route]
         if f"{key}_error" in raw:
-            return None, "route_failed"
+            return None, "route_failed", None
         body = raw.get(key)
         if body is None:
-            return None, "route_not_queried"
+            return None, "route_not_queried", None
         if route == "data":
             v = body.get(col)
-            return (int(v), "ok") if v is not None else \
-                (None, "field_absent")
+            return ((int(v), "ok", None) if v is not None else
+                    (None, "field_absent", None))
         cols, rows = body.get("columns", []), body.get("rows", [])
         if col not in cols:
-            return None, "metric_not_returned"
+            return None, "metric_not_returned", None
         if not rows:
-            return None, "no_rows_yet"
+            return None, "no_rows_yet", None
         import math
         idx=cols.index(col)
-        if any(len(r)!=len(cols) for r in rows):return None,'malformed_rows'
+        if any(len(r)!=len(cols) for r in rows):return None,'malformed_rows',None
         vals=[r[idx] for r in rows]
-        if all(v is None for v in vals):return None,'all_rows_null'
-        if any(type(v) not in (int,float) or not math.isfinite(v) or v<0 for v in vals):return None,'incomplete_or_invalid_rows'
-        weight={'averageViewDuration':'views','averageViewPercentage':'views','video_thumbnail_impressions_ctr':'video_thumbnail_impressions'}.get(col)
-        if weight:
-            if weight not in cols:return None,'denominator_missing'
-            weights=[r[cols.index(weight)] for r in rows]
-            if any(type(w) not in (int,float) or not math.isfinite(w) or w<0 for w in weights):return None,'denominator_missing'
+        if all(v is None for v in vals):return None,'all_rows_null',None
+        if any(type(v) not in (int,float) or not math.isfinite(v) or v<0 for v in vals):return None,'incomplete_or_invalid_rows',None
+        # §8.1: weight daily averages by the matching engaged-view
+        # denominator when supplied; fall back to same-day views — a
+        # per-day source metric, never the public lifetime counter.
+        weight={'averageViewDuration':('engagedViews','views'),
+                'averageViewPercentage':('engagedViews','views'),
+                'video_thumbnail_impressions_ctr':(
+                    'video_thumbnail_impressions',)}.get(col,())
+        for wcol in weight:
+            if wcol not in cols:continue
+            weights=[r[cols.index(wcol)] for r in rows]
+            if any(type(w) not in (int,float) or not math.isfinite(w)
+                   or w<0 for w in weights):continue
             total=sum(weights)
-            if total==0:return None,'zero_denominator'
-            return sum(v*w for v,w in zip(vals,weights))/total,'ok'
-        return sum(vals),'ok'
+            if total<=0:continue
+            return sum(v*w for v,w in zip(vals,weights))/total,'ok',wcol
+        if weight:return None,'zero_denominator',None
+        return sum(vals),'ok',None
 
     def _coverage(self,raw,start='',end='9999-99-99'):
         routes={}

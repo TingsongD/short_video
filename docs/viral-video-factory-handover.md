@@ -1,9 +1,9 @@
 # Viral Video Factory — Developer Handover
 
-**Status:** implementation in progress; the factory and dashboard described here are being built per the module guide and tracker.
+**Status:** offline implementation complete (2026-09-18); live qualification and F-module human sign-offs remain open — see [REVIEW-2026-09-18](factory-reports/REVIEW-2026-09-18.md) resolution table and `PROGRESS.md`.
 **Version:** 2.1
 **Prepared:** 2026-09-16
-**Updated:** 2026-09-16 — review findings incorporated: repository checkpoint, runtime-data policy, independent acceptance systems, confirmed defects, instruction precedence and incremental delivery milestones. Implementation assigned 2026-09-16 under Section 2.5; offline baseline verified (344 tests passed) and F00 checkpoint procedure started on `feat/factory`.
+**Updated:** 2026-09-18 — offline implementation finished (publishing/learning W0–W9 + REVIEW-2026-09-18 Q01–Q15 patches; 1062 backend + 29 frontend tests green). Earlier update 2026-09-16: review findings incorporated; offline baseline verified (344 tests passed) and F00 checkpoint procedure started on `feat/factory`.
 **Repository:** /Users/tingsongdai/Kimi-cursor/Short Form AI YouTube
 **Audience:** the developer or coding agent implementing the next system milestone.
 **Commission:** prepare the implementation handover for the engineer assigned to build it. This revision changes documentation only. The engineer's implementation assignment authorizes its ordinary offline development work; paid calls, purchases and public posting require their own applicable scope.

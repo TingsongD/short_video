@@ -21,7 +21,8 @@ class ElevenLabsAdapter(SynchronousAdapter):
         self.transport = transport or BoundedHTTP("elevenlabs", self.policy, 64 * 1024 * 1024)
 
     def readiness(self):
-        return {'ready':bool(self.account and self.pricing),'installed':True,'authenticated':False,
+        return {'ready':bool(self.account and self.pricing),'installed':True,
+                'authenticated':bool(self.credentials().get("ELEVENLABS_API_KEY")),
                 'catalog_visible':True,'contract_tested':True,'live_qualified':getattr(self,'qualified',False),
                 'reason':'Credential verification occurs at the transport boundary; model eleven_v3'}
 

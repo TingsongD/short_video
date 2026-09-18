@@ -90,8 +90,11 @@ def test_plan_rejects_unknown_account_and_platform(db):
         _plan(svc, account_id="ghost")
     assert e.value.code == "unknown_account"
     with pytest.raises(ContractError) as e2:
-        _plan(svc, pid="pub-2", platform="tiktok")
+        _plan(svc, pid="pub-2", platform="linkedin")
     assert e2.value.code == "unqualified_platform"
+    with pytest.raises(ContractError) as e3:
+        _plan(svc, pid="pub-3", platform="tiktok")
+    assert e3.value.code == "unknown_account"
 
 
 def test_publish_requires_authorization(db):

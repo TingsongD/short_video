@@ -30,8 +30,11 @@ class PublicationIntent(Record):
 from ..integrations.publisher import (ACCEPTED, TERMINAL,
                                       PublishTransportError)
 
-PUBLISHABLE = {"youtube"}            # qualified automated routes
-MANUAL_PLATFORMS = {"youtube", "tiktok", "instagram"}
+# Platforms the automated lane may plan for (PL-03). The real gate is
+# the configured account check in _account() — an unqualified or
+# unconnected destination still fails there.
+PUBLISHABLE = {"youtube", "tiktok", "instagram", "facebook"}
+MANUAL_PLATFORMS = {"youtube", "tiktok", "instagram", "facebook"}
 
 
 def _now():
@@ -57,6 +60,14 @@ class PublishingService:
         self.publisher = publisher
         self.accounts = dict(accounts or {})
         self.max_per_day = max_per_day
+        # Wired by bootstrap: fired once when a publication reaches a
+        # provider-confirmed public state so metric checkpoints can be
+        # scheduled from its actual publication time.
+        self.on_public = None
+
+    def _mark_public(self, publication_id, published_at):
+        if self.on_public:
+            self.on_public(self._get(publication_id))
 
     # ------------------------------------------------------ intent --
 
@@ -64,7 +75,10 @@ class PublishingService:
              platform, account_id, metadata=None, visibility="public",
              scheduled_at="", tz="UTC", media_url="",
              horizon_policy=None, authorization_id="", now="",
-             automated=True,artifact_id='',experiment_id='',experiment_revision=0):
+             automated=True,artifact_id='',experiment_id='',
+             experiment_revision=0, provider="upload_post",
+             connection_id="", metadata_package_id="",
+             metadata_revision=0):
         """Persist the publication intent — no transport call yet."""
         now = now or _now()
         if automated and platform not in PUBLISHABLE:
@@ -87,7 +101,10 @@ class PublishingService:
                         horizon_policy=dict(horizon_policy or {}),
                         manual=not automated,
                         experiment_id=experiment_id,
-                        experiment_revision=experiment_revision)
+                        experiment_revision=experiment_revision,
+                        provider=provider, connection_id=connection_id,
+                        metadata_package_id=metadata_package_id,
+                        metadata_revision=metadata_revision)
         p.artifact_id=artifact_id
         p.validate_or_raise()
         with self.db.uow() as u:
@@ -153,7 +170,7 @@ class PublishingService:
         request = self.request(p)
         with self.db.uow():
             self._check_cadence(p, now)
-            aid = self.effects(request, f"publish:{publication_id}", "publication", "upload_post", "upload")
+            aid = self.effects(request, f"publish:{publication_id}", "publication", p.get('provider','upload_post'), "upload")
             self.executor.require_request(aid, request)
             self._set(publication_id, attempt_id=aid, request_id=p['idempotency_key'],status="uploading", dispatch_started_at=now)
         meta = p.get("metadata") or {}
@@ -187,12 +204,101 @@ class PublishingService:
             return self.reconcile(publication_id, now=now)
         return self._apply(publication_id, resp, now)
 
+    # ---------------------------------------------- remote cancel --
+
+    def cancel_remote(self, publication_id, now=""):
+        """§10 matrix: cancel a provider-side scheduled job. Outcomes
+        are provider-confirmed, never inferred — a slot that raced to
+        live is 'already_public', a failed cancel is 'cancel_failed'."""
+        now = now or _now()
+        p = self._get(publication_id)
+        if p is None:
+            raise ContractError("unknown_publication", "id",
+                                publication_id)
+        if self.publisher is None:
+            raise ContractError("no_publisher", "platform",
+                                p["platform"])
+        if p["status"] == "public":
+            return {"outcome": "already_public",
+                    "publication_id": publication_id}
+        if p["status"] in ("draft", "failed", "cancelled",
+                           "requested"):
+            return {"outcome": "not_scheduled",
+                    "publication_id": publication_id,
+                    "status": p["status"]}
+        job_id = p.get("remote_schedule_id") or p.get("job_id")
+        if not job_id:
+            self.reconcile(publication_id, now=now)
+            p = self._get(publication_id)
+            job_id = p.get("remote_schedule_id") or p.get("job_id")
+        if not job_id:
+            self._event(publication_id, "remote_cancel_unknown",
+                        {"reason": "no_remote_job_id"})
+            return {"outcome": "unknown", "reason": "no_remote_job_id",
+                    "publication_id": publication_id}
+        try:
+            resp = self.publisher.cancel_schedule(job_id)
+        except PublishTransportError as e:
+            try:
+                self.reconcile(publication_id, now=now)
+                if self._get(publication_id)["status"] == "public":
+                    return {"outcome": "already_public",
+                            "publication_id": publication_id}
+            except PublishTransportError:
+                pass
+            self._event(publication_id, "remote_cancel_failed",
+                        {"job_id": job_id, "error": str(e)})
+            return {"outcome": "cancel_failed", "error": str(e),
+                    "publication_id": publication_id}
+        # The response body is provider truth — a refused or denied
+        # cancel is never reported as a success (§10 outcome matrix).
+        if isinstance(resp, dict) and (
+                resp.get("cancelled") is False or
+                resp.get("success") is False):
+            reason = (resp.get("reason") or resp.get("error")
+                      or "refused")
+            if reason == "already_published":
+                try:
+                    self.reconcile(publication_id, now=now)
+                except PublishTransportError:
+                    pass
+                if self._get(publication_id)["status"] == "public":
+                    return {"outcome": "already_public",
+                            "publication_id": publication_id}
+            self._event(publication_id, "remote_cancel_failed",
+                        {"job_id": job_id, "reason": reason})
+            return {"outcome": "cancel_failed", "reason": reason,
+                    "publication_id": publication_id}
+        try:
+            self.reconcile(publication_id, now=now)
+            after = self._get(publication_id)["status"]
+            if after == "public":
+                return {"outcome": "already_public",
+                        "publication_id": publication_id}
+            if after == "scheduled":
+                # The provider acknowledged but the slot still shows
+                # scheduled — the cancel is unconfirmed, not done.
+                self._event(publication_id,
+                            "remote_cancel_unconfirmed",
+                            {"job_id": job_id})
+                return {"outcome": "unknown",
+                        "reason": "remote_still_scheduled",
+                        "publication_id": publication_id}
+        except PublishTransportError:
+            pass
+        self._set(publication_id, status="cancelled")
+        self._event(publication_id, "remote_cancelled",
+                    {"job_id": job_id})
+        return {"outcome": "cancelled",
+                "publication_id": publication_id}
+
     def _apply(self, publication_id, resp, now):
         status = resp.get("publication_status",resp.get("status", "accepted"))
         if status=='public' and self._get(publication_id).get('visibility')!='public':status='draft'
         fields = {"request_id": resp.get("request_id", "")}
         if resp.get('job_id'):fields['job_id']=resp['job_id']
         fields['platform_results']=resp.get('platform_results',[])
+        became_public=False
         if status in ACCEPTED:
             fields["status"] = ("processing" if status == "processing"
                                 else "uploading")
@@ -203,12 +309,14 @@ class PublishingService:
                           published_at=resp.get("published_at", now),
                           visibility=resp.get(
                               "visibility", "public"))
+            became_public=True
         elif status in TERMINAL:
             fields["status"] = status
             if status == "scheduled":
                 fields["scheduled_at"] = resp.get(
                     "scheduled_at", fields.get("scheduled_at", ""))
         self._set(publication_id, **fields)
+        if became_public:self._mark_public(publication_id,fields["published_at"])
         self._event(publication_id, "publication_submitted",
                     {"request_id": fields.get("request_id", ""),
                      "status": fields.get("status", status)})
@@ -255,6 +363,8 @@ class PublishingService:
                       visibility=resp.get("visibility", "public"))
             self._event(publication_id, "publication_public",
                         {"post_url": resp.get("post_url", "")})
+            self._mark_public(publication_id,
+                              resp.get("published_at") or now)
             return {"status": "public",
                     "post_url": resp.get("post_url", "")}
         if remote in ('not_found',):remote='unknown'

@@ -240,7 +240,8 @@ class AnalysisService:
     @staticmethod
     def _hash(bp):
         d = bp.to_dict()
-        for k in ("created_at", "revision", "content_hash", "status"):
+        for k in ("created_at", "revision", "content_hash", "status",
+                  "analysis"):
             d.pop(k, None)
         return hashlib.sha256(json.dumps(
             d, sort_keys=True, default=str).encode()).hexdigest()

@@ -1,9 +1,16 @@
 # PROGRESS
 
-## Factory repair program — active
+## Factory program — offline implementation complete, not live-qualified
 
-Independent review R01–R43 supersedes factory completion claims. Sequential
-S0–S8 repairs run offline; [current evidence](docs/factory-reports/REPAIRS.md).
+Publishing/learning waves W0–W9 implemented; S0–S8 and N01–N20 repairs
+landed; the 2026-09-18 independent review's 15 findings (Q01–Q15) are
+all patched — see [REVIEW-2026-09-18](docs/factory-reports/REVIEW-2026-09-18.md)
+resolution table. Evidence: **1062 backend + 29 frontend tests green**,
+7 inverted defect probes now assert repaired behavior,
+`tests/test_factory_review_fixes.py` regression coverage.
+Not qualified for unattended use: live provider qualification, a real
+four-variant journey with elapsed readbacks, and F-module human
+sign-offs remain open (tracker below, review §"still open").
 Legacy G-gates and production records remain independent.
 
 ## Wave 0 — Foundation & Contracts ✅ DONE (2026-09-14)

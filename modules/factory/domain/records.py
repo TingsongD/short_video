@@ -86,6 +86,13 @@ class Seed(Record):
     provenance: list = field(default_factory=list)  # url forms + via + when
     metadata: dict = field(default_factory=dict)    # provider-observed fields
     metadata_fetched_at: str = ""
+    # Round-N lineage (PL-01): a champion seed points at its parent and
+    # the material family it belongs to. Empty = first-generation seed.
+    parent_seed_id: str = ""
+    lineage_root_id: str = ""        # original external reference seed
+    round: int = 0                   # 0 = first round; 1+ = derived
+    independence_group: str = ""     # root-material identity for
+                                     # independent-experiment counting
 
     def validate(self):
         e = super().validate()
@@ -212,6 +219,7 @@ class ReferenceBlueprint(Record):
     audio: dict = field(default_factory=dict)
     adaptation: dict = field(default_factory=dict)
     provenance: dict = field(default_factory=dict)
+    analysis: dict = field(default_factory=dict)   # {id, revision} stamped at accept
     content_hash: str = ""
 
     def validate(self):
@@ -948,11 +956,19 @@ class Publication(Record):
     deleted_at: str = ""             # explicit deletion — never silent
     experiment_id: str = ""          # owning experiment (resolved from variant plan)
     experiment_revision: int = 0     # revision at publication time — learning is scoped by it
+    # Multi-destination + provider fields (PL-01). Defaults preserve
+    # the legacy single-route Upload-Post behavior.
+    provider: str = "upload_post"    # upload_post|blotato|treg|manual
+    connection_id: str = ""          # connections.json publish.accounts id
+    metadata_package_id: str = ""    # frozen MetadataPackage binding
+    metadata_revision: int = 0
+    remote_schedule_id: str = ""     # provider scheduled-job id (for cancel)
 
     def validate(self):
         e = super().validate()
         states = {"requested", "uploading", "processing", "scheduled",
-                  "draft", "public", "failed", "unknown", "unverified"}
+                  "draft", "public", "failed", "unknown", "unverified",
+                  "cancel_requested", "cancelled"}
         if self.status not in states:
             e.append(ContractError("bad_publication_status", "status",
                                    self.status))
@@ -1011,6 +1027,13 @@ class DecisionPolicy(Record):
     promote_min_independent_experiments: int = 2
     status: str = "frozen"           # frozen|revised
     content_hash: str = ""
+    # Cross-platform seed-selection policy (PL-01), frozen in the same
+    # call. Absent = legacy single-platform decide only.
+    # {mode: primary_platform|weighted_rank, primary_platform, weights,
+    #  min_margin, improvement_rule{kind,params}, provisional_horizon,
+    #  mature_horizon, per_platform{platform:{primary_metric,
+    #  min_exposure, guardrails}}}
+    seed_policy: dict = field(default_factory=dict)
 
     def validate(self):
         e = super().validate()
@@ -1031,12 +1054,13 @@ class Decision(Record):
     experiment_id: str = ""
     experiment_revision: int = 0
     policy_version: str = ""
-    horizon: str = ""                # 48h|7d|28d
+    horizon: str = ""                # 48h|7d|28d|24h|72h|7d_complete|...
+    platform: str = ""               # '' legacy/all | youtube|tiktok|
+                                     # instagram|facebook (per-platform
+                                     # decisions, PL-05)
     primary_metric: str = ""
     comparisons: list = field(default_factory=list)  # B/C/D vs A results
-    conclusion: str = ""             # waiting_for_data|insufficient_exposure|
-                                     # inconclusive|provisional_winner|
-                                     # no_improvement|needs_retest
+    conclusion: str = ""             # see CONCLUSIONS
     winner: str = ""                 # variant key when provisional_winner
     evidence_ids: list = field(default_factory=list)
     limitations: list = field(default_factory=list)
@@ -1045,7 +1069,8 @@ class Decision(Record):
 
     CONCLUSIONS = ("waiting_for_data", "insufficient_exposure",
                    "inconclusive", "provisional_winner", "no_improvement",
-                   "needs_retest")
+                   "needs_retest", "retain_control", "invalid_comparison",
+                   "confirmed_winner")
 
     def validate(self):
         e = super().validate()
@@ -1076,6 +1101,160 @@ class Hypothesis(Record):
         if self.status not in ("candidate", "accepted", "retired"):
             e.append(ContractError("bad_hypothesis_status", "status",
                                    self.status))
+        return e
+
+
+# ------------------------------------------------------------------
+# Publishing & learning loop records (PL-01). Additive kinds; all new
+# fields have defaults so older bodies deserialize unchanged.
+
+PUBLISH_PLATFORMS = ("youtube", "tiktok", "instagram", "facebook")
+
+
+@dataclass
+class MetadataPackage(Record):
+    """Versioned publish-metadata package for one variant on one
+    platform (PL-02). Candidates are generated from accepted creative
+    evidence; the selected set is frozen before publication planning."""
+    variant_plan_id: str = ""
+    final_sha256: str = ""
+    platform: str = ""               # youtube|tiktok|instagram|facebook
+    revision: int = 0
+    status: str = "draft"            # draft|frozen|superseded
+    candidates: list = field(default_factory=list)   # [{id,via,fields,notes}]
+    selected: dict = field(default_factory=dict)     # chosen platform fields
+    disclosures: dict = field(default_factory=dict)  # ai_content|branded|audience
+    generator: dict = field(default_factory=dict)    # {route,model,prompt_version,evidence_id}
+    validation: dict = field(default_factory=dict)   # {ok,errors[],checked_fields[]}
+    content_hash: str = ""
+
+    def validate(self):
+        e = super().validate()
+        if self.platform and self.platform not in PUBLISH_PLATFORMS:
+            e.append(ContractError("unsupported_platform", "platform",
+                                   self.platform))
+        if self.status not in ("draft", "frozen", "superseded"):
+            e.append(ContractError("bad_metadata_status", "status",
+                                   self.status))
+        if self.status == "frozen" and not self.selected:
+            e.append(ContractError("frozen_needs_selection", "selected"))
+        return e
+
+
+@dataclass
+class SeedSelection(Record):
+    """One seed-selection evaluation for an experiment revision at one
+    checkpoint (PL-05). Evaluation is separate from child creation;
+    a revision chain (`-v{N}`) records mature reevaluation."""
+    experiment_id: str = ""
+    experiment_revision: int = 0
+    horizon: str = ""                # 24h|48h|72h|7d|7d_complete|28d|...
+    status: str = "waiting"          # waiting|provisional|confirmed|
+                                     # revised|inconclusive|superseded
+    winner_variant: str = ""         # A|B|C|D — A is a legal winner
+    publication_id: str = ""         # winning variant's evidence post
+    artifact_id: str = ""            # winning ORIGINAL master artifact
+    basis: dict = field(default_factory=dict)        # per-platform ranks,
+                                                     # scores, policy hash
+    decision_ids: list = field(default_factory=list) # per-platform decisions
+    inputs_hash: str = ""            # identical inputs → identical evaluation
+    seed_id: str = ""                # created Round-2 seed (set on transition)
+    limitations: list = field(default_factory=list)
+    superseded_by: str = ""
+
+    def validate(self):
+        e = super().validate()
+        if self.status not in ("waiting", "provisional", "confirmed",
+                               "revised", "inconclusive", "superseded"):
+            e.append(ContractError("bad_selection_status", "status",
+                                   self.status))
+        if self.winner_variant and self.winner_variant not in VARIANT_KEYS:
+            e.append(ContractError("bad_winner", "winner_variant",
+                                   self.winner_variant))
+        return e
+
+
+@dataclass
+class CheckpointSchedule(Record):
+    """Durable due-entry for one metric observation of one publication
+    (PL-04). One logical schedule per (publication, horizon); immutable
+    MetricSnapshot revisions attach evidence to it."""
+    publication_id: str = ""
+    horizon: str = ""
+    due_at: str = ""                 # UTC instant the collection becomes due
+    window_kind: str = ""            # observed_lifetime_at_age|
+                                     # source_calendar_window|exact_elapsed_window
+    status: str = "pending"          # pending|due|collected|missed|late|failed
+    attempts: int = 0
+    next_attempt_at: str = ""
+    job_id: str = ""                 # enqueued readback job when due
+    query_version: str = ""
+    policy_ref: str = ""
+
+    def validate(self):
+        e = super().validate()
+        if self.status not in ("pending", "due", "collected", "missed",
+                               "late", "failed"):
+            e.append(ContractError("bad_checkpoint_status", "status",
+                                   self.status))
+        if self.status in ("due", "collected", "late") and not self.due_at:
+            e.append(ContractError("checkpoint_needs_due_at", "due_at"))
+        return e
+
+
+@dataclass
+class RoundLineage(Record):
+    """One Round-N child: series, parent experiment and the selection
+    that produced the new seed (PL-06). The independence group survives
+    across derived rounds so related material is never double-counted."""
+    series_id: str = ""
+    round: int = 0
+    parent_experiment_id: str = ""
+    parent_experiment_revision: int = 0
+    parent_selection_id: str = ""    # SeedSelection that justified the child
+    seed_id: str = ""                # created Round-N seed
+    experiment_id: str = ""          # created Round-N experiment (once run)
+    root_reference_id: str = ""      # ORIGINAL external reference seed
+    independence_group: str = ""
+    status: str = "proposed"         # proposed|active|superseded|cancelled
+
+    def validate(self):
+        e = super().validate()
+        if self.status not in ("proposed", "active", "superseded",
+                               "cancelled"):
+            e.append(ContractError("bad_lineage_status", "status",
+                                   self.status))
+        return e
+
+
+@dataclass
+class LoopPolicy(Record):
+    """Bounded continuation authority for a series (PL-06).
+    propose_only = a reviewable next-round proposal; execute_within_
+    authorization = the funded, scoped policy may continue without
+    repeated prompts, never beyond its recorded scope."""
+    series_id: str = ""
+    mode: str = "propose_only"       # propose_only|execute_within_authorization
+    max_rounds: int = 0              # 0 = unbounded is NOT allowed; >0 required
+    max_posts: int = 0
+    allowed_providers: list = field(default_factory=list)
+    allowed_accounts: list = field(default_factory=list)
+    spend_caps: dict = field(default_factory=dict)   # unit -> max
+    valid_until: str = ""
+    stop_conditions: list = field(default_factory=list)
+    status: str = "active"           # active|paused|revoked|expired
+    authorization_id: str = ""       # funding authorization when executing
+
+    def validate(self):
+        e = super().validate()
+        if self.mode not in ("propose_only", "execute_within_authorization"):
+            e.append(ContractError("bad_loop_mode", "mode", self.mode))
+        if self.status not in ("active", "paused", "revoked", "expired"):
+            e.append(ContractError("bad_loop_status", "status",
+                                   self.status))
+        if self.mode == "execute_within_authorization" and not self.authorization_id:
+            e.append(ContractError("execution_needs_authorization",
+                                   "authorization_id"))
         return e
 
 
@@ -1235,4 +1414,61 @@ class RenderBuild(Record):
         if self.renderer not in ("ffmpeg_fast", "hypit"):
             e.append(ContractError("unknown_renderer", "renderer",
                                    self.renderer))
+        return e
+
+
+# ------------------------------------------------- reference analysis
+
+ANALYSIS_STATES = {"in_progress", "evidence_ready", "awaiting_review",
+                   "complete", "blocked", "superseded"}
+
+
+@dataclass
+class ReferenceAnalysis(Record):
+    """Mandatory deep-analysis work product for a seed's source media
+    (Hypit-directed reference understanding). Machine evidence stages
+    produce verifiable artifacts; operator stages supply the semantic
+    reading and creative answer; a human review completes it. Approval
+    elsewhere binds (source_sha256, analysis id+revision) exactly."""
+    seed_id: str = ""
+    revision: int = 0
+    status: str = "in_progress"      # see ANALYSIS_STATES
+    stage: str = ""                  # current/last machine stage
+    stages: dict = field(default_factory=dict)  # per-stage checkpoints
+    source_asset_id: str = ""
+    source_sha256: str = ""
+    acquisition: dict = field(default_factory=dict)
+    # {url, artifact_id, sha256, duration_s, width, height, fps,
+    #  audio_present, via, verified_at}
+    capabilities: dict = field(default_factory=dict)
+    # {hypit: bool, whisperx: bool, transcript_import: True}
+    transcript: dict = field(default_factory=dict)
+    # {status: aligned|unavailable|preliminary|not_applicable|
+    #  declared_nonverbal, provider, confidence, provenance,
+    #  word_count, file, preliminary: bool}
+    evidence: dict = field(default_factory=dict)
+    # {boundaries: [{t,score}], grids: [{artifact_id,start_s,end_s,
+    #  every_s,transcript_linked}], coverage_s}
+    understanding: dict = field(default_factory=dict)
+    # premise, progression, hook, setups, payoffs, ending,
+    # replay_appeal, intended_response, observations[],
+    # interpretations[], uncertainties[]
+    timeline: list = field(default_factory=list)
+    # [{start_s,end_s,phase,summary,evidence_ids}]
+    treatment: dict = field(default_factory=dict)
+    # summary, preserves, redesigns, script_direction, prompt_notes
+    documents: dict = field(default_factory=dict)
+    # {root, files: {analysis_md,timeline_md,brief_md,treatment_md,
+    #  progress_md,transcript_json}, hashes}
+    review: dict = field(default_factory=dict)
+    blocking: list = field(default_factory=list)
+    # [{code, detail, recovery}]
+    content_hash: str = ""
+
+    def validate(self):
+        e = super().validate()
+        _id_errors(e, self.seed_id, "seed_id")
+        if self.status not in ANALYSIS_STATES:
+            e.append(ContractError("bad_analysis_status", "status",
+                                   self.status))
         return e

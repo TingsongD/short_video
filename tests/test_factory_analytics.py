@@ -47,10 +47,17 @@ def test_due_windows_from_actual_publication_time(db):
     _publication(db)
     svc, _ = _svc(db)
     due = {d["horizon"]: d["status"] for d in svc.due("pub-1", now=T48)}
-    assert due == {"48h": "due", "7d": "not_due", "28d": "not_due"}
+    # PL-04: horizons extended (24h/72h) and YouTube exposes complete-
+    # reporting-day windows; a complete 7-day window is not yet due.
+    assert due == {"24h": "due", "48h": "due", "72h": "not_due",
+                   "7d": "not_due", "28d": "not_due",
+                   "7d_complete": "not_due", "28d_complete": "not_due"}
     due7 = {d["horizon"]: d["status"] for d in svc.due("pub-1", now=T7D)}
     assert due7["48h"] == "due" and due7["7d"] == "due"
     assert due7["28d"] == "not_due"
+    # LA-midnight-aligned publish: the complete window includes the
+    # publication day itself (Sep 10–16) and dues at Sep 17 00:00 LA.
+    assert due7["7d_complete"] == "due"
 
 
 def test_collect_before_due_refused(db):
@@ -111,7 +118,7 @@ def test_collect_stores_raw_and_normalized(db):
     svc, _ = _svc(db)
     snap = svc.collect("pub-1", "48h", now=T48)
     assert snap.metrics["views"] == 2400            # summed day rows
-    assert snap.metrics["avg_view_duration_s"] == pytest.approx((18.5*1000+17*1400)/2400)
+    assert snap.metrics["avg_view_duration_s"] == pytest.approx((18.5*700+17*900)/1600)
     assert snap.metrics["thumbnail_impressions"] == 68500
     assert snap.metrics["thumbnail_ctr"] == pytest.approx((38500*6.2+30000*5.8)/68500)
     assert snap.metrics["public_views"] == 2400     # data api
@@ -123,7 +130,7 @@ def test_collect_stores_raw_and_normalized(db):
 def test_zero_is_zero_missing_is_unknown(db):
     _publication(db)
     fake = FakeAnalytics(
-        analytics_rows=[["2026-09-10", 0.0, 0.0, 0, 0, 0, 0]],
+        analytics_rows=[["2026-09-10", 0.0, 0.0, 0, 0, 0, 0, 0, 0]],
         reach_rows=[["2026-09-10", 0, 0.0]],
         stats={"viewCount": "0"})
     svc, _ = _svc(db, fake)
@@ -141,8 +148,8 @@ def test_zero_is_zero_missing_is_unknown(db):
 def test_retention_above_one_preserved(db):
     _publication(db)
     fake = FakeAnalytics(analytics_rows=[
-        ["2026-09-10", 20.0, 120.0, 4, 9, 3, 500],
-        ["2026-09-11", 22.0, 132.0, 4, 9, 3, 500]])
+        ["2026-09-10", 20.0, 120.0, 4, 350, 9, 3, 3, 500],
+        ["2026-09-11", 22.0, 132.0, 4, 350, 9, 3, 3, 500]])
     svc, _ = _svc(db, fake)
     snap = svc.collect("pub-1", "48h", now=T48)
     assert snap.metrics["avg_view_pct"] == 126.0    # never clamped
@@ -161,13 +168,16 @@ def test_delayed_retry_updates_same_snapshot(db):
     assert s2.completeness == "complete"
 
 
-def test_partial_route_failure_is_partial(db):
+def test_optional_route_failure_is_degraded_not_blocking(db):
     _publication(db)
     fake = FakeAnalytics(faults={"reach_down"})
     svc, _ = _svc(db, fake)
     snap = svc.collect("pub-1", "48h", now=T48)
-    assert snap.completeness == "partial"
+    # Reach carries only optional metrics — its failure is recorded in
+    # availability/failed_routes but does not downgrade a usable snapshot.
+    assert snap.completeness == "complete"
     assert snap.availability["thumbnail_ctr"] == "route_failed"
+    assert snap.actual_coverage["failed_routes"] == ["reporting_api"]
     assert snap.metrics["views"] == 2400            # other route fine
 
 
@@ -183,7 +193,7 @@ def test_oauth_expiry_marks_failed_routes(db):
 def test_coverage_short_of_horizon_is_partial(db):
     _publication(db)
     fake = FakeAnalytics(analytics_rows=[
-        ["2026-09-10", 18.0, 60.0, 4, 9, 3, 900]],
+        ["2026-09-10", 18.0, 60.0, 4, 600, 9, 3, 3, 900]],
         reach_rows=[["2026-09-10", 20000, 5.0]])
     svc, _ = _svc(db, fake)
     snap = svc.collect("pub-1", "48h", now=T48)

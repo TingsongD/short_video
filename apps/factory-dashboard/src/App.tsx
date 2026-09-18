@@ -6,13 +6,16 @@ import { ReviewsScreen } from "./features/reviews/ReviewsScreen";
 import { DeliveryScreen } from "./features/delivery/DeliveryScreen";
 import { GenerationApproval } from "./features/operations/GenerationApproval";
 import { OperationsScreen } from "./features/operations/OperationsScreen";
+import { AnalysisScreen } from "./features/analysis/AnalysisScreen";
 import { QueueScreen, JobView } from "./features/queue/QueueScreen";
+import { PublishingScreen } from "./features/publishing/PublishingScreen";
+import { LearningScreen } from "./features/learning/LearningScreen";
 
 // The server owns these JSON domain records. The editor round-trips unknown
 // optional fields; IDs, revision and hashes always come from the selected row.
 type Row = Record<string, any>;
 const TABS = ["Seeds", "Plan", "Queue", "Compare", "Reviews", "Delivery", "Studio", "Providers", "Products", "Budgets", "Research", "Analysis", "Audio", "Publishing", "Learning"] as const;
-const names = ["seeds","blueprints","templates","experiments","plans","assets","reviews","deliveries","products","budgets","research","effect_plans","publications","metrics","policies","decisions"];
+const names = ["seeds","blueprints","templates","experiments","plans","assets","reviews","deliveries","products","budgets","research","effect_plans","publications","metrics","policies","decisions","metadatapackages","checkpoints","selections","lineages","loops"];
 
 export default function App() {
   const [tab,setTab]=useState<(typeof TABS)[number]>("Seeds");
@@ -86,7 +89,7 @@ export default function App() {
       {seed.source_asset_id&&<video controls src={media(seed.source_asset_id)} style={{maxHeight:320}}/>}
       <h3>Observed timing and transcript</h3><p>Import your observations, then review the extracted source evidence.</p>
       <textarea aria-label="Source observations" rows={10} value={observations} onChange={e=>setObservations(e.target.value)}/><button onClick={()=>act(()=>call('POST',`/api/seeds/${seedId}/analyze`,{body:{reviewer:requireReviewer(),observations:JSON.parse(observations)}}),'Analysis queued')}>Analyze imported observations</button>
-      {blueprint&&<><pre>{JSON.stringify(blueprint.beats,null,2)}</pre><button disabled={blueprint.status==='accepted'} onClick={()=>act(()=>call('POST',`/api/blueprints/${blueprint.id}/review`,{body:{content_hash:blueprint.content_hash,reviewer:requireReviewer()}}))}>Accept source timing</button><button onClick={()=>act(makeDraft,'Draft prepared — replace source footage with your own approved assets')}>Prepare four variants</button></>}</>}
+      {blueprint&&<><pre>{JSON.stringify(blueprint.beats,null,2)}</pre><p>Acceptance requires a completed deep analysis — see the Analysis tab. Manual observations here are preliminary evidence only.</p><button disabled={blueprint.status==='accepted'} onClick={()=>act(()=>call('POST',`/api/blueprints/${blueprint.id}/review`,{body:{content_hash:blueprint.content_hash,reviewer:requireReviewer()}}))}>Accept source timing</button><button onClick={()=>act(makeDraft,'Draft prepared — replace source footage with your own approved assets')}>Prepare four variants</button></>}</>}
       <details><summary>Imported asset identities</summary><pre>{JSON.stringify(data.assets,null,2)}</pre></details>
     </section>}
     {tab==='Plan'&&<section><h2>Four-variant plan</h2><p>Edit the planned assets, copy and declared changes before requesting a quote. Reuse only source footage you have permission to use.</p>
@@ -116,7 +119,10 @@ export default function App() {
       <label>Time in seconds <input value={at} onChange={e=>setAt(e.target.value)}/></label><label>Proposed edit <textarea value={comment} onChange={e=>setComment(e.target.value)}/></label><button onClick={()=>act(()=>call('POST',`/api/variants/${studioVariant}/comments`,{rev:selected?.revision,body:{at_s:Number(at),text:comment}}),'Change proposed; no generation started')}>Save proposed change</button>
     </section>}
     {tab==='Providers'&&<ProvidersScreen providers={providers} onRecheck={()=>act(()=>loadProviders(true),'Readiness re-checked')}/>}
-    {['Products','Budgets','Research','Analysis','Audio','Publishing','Learning'].includes(tab)&&<OperationsScreen section={tab} data={data} selected={selected} reviewer={reviewer} act={act}/>}
+    {tab==='Analysis'&&<AnalysisScreen seeds={seeds} blueprints={data.blueprints||[]} reviewer={reviewer} act={act} media={media}/>}
+    {tab==='Publishing'&&<PublishingScreen data={data} selected={selected} reviewer={reviewer} act={act}/>}
+    {tab==='Learning'&&<LearningScreen data={data} selected={selected} reviewer={reviewer} act={act}/>}
+    {['Products','Budgets','Research','Audio'].includes(tab)&&<OperationsScreen section={tab} data={data} selected={selected} reviewer={reviewer} act={act}/>}
     </fieldset>
   </main>;
 }

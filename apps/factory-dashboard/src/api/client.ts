@@ -128,6 +128,21 @@ export const api = {
   },
   analyze: (seedId: string) =>
     call("POST", `/api/seeds/${seedId}/analyze`, { body: {} }),
+  getAnalysis: (seedId: string) =>
+    call<Record<string, unknown> | null>("GET", `/api/analysis/${seedId}`),
+  startAnalysis: (seedId: string, reviewer: string) =>
+    call("POST", `/api/seeds/${seedId}/analysis`, { body: { reviewer } }),
+  rerunAnalysis: (seedId: string) =>
+    call("POST", `/api/analysis/${seedId}/rerun`, { body: {} }),
+  saveAnalysis: (seedId: string, section: string,
+                 body: Record<string, unknown>) =>
+    call("PUT", `/api/analysis/${seedId}/${section}`, { body }),
+  importTranscript: (seedId: string, body: Record<string, unknown>) =>
+    call("POST", `/api/analysis/${seedId}/transcript`, { body }),
+  declareAnalysis: (seedId: string, body: Record<string, unknown>) =>
+    call("POST", `/api/analysis/${seedId}/declare`, { body }),
+  reviewAnalysis: (seedId: string, body: Record<string, unknown>) =>
+    call("POST", `/api/analysis/${seedId}/review`, { body }),
   createExperiment: (body: Record<string, unknown>) =>
     call("POST", "/api/experiments", { body }),
   patchDraft: (id: string, patch: Record<string, unknown>, rev: number) =>

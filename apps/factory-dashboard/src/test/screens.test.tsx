@@ -175,3 +175,28 @@ describe("planner revision flow", () => {
     expect(calls.filter((c) => c.url.includes("/quote"))).toHaveLength(1);
   });
 });
+
+describe("learning fresh-series loop (Q12)", () => {
+  it("derives the series id from the selected experiment's seed so a "
+     + "first loop can be frozen", async () => {
+    const { LearningScreen } =
+      await import("../features/learning/LearningScreen");
+    const act = vi.fn(async (fn: () => Promise<unknown>) => fn());
+    globalThis.fetch = fakeFetch({
+      "POST /api/series/series%3Agrp-1/loop": { ok: true },
+    });
+    render(<LearningScreen
+      data={{ seeds: [{ id: "seed-1", independence_group: "grp-1" }],
+              publications: [], decisions: [], selections: [],
+              loops: [], lineages: [] }}
+      selected={{ experiment_id: "e9", revision: 1, seed_id: "seed-1" }}
+      reviewer="operator"
+      act={act} />);
+    const btn = screen.getByText("Freeze loop for series:grp-1");
+    fireEvent.click(btn);
+    await waitFor(() => expect(act).toHaveBeenCalled());
+    expect(calls.some((c) =>
+      c.url.includes("/api/series/") && c.url.includes("/loop")))
+      .toBe(true);
+  });
+});

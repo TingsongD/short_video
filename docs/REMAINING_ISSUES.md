@@ -1,5 +1,11 @@
 # Build Review — Remaining Issues (2026-09-14, pass 2)
 
+> **Scope note (2026-09-18):** this is the legacy M1–M12 module review —
+> "none open" refers only to its B-series findings. Current factory
+> status is authoritative in
+> [`factory-reports/REVIEW-2026-09-18.md`](factory-reports/REVIEW-2026-09-18.md)
+> (all 15 findings patched) and `PROGRESS.md`.
+
 Pass 1 audited + patched (B1, B2 fixed; S1, S2 partially; D1 decided; V3 decided).
 Pass 2 (this document): full line-by-line audit of all 67 module files.
 Patch round 2: B3, B4 fixed (see "Fixed in patch round 2" below).

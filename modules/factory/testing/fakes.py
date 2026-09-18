@@ -1487,6 +1487,10 @@ class FakePublisher:
             return {"status": 200, "body": self._upload(req)}
         if req["method"] == "GET" and path.startswith("/api/uploadposts/status"):
             return {"status": 200, "body": self._status(path)}
+        if req["method"] == "GET" and path.startswith("/api/uploadposts/analytics"):
+            return {"status": 200, "body": self._analytics(path)}
+        if req["method"] == "DELETE" and path.startswith("/api/uploadposts/schedule"):
+            return {"status": 200, "body": self._cancel_schedule(path)}
         if path in ('/api/uploadposts/posts/edit','/api/uploadposts/posts/unpublish'):
             body=req['json'];ref=body['post_id']
             result=self._patch_post(ref,body) if path.endswith('/edit') else self._delete_post(ref)
@@ -1558,6 +1562,22 @@ class FakePublisher:
         if advance and job["i"] < len(job["steps"]) - 1:
             job["i"] += 1
         status = job["steps"][job["i"]]
+        # A remotely-scheduled job fires when its instant arrives — the
+        # provider holds it until then, it does not stay scheduled.
+        if status == 'scheduled':
+            try:
+                from datetime import datetime
+                fire = datetime.fromisoformat(str(
+                    job["fields"].get("scheduled_date", "")
+                    ).replace("Z", "+00:00"))
+                now = datetime.fromisoformat(str(
+                    self.now_fn()).replace("Z", "+00:00"))
+            except ValueError:
+                fire = now = None
+            if fire is not None and now is not None and now >= fire:
+                job["steps"].append("public")
+                job["i"] += 1
+                status = "public"
         body = {'request_id':job['request_id'],'status':{'accepted':'pending','public':'completed','draft':'completed','scheduled':'pending'}.get(status,status),'results':[]}
         if status in ('public','draft'):
             post=self._ensure_post(job)
@@ -1627,6 +1647,36 @@ class FakePublisher:
         self.doc["posts"][pid] = post
         return pid
 
+    def plant_metrics(self, post_id, fields):
+        """Metrics the fake provider reports for a post (PL-04)."""
+        self.doc.setdefault("metrics", {})[post_id] = dict(fields)
+
+    def _analytics(self, path):
+        query = path.split("?", 1)[-1] if "?" in path else ""
+        params = dict(p.split("=", 1) for p in query.split("&") if "=" in p)
+        pid = params.get("post_id", "")
+        for p in self.doc["posts"].values():
+            if p["id"] == pid or (params.get("post_url") and
+                                  p["url"] == params["post_url"]):
+                m = dict(self.doc.get("metrics", {}).get(p["id"]) or {})
+                return {"post_id": p["id"], "platform": p["platform"],
+                        "fetched_at": self.now_fn(), **m}
+        return {"error": "not_found"}
+
+    def _cancel_schedule(self, path):
+        from ..integrations.publisher import PublishTransportError
+        if "cancel_fails" in self.faults:
+            raise PublishTransportError("schedule_cancel_failed", 500)
+        query = path.split("?", 1)[-1] if "?" in path else ""
+        params = dict(p.split("=", 1) for p in query.split("&") if "=" in p)
+        job = self.doc["jobs"].get(params.get("job_id", ""))
+        if job is None:
+            return {"cancelled": False, "reason": "not_found"}
+        if job["steps"][job["i"]] == "public":
+            return {"cancelled": False, "reason": "already_published"}
+        del self.doc["jobs"][job["request_id"]]
+        return {"cancelled": True, "job_id": params.get("job_id", "")}
+
     def verify_post(self,ref):
         p=self._get_post(ref)
         if p.get('status')=='not_found':return None
@@ -1655,10 +1705,11 @@ class FakeAnalytics:
         self.stats = stats or {"viewCount": "2400", "likeCount": "91",
                                "commentCount": "12"}
         # columns: day + sorted(PULL_METRICS) = day, averageViewDuration,
-        # averageViewPercentage, comments, likes, subscribersGained, views
+        # averageViewPercentage, comments, engagedViews, likes, shares,
+        # subscribersGained, views
         self.analytics_rows = analytics_rows if analytics_rows is not \
-            None else [["2026-09-10", 18.5, 61.0, 4, 9, 3, 1000],
-                       ["2026-09-11", 17.0, 58.0, 3, 7, 2, 1400]]
+            None else [["2026-09-10", 18.5, 61.0, 4, 700, 9, 12, 3, 1000],
+                       ["2026-09-11", 17.0, 58.0, 3, 900, 7, 17, 2, 1400]]
         self.reach_rows = reach_rows if reach_rows is not None else [
             ["2026-09-10", 38500, 6.2], ["2026-09-11", 30000, 5.8]]
         self.channel_doc = channel_doc or {

@@ -268,6 +268,48 @@ def create_app(services, session_token=None):
         status,resp=mutation(request,body,lambda:(202,services.analyze_seed(seed_id,body)))
         return JSONResponse(resp,status_code=status)
 
+    # ------------------------------------ mandatory deep analysis --
+
+    @app.post("/api/seeds/{seed_id}/analysis", status_code=202)
+    async def start_analysis(seed_id: str, request: Request):
+        body=await json_command(request)
+        status,resp=mutation(request,body,lambda:(202,services.start_analysis(seed_id,body)))
+        return JSONResponse(resp,status_code=status)
+
+    @app.get("/api/analysis/{seed_id}")
+    async def get_analysis(seed_id: str):
+        return services.analysis_for(seed_id)
+
+    @app.put("/api/analysis/{seed_id}/{section}")
+    async def save_analysis_section(seed_id: str, section: str, request: Request):
+        body=await json_command(request)
+        status,resp=mutation(request,body,lambda:(200,services.save_analysis_section(seed_id,section,body,body.get('reviewer',''))))
+        return JSONResponse(resp,status_code=status)
+
+    @app.post("/api/analysis/{seed_id}/transcript")
+    async def import_transcript(seed_id: str, request: Request):
+        body=await json_command(request)
+        status,resp=mutation(request,body,lambda:(200,services.import_analysis_transcript(seed_id,body)))
+        return JSONResponse(resp,status_code=status)
+
+    @app.post("/api/analysis/{seed_id}/declare")
+    async def declare_analysis(seed_id: str, request: Request):
+        body=await json_command(request)
+        status,resp=mutation(request,body,lambda:(200,services.declare_analysis(seed_id,body)))
+        return JSONResponse(resp,status_code=status)
+
+    @app.post("/api/analysis/{seed_id}/rerun", status_code=202)
+    async def rerun_analysis(seed_id: str, request: Request):
+        body=await json_command(request)
+        status,resp=mutation(request,body,lambda:(202,services.rerun_analysis_stages(seed_id,body)))
+        return JSONResponse(resp,status_code=status)
+
+    @app.post("/api/analysis/{seed_id}/review")
+    async def review_analysis(seed_id: str, request: Request):
+        body=await json_command(request)
+        status,resp=mutation(request,body,lambda:(200,services.review_analysis(seed_id,body)))
+        return JSONResponse(resp,status_code=status)
+
     @app.post("/api/seeds/{seed_id}/media")
     async def attach(seed_id: str,request: Request):
         body=await json_command(request)
@@ -401,6 +443,18 @@ def create_app(services, session_token=None):
     @app.get('/api/publications/{publication_id}')
     async def publication_detail(publication_id:str):return services.detail('publication',publication_id)
 
+    @app.post('/api/experiments/{experiment_id}/publications',status_code=201)
+    async def publications_batch(experiment_id:str,request:Request):
+        body=await json_command(request);revision=expected_rev(request)
+        status,resp=mutation(request,body,lambda:(201,services.require('publication_work').plan_batch(experiment_id,body,revision)))
+        return JSONResponse(resp,status_code=status)
+
+    @app.post('/api/publications/{publication_id}/cancel-remote',status_code=200)
+    async def publication_cancel_remote(publication_id:str,request:Request):
+        body=await json_command(request)
+        status,resp=mutation(request,body,lambda:(200,services.require('publishing').cancel_remote(publication_id)))
+        return JSONResponse(resp,status_code=status)
+
     @app.post('/api/publications/{publication_id}/authorize')
     async def publication_authorize(publication_id:str,request:Request):
         body=await json_command(request)
@@ -423,9 +477,47 @@ def create_app(services, session_token=None):
     @app.post('/api/publications/{publication_id}/readbacks',status_code=202)
     async def readback(publication_id:str,request:Request):
         body=await json_command(request);services.require('readback');services.detail('publication',publication_id)
-        from ..analytics.service import HORIZONS
-        if body.get('horizon') not in HORIZONS:raise ContractError('unknown_horizon','horizon')
+        from ..analytics.service import COMPLETE_DAYS,HORIZONS
+        if body.get('horizon') not in HORIZONS and body.get('horizon') not in COMPLETE_DAYS:raise ContractError('unknown_horizon','horizon')
         status,resp=mutation(request,body,lambda:(202,services.commands.enqueue('readback',{'publication_id':publication_id,'horizon':body['horizon']},phase='collect')))
+        return JSONResponse(resp,status_code=status)
+
+    @app.post('/api/variants/{variant_id}/metadata',status_code=201)
+    async def metadata_create(variant_id:str,request:Request):
+        body=await json_command(request)
+        def create():
+            services.detail('variantplan',variant_id)
+            pkg=services.require('metadata').create(
+                variant_id,body.get('platform',''),
+                final_sha256=body.get('final_sha256',''),
+                candidates=body.get('candidates'),
+                generator=body.get('generator'),
+                context=body.get('context'),
+                disclosures=body.get('disclosures'))
+            return 201,{'metadata_package':pkg.to_dict()}
+        status,resp=mutation(request,body,create)
+        return JSONResponse(resp,status_code=status)
+
+    @app.get('/api/metadata/{package_id}')
+    async def metadata_detail(package_id:str):
+        body=services.detail('metadatapackage',package_id)
+        row=services.db.uow().records.get('metadatapackage',package_id)
+        return {**body,'version':row['version'] if row else None}
+
+    @app.put('/api/metadata/{package_id}/select')
+    async def metadata_select(package_id:str,request:Request):
+        body=await json_command(request)
+        status,resp=mutation(request,body,lambda:(200,services.require('metadata').select(
+            package_id,candidate_id=body.get('candidate_id',''),
+            fields=body.get('fields'),revision=expected_rev(request),
+            reviewer=body.get('reviewer',''))))
+        return JSONResponse(resp,status_code=status)
+
+    @app.post('/api/metadata/{package_id}/freeze')
+    async def metadata_freeze(package_id:str,request:Request):
+        body=await json_command(request)
+        status,resp=mutation(request,body,lambda:(200,services.require('metadata').freeze(
+            package_id,revision=expected_rev(request))))
         return JSONResponse(resp,status_code=status)
 
     @app.post('/api/experiments/{experiment_id}/policy',status_code=201)
@@ -433,7 +525,7 @@ def create_app(services, session_token=None):
         body=await json_command(request);revision=expected_rev(request);services._current(experiment_id,revision,True)
         def freeze():
             if not body.get('reviewer'):raise ContractError('reviewer_required','reviewer')
-            fields={k:v for k,v in body.items() if k in ('policy_version','primary_metric','horizon','min_exposure','practical_lift','exposure_metric','guardrails','comparison_rule','promote_min_independent_experiments')}
+            fields={k:v for k,v in body.items() if k in ('policy_version','primary_metric','horizon','min_exposure','practical_lift','exposure_metric','guardrails','comparison_rule','promote_min_independent_experiments','seed_policy')}
             if not {'policy_version','primary_metric','horizon'}<=fields.keys():raise ContractError('policy_required','policy')
             return 201,{'policy':services.require('learning').freeze_policy(experiment_id,revision,**fields).to_dict()}
         status,resp=mutation(request,body,freeze)
@@ -442,7 +534,46 @@ def create_app(services, session_token=None):
     @app.post('/api/experiments/{experiment_id}/decisions',status_code=202)
     async def decision(experiment_id:str,request:Request):
         body=await json_command(request);revision=expected_rev(request);services._current(experiment_id,revision,True)
-        status,resp=mutation(request,body,lambda:(202,services.require('commands').enqueue('decision',{'experiment_id':experiment_id,'revision':revision},phase='collect')))
+        status,resp=mutation(request,body,lambda:(202,services.require('commands').enqueue('decision',{'experiment_id':experiment_id,'revision':revision,'horizon':body.get('horizon',''),'platform':body.get('platform',''),'account':body.get('account','')},phase='collect')))
+        return JSONResponse(resp,status_code=status)
+
+    @app.post('/api/experiments/{experiment_id}/selections',status_code=202)
+    async def selection(experiment_id:str,request:Request):
+        body=await json_command(request);revision=expected_rev(request);services._current(experiment_id,revision,True)
+        status,resp=mutation(request,body,lambda:(202,services.require('commands').enqueue('select_seed',{'experiment_id':experiment_id,'revision':revision,'horizon':body.get('horizon',''),'account':body.get('account',''),'accounts':body.get('accounts')},phase='collect')))
+        return JSONResponse(resp,status_code=status)
+
+    @app.post('/api/experiments/{experiment_id}/rounds',status_code=201)
+    async def propose_round(experiment_id:str,request:Request):
+        body=await json_command(request);revision=expected_rev(request);services._current(experiment_id,revision,True)
+        status,resp=mutation(request,body,lambda:(201,services.require('rounds').propose_next(
+            experiment_id,revision,body.get('selection_id',''))))
+        return JSONResponse(resp,status_code=status)
+
+    @app.post('/api/series/{series_id}/loop',status_code=201)
+    async def freeze_loop(series_id:str,request:Request):
+        body=await json_command(request)
+        def freeze():
+            if not body.get('reviewer'):raise ContractError('reviewer_required','reviewer')
+            fields={k:v for k,v in body.items() if k in ('mode','max_rounds','max_posts','allowed_providers','allowed_accounts','spend_caps','valid_until','stop_conditions','authorization_id')}
+            return 201,{'loop':services.require('rounds').freeze_loop(series_id,**fields)}
+        status,resp=mutation(request,body,freeze)
+        return JSONResponse(resp,status_code=status)
+
+    @app.get('/api/series/{series_id}')
+    async def series_lineage(series_id:str):
+        return services.require('rounds').lineage(series_id)
+
+    @app.post('/api/series/{series_id}/pause')
+    async def series_pause(series_id:str,request:Request):
+        body=await json_command(request)
+        status,resp=mutation(request,body,lambda:(200,services.require('rounds').pause_series(series_id)))
+        return JSONResponse(resp,status_code=status)
+
+    @app.post('/api/series/{series_id}/cancel')
+    async def series_cancel(series_id:str,request:Request):
+        body=await json_command(request)
+        status,resp=mutation(request,body,lambda:(200,services.require('rounds').cancel_series(series_id)))
         return JSONResponse(resp,status_code=status)
 
     @app.post("/api/variants/{variant_id}/studio",status_code=202)

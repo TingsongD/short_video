@@ -57,6 +57,10 @@ def bootstrap(root, *, providers=None, drive=None, settings=None,publisher=None,
     services.audio_work=AudioWork(services)
     from .services.analysis_work import AnalysisWork
     services.analysis_work=AnalysisWork(services)
+    from .analysis.deep import ReferenceAnalysisService, HypitTransport
+    services.ref_analysis=ReferenceAnalysisService(
+        db,seeds,artifacts,data/'analysis-projects',
+        HypitTransport(root/'scripts'/'hypit.sh'))
     from .publishing.service import PublishingService
     from .analytics.service import ReadbackService
     from .learning.service import LearningService
@@ -64,9 +68,25 @@ def bootstrap(root, *, providers=None, drive=None, settings=None,publisher=None,
     from .audio.mix import MixService
     services.mix=MixService(db,artifacts)
     services.publishing=PublishingService(db,publisher=publisher,accounts=settings.get('publication_accounts',{}),executor=executor,max_per_day=settings.get('posts_per_day',2))
-    services.readback=ReadbackService(db,analytics_client) if analytics_client is not None else None
+    # Publisher-routed metrics for non-YouTube destinations (PL-04);
+    # populated only by adapters that expose a verified analytics call.
+    pub_metrics={}
+    if publisher is not None and hasattr(publisher,'analytics'):
+        pub_metrics['upload_post']=publisher.analytics
+    services.readback=ReadbackService(db,analytics_client,
+                                      publisher_metrics=pub_metrics)
+    from .metadata.service import MetadataService
+    services.metadata=MetadataService(db)
     services.learning=LearningService(db)
     services.publication_work=PublicationWork(services)
+    # Delayed metric checkpoints: scheduled once a publication reaches
+    # a confirmed public state, claimed by the collect queue when due.
+    from .services.checkpoints import CheckpointService
+    services.checkpoints=CheckpointService(db,services.commands,
+                                           lambda: services.readback)
+    services.publishing.on_public=services.checkpoints.schedule_for
+    from .services.rounds import RoundService
+    services.rounds=RoundService(services)
     if drive is not None:
         from .delivery.service import DeliveryService
         services.delivery=DeliveryService(db,drive,artifacts,executor=executor)

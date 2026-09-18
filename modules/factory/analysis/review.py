@@ -51,9 +51,17 @@ class BlueprintReview:
         if self.flags(blueprint_id):
             raise ContractError("unresolved_flags", "flags",
                                 "review flags must be resolved first")
-        self._update(blueprint_id, status="accepted")
-        self._event(blueprint_id, "accepted", {"hash": expected_hash,
-                                               "reviewer": reviewer})
+        from .deep import analysis_gate
+        analysis = analysis_gate(self.db, bp.seed_id,
+                                 (bp.provenance or {})
+                                 .get("artifact_sha256", ""))
+        self._update(blueprint_id, status="accepted",
+                     analysis={"id": analysis.id,
+                               "revision": analysis.revision})
+        self._event(blueprint_id, "accepted",
+                    {"hash": expected_hash, "reviewer": reviewer,
+                     "analysis": analysis.id,
+                     "analysis_revision": analysis.revision})
         return self._load(blueprint_id)
 
     def reject(self, blueprint_id, reason):

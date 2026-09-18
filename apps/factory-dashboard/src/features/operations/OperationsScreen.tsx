@@ -20,7 +20,7 @@ export function OperationsScreen({section,data,selected,reviewer,act}:Props){
   return <section><h2>{section}</h2>
     {section==='Budgets'&&<><p>Each provider keeps its own unit. Recording a ceiling does not buy credits.</p>
       <label>Budget name<input value={budgetId} onChange={e=>setBudget(e.target.value)}/></label>
-      <label>Unit<select value={unit} onChange={e=>setUnit(e.target.value)}>{['jimeng_credits','usd_micros','elevenlabs_credits','viral_outliers_credits'].map(x=><option key={x}>{x}</option>)}</select></label>
+      <label>Unit<select value={unit} onChange={e=>setUnit(e.target.value)}>{['jimeng_credits','usd_micros','elevenlabs_credits'].map(x=><option key={x}>{x}</option>)}</select></label>
       <label>Ceiling in this unit<input type="number" min="0" step="1" value={ceiling} onChange={e=>setCeiling(e.target.value)}/></label>
       <button onClick={()=>act(()=>post('/api/budgets',{id:budgetId,unit,scope:'aggregate',scope_key:'',ceiling:Number(ceiling),reviewer:reviewed(),evidence:'Explicit dashboard budget scope'}),'Budget recorded')}>Record spending ceiling</button>
       <table><thead><tr><th>Budget</th><th>Unit</th><th>Ceiling</th><th>Available</th></tr></thead><tbody>{(data.budgets||[]).map(b=><tr key={b.id}><td>{b.id}</td><td>{b.unit}</td><td>{b.cap_amount}</td><td>{b.retired?'Retired after restore':b.available}</td></tr>)}</tbody></table></>}

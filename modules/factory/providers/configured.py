@@ -90,7 +90,7 @@ def configured_auxiliary(root,data,mode,artifacts=None):
             observed=getattr(creds,'account',None) or getattr(creds,'service_account_email',None)
             if observed!=identity:raise AuthError('account_mismatch_or_unavailable')
             return {'kind':'oauth','identity':observed,'project':project,'scopes':['cloud-platform'],'access_token':creds.token}
-        providers['audiovisual_analysis']=VertexAnalyzer(Path(data)/'providers/analysis',artifacts,VertexAuth(credentials,project),identity,project,conn['model'],conn['pricing'],location=conn.get('location','global'),policy=policy)
+        providers['audiovisual_analysis']=VertexAnalyzer(Path(data)/'providers/analysis',artifacts,VertexAuth(credentials,project),identity,project,conn['model'],conn['pricing'],location=conn.get('location','global'),policy=policy,max_bytes=conn.get('max_bytes',20*1024*1024))
     conn=qualified('shopify')
     if conn and conn.get('shop') and artifacts:
         from ..integrations.shopify import configured_shopify
@@ -103,11 +103,10 @@ def configured_auxiliary(root,data,mode,artifacts=None):
         from .elevenlabs import ElevenLabsAdapter
         providers['elevenlabs']=ElevenLabsAdapter(Path(data)/'providers/elevenlabs',credential_loader(root,['ELEVENLABS_API_KEY']),policy=policy,account=conn['account_id'],pricing=conn['pricing'])
         providers['elevenlabs'].qualified=True
-    conn=qualified('viral_outliers')
-    if conn and conn.get('pricing'):
-        from ..integrations.research import configured_research
-        adapter=configured_research(Path(data)/'providers/research',conn['account_id'],credential_loader(root,['VIRAL_OUTLIERS_API_KEY']),policy)
-        adapter.pricing=conn['pricing'];providers['viral_outliers']=adapter
+    conn=qualified('generated_music')
+    if conn and conn.get('pricing') and conn.get('model'):
+        from .music import MusicAdapter
+        providers['generated_music']=MusicAdapter(Path(data)/'providers/music',credential_loader(root,['ELEVENLABS_API_KEY']),policy=policy,account=conn['account_id'],pricing=conn['pricing'],model=conn['model'])
     conn=qualified('publish')
     if conn and conn.get('user') and conn.get('accounts'):
         from ..integrations.publisher import UploadPostPublisher

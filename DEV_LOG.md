@@ -7,6 +7,485 @@ decisions) is my direct work.
 
 ---
 
+## 2026-09-18 — Remaining providers qualified (user approved pilots)
+
+User approved the billable qualification pilots for all three remaining
+routes. Results:
+
+**audiovisual_analysis — qualified.** Pilot
+(`data/production/v-vertex-analysis-pilot-20260918/`) exercised the real
+`VertexAnalyzer.submit()`: ADC identity check, artifact verification,
+`generateContent` inlineData, `parse_analysis`. First attempt surfaced a
+real route defect — `gemini-2.5-flash` returned `confidence:"high"`,
+outside the parser enum `{reviewed,uncertain,unresolved}`, because the
+prompt never enumerated the allowed values. Fixed `PROMPT` to declare
+the vocabulary explicitly; attempt 02 succeeded (HTTP 200, STOP,
+1 305 in / 565 out tokens, $0.0018 vs $0.10 estimate). The failed
+call left an honest `unknown` receipt — no re-dispatch, no double
+charge. Evidence → `data/factory/qualification/analysis-{quote,operation}.json`;
+connection `gemini-2.5-flash`/`global`, pricing 100k/250k µs,
+`qualified_until` 2026-10-18, enabled. Also gave `VertexAnalyzer` a
+real `readiness()` (was inheriting hardcoded `authenticated:false`).
+
+**generated_music — adapter built + qualified.** No adapter existed;
+built `modules/factory/providers/music.py` (`MusicAdapter`,
+SynchronousAdapter → `POST /v1/music`, `music_v1`, `force_instrumental`,
+mp3_44100_128) and wired it into `configured_auxiliary`. Live pilot
+(`data/production/v-elevenlabs-music-pilot-20260918/`): 200, 161 KB
+MP3. Credit metering is delayed — measured the subscription
+character-count delta twice: **30 credits/second** exactly
+(390 for 13 s, 150 for 5 s) drawn from the shared character pool.
+Connection `music_v1`, `credits_per_second:30`, evidence recorded,
+enabled. New tests `tests/test_factory_music_adapter.py` (4 green).
+
+**viral_outliers — staged, awaiting credit top-up.** Auth verified
+(200 on `/api/v1/credits`), dated pricing captured (1 credit/search,
+$0.01/credit). The approved search pilot returned a real 402 —
+balance is 0. Recorded contract evidence + connection
+(`account_id` = key fingerprint), but `live_evidence`/`qualified_until`
+stay empty and the route stays disabled until a successful search
+after top-up (pack_s: 1 500 credits/$15 — user action).
+
+`/api/providers`: 5/6 fully green. Focused suite 78 passed,
+`git diff --check` clean. The analyzer prompt change is a qualified-
+route fix; no test pinned the old prompt.
+
+**viral_outliers removed.** Later the same day the user retired the
+route ("no longer used") before any top-up: connection entry deleted,
+the readiness tuple dropped it (board now lists 5 routes, all green),
+and the `configured_auxiliary` construction branch was removed. The
+research feature code (`integrations/research.py`,
+`radar/viral_client.py`, `DiscoveryService`, `/api/research/*`) stays
+in place but has no provider — `/api/research/plans` now returns
+`route_unavailable`, verified live. The dashboard budget-unit dropdown
+lost `viral_outliers_credits`; the unit itself remains in
+`domain/money.py` for historical budgets. Pilot receipts stay under
+`data/production/v-viral-outliers-pilot-20260918/` as honest history.
+
+---
+
+## 2026-09-18 — google_vertex qualified from existing pilot evidence
+
+User completed `gcloud auth application-default login`; installed
+`google-auth` + `requests` into `.venv` (the live auth boundary imports
+both). ADC token identity verified as `david.dai@robanka.com` via the
+token-info endpoint; the ADC file's empty `account` field was corrected
+to that observed identity (records truth, not new credentials).
+
+No new billable call was needed: the documented 2026-09-17 pilot
+(`docs/vertex-video-test.md`, receipts under
+`data/production/v-vertex-video-pilot-20260916/`) already proves the
+exact route — `gemini-omni-1.1-flash-preview`, location `global`,
+text input, 4 s 720p 9:16, $0.409384 usage at dated published rates.
+Copied `receipt.json`/`cost-estimate.json` into
+`data/factory/qualification/vertex-operation.json` /
+`vertex-quote.json`, recorded the `capabilitysnapshot`
+(`cap-google_vertex-…-global-text`, support `qualified`, documented
+capability surface, `valid_until` 2026-10-18), and corrected the
+connection: `location` `us-central1`→`global` (must match the
+qualified route), `rates` populated from the verified pilot numbers
+(dated 2026-09-17, 5 792 video tokens/s, $1.50/$17.50/$9.00 per M,
+1.25 reservation), `contract_evidence`/`live_evidence` set to the
+receipts, `qualified_until` 2026-10-18, added to `enabled`.
+
+`GET /api/providers` now reports all flags green for google_vertex —
+installed/authenticated/catalog/contract/live. Verified: 25 QA +
+19 provider/readiness tests green, `git diff --check` clean.
+Reference-media input modes remain unqualified (adapter hard-rejects
+them) — only `text` was piloted.
+
+Still blocked, honestly: `audiovisual_analysis` (needs a live
+`generateContent` pilot — billable, awaits authorization),
+`viral_outliers` (needs `account_id` + pricing + pilot),
+`generated_music` (no adapter exists; imported music only).
+
+---
+
+## 2026-09-18 — Local WhisperX configured; capability probe fixed
+
+User chose the local-WhisperX route. `hypit runtime init` created the
+project Runtime Profile; merged `whisperx.local`
+(`@hypit/provider-whisperx-local`, bundled in the vendored
+distribution) plus the required
+`@hypit/whisperx@1#whisperx-alignment` binding (needed because
+hypihub.default also offers alignment). `runtime up` prepared the
+locked uv env (whisperx 3.8.6, torch 2.8.0) and NLTK punkt_tab;
+service is warm at 127.0.0.1:8765 — model `small`, cpu/int8, "local,
+no Provider charge" per the CLI. `hypit transcribe` on the reference
+audio produced 31 words / 8 passages / 93.513 s end-to-end.
+
+Second defect found: `transcribe_available()` grepped
+`runtime status --json` for "whisperx" — that report carries worker/
+program counts, never endpoint names, so a fully configured service
+still reported unavailable. Probe now reads `programs status --json`
+(declared endpoint instances, including not-yet-warm ones). Both
+seed analyses were re-imported with the canonical whisperx output
+(provider `whisperx`, declared provenance) and re-ran to
+`evidence_ready`, `blocking: []`, transcript-linked grids rebuilt.
+
+**Verification:** new test asserts the probe calls
+`programs status` and detects declared endpoints; live `doctor`
+reports zero diagnostics; factory transport returns
+`transcribe_available: True`. `hypit.runtime.json` is new project
+config (untracked — commit decision left open); `.hypit/` stays
+gitignored machine state.
+
+---
+
+## 2026-09-18 — Transcript-import format fix + live recovery (seed-youtube-47a6411c25932535)
+
+A real analysis run blocked correctly at the speech gate (speech
+detected, no WhisperX endpoint, captions insufficient). Importing a
+locally produced word-timed transcript surfaced a genuine defect:
+`import_transcript` wrote a proprietary `{words: [...]}` file, but
+`hypit media tiles --transcript` requires `hypit.transcript@1`
+(passages of `text`/`start_seconds`/`end_seconds` words), so the
+evidence stage re-blocked with "expected hypit.transcript@1". The
+test fake wrote the same wrong shape, masking it.
+
+Fixed: `import_transcript` now writes `hypit.transcript@1` via
+`_hypit_transcript` (flat words grouped into passages at >2s gaps —
+no invented data); `_transcript_words` reads `passages[].words`
+(also repairs `word_count` on the real WhisperX path, which
+previously always counted 0); a clean `run_machine_stages` clears
+stale `blocking` entries. `FakeHypit.transcribe` now writes the real
+format so the seam can't mask it again.
+
+**Live recovery executed:** extracted 16 kHz mono audio from
+`art:695a70cd86513d2d` (93.521 s), ran local faster-whisper 1.2.1
+`small.en` (`word_timestamps=True`, `vad_filter=True`, fully
+offline — model already in the HF cache), imported 23 word-timed
+entries with declared provider+provenance through the real API
+route, re-ran the durable analysis job. Result: `evidence_ready`,
+`blocking: []`, 8 transcript-linked grids. Operator understanding/
+timeline/treatment/review steps remain — the gate holds until a
+human reviews.
+
+**Verification:** `tests/test_factory_analysis_gate.py` +
+`tests/test_factory_application.py` 26 passed including a new
+regression test asserting the written file satisfies the hypit
+reader contract.
+
+---
+
+## 2026-09-18 — Review-finding patch: all 15 items (REVIEW-2026-09-18)
+
+Every finding in `docs/factory-reports/REVIEW-2026-09-18.md` verified
+against code + spec, then patched in five waves. The seven
+reproduction probes in `docs/factory-reports/probes/` were inverted
+to assert repaired behavior and now pass as regression tests;
+`tests/test_factory_review_fixes.py` adds permanent coverage for the
+unprobed findings (Q03 worked cases, Q06 retry/backoff + complete-day
+horizons, Q07 observe-job lifecycle, Q10 dispatch gates, Q14
+evidence/account plumbing, Q09 honest limitation). Resolution status
+is recorded in the review report itself.
+
+**Verification:** full backend suite 1062 passed (from the 1047
+post-decision-patch baseline — +15 net: the new review_fixes file),
+7/7 inverted probes green, dashboard 29 Vitest green (+1 Q12 test),
+`tsc --noEmit` clean, `vite build` green, `git diff --check` clean.
+
+- **Selection correctness (Q01, Q03, Q14).** `_evaluate_seed`
+  reimplemented to the frozen §9.3 contract: eligibility requires
+  exposure AND guardrails on every required lane; per-platform ranks
+  with averaged ties; Borda score `100×(4−rank)/3` weighted by frozen
+  weights; `min_margin` enforced against the next eligible contender;
+  exact top-score ties are inconclusive; A retains control when
+  eligible; `weighted_lift` improvement is Σ weight·relative-lift
+  (with `denominator_floor`), `min_platforms` counts named required
+  lanes where the challenger beats A AND passes exposure. Inadequate
+  control exposure → `insufficient_exposure` → inconclusive.
+  `select_seed` gained `account`/`accounts` scoping; decision ids
+  carry `-{account}` suffixes and are stored on the selection with
+  snapshot `evidence_ids` in basis; per-platform `primary_metric`
+  overrides apply per lane.
+- **Evidence honesty (Q02, Q04, Q05, Q15).** Late lifetime-at-age
+  snapshots (>1.25× requested age — the existing `actual_coverage.late`
+  semantics) are ineligible for that checkpoint rather than silently
+  crowning a winner; `max_late_hours`/`max_upstream_age_hours` policy
+  fields add declared bounds. Complete-day windows include the
+  publication day when it begins exactly at the source-day boundary
+  (§8.2) and `expected_days` derives from the requested `start`, not
+  the local publish day — the permanent off-by-one `partial` is gone.
+  Completeness gates on required analytics coverage; optional
+  thumbnail reach is recorded in availability/failed_routes but no
+  longer blocks a valid Shorts comparison. `shares` joined
+  `PULL_METRICS`/`NORMALIZED`; Shorts average duration/percentage
+  weight by `engagedViews` with `views` fallback (same-window
+  denominator, never the lifetime public counter), with the
+  denominator recorded in coverage/metric definitions.
+- **Durability (Q06, Q07, Q08).** Checkpoint collection inspects
+  snapshot completeness — pending/partial/failed evidence leaves the
+  schedule `retrying` with bounded exponential backoff
+  (`next_delay`, MAX_ATTEMPTS, then honest `failed`); `7d_complete`/
+  `28d_complete` ride the same durable schedule (the capability gate
+  was inverted — fixed). A provider-confirmed `scheduled` post now
+  enqueues a `publication_observe` job that self-defers (bounded 24h
+  past the fire instant) until reconcile confirms public — only then
+  do checkpoints schedule. `cancel_remote` reads the provider's
+  response body: `{success:false}`/transport failure → `cancel_failed`,
+  still-scheduled reconcile → `cancel_failed`, public → `already_public`;
+  local `cancelled` only on provider-confirmed cancel.
+- **Loop mechanics (Q09–Q13).** `propose_next` checks for an existing
+  child BEFORE the round limit (replay idempotent under default
+  `max_rounds=1`); the child seed carries `platform='local'` and gets
+  the champion's accepted local artifact attached via
+  `SeedRegistry.attach_media` — success reports `media_ready` with the
+  artifact id, absence reports `no_winner_artifact` (never invented
+  readiness). Loop policies now gate dispatch, not just proposals:
+  `queue()` and `execute()` consult `_loop_gate` — paused → defer
+  (resumable), halted/expired → block, `allowed_providers`/
+  `allowed_accounts` enforced per slot. Mature supersession marks
+  child `RoundLineage` basis `superseded` with an audit event.
+  Dashboard can freeze a first loop for a fresh series — the id is
+  derived from the selected experiment's seed group with a manual
+  fallback (Q12; new Vitest covers it).
+- **Fake fidelity.** `FakePublisher` scheduled jobs now fire at
+  `scheduled_date` when `now_fn()` reaches it — the provider holds,
+  then publishes, rather than staying scheduled forever.
+- **Fixture update.** `test_factory_publishing_e2e._collect_all`
+  collects at `published_at + horizon` (the instant the delayed job
+  fires) — collecting at wall-clock now records an honestly-late
+  snapshot that no longer represents the age.
+
+Still human/config (not code): live provider qualification, a real
+four-variant journey, F-module sign-offs, WhisperX, raw-JSON forms,
+invoice settlement.
+
+---
+
+## 2026-09-18 — Decision-layer gap patch (findings review)
+
+Four verified code gaps patched; full suite 1047 green (+3 new tests
+in `tests/test_factory_decision_windows.py`):
+
+- **YouTube non-midnight windows decidable.** `collect()` no longer
+  downgrades fully-covered snapshots to `partial` for non-LA-midnight
+  publish times — `coverage['exact_horizon']` and
+  `requested_period.window_kind` carry the measurement definition, so
+  `source_calendar` windows are `complete` when their days are covered.
+  `_window_expect` now returns an accepted-kind set per lane:
+  `{'exact_rolling','source_calendar'}` for YouTube elapsed horizons,
+  `{'source_calendar_window'}` for complete-days,
+  `{'observed_lifetime_at_age'}` for non-YouTube. Decisions computed on
+  a source-calendar window carry an explicit limitation line.
+- **Eligible snapshot pick.** `_snapshot` ranks candidates by (window
+  kind/hours acceptable to the policy, completeness, observed_at,
+  revision) instead of unconditional latest — a later pending retry no
+  longer masks a complete earlier sample.
+- **Account-aware publication key.** `_publication_for` filters
+  `(variant, platform, account_id)`; `decide()`/`_evidence`/worker
+  `decision`/API accept `account` and suffix decision ids
+  `-{account}`. Unscoped multi-account slots still resolve to honest
+  `missing` rather than guessing.
+- **`engagedViews` collected.** Registered in `ANALYTICS_PER_VIDEO`,
+  `PULL_METRICS` and `NORMALIZED` (`engaged_views`) so it can be frozen
+  as primary/exposure metric; optional for completeness like
+  `public_views` (absence doesn't downgrade the snapshot).
+- **Vertex analysis cap configurable** — `audiovisual_analysis`
+  connection gains optional `max_bytes` (default unchanged at 20 MiB).
+- One test expectation updated (`repairs_learning`): covered
+  source-calendar window now asserts `complete` + `window_kind` +
+  `exact_horizon=False` instead of `partial`.
+
+Not patched (needs humans/config, not code): WhisperX for spoken
+analysis, F-module sign-offs, `connections.json` qualification review
+(file exists — Canvas/ElevenLabs/Drive enabled with dated evidence;
+Vertex slot lacks qualification), raw-JSON forms, invoice settlement
+for unknown charges.
+
+## 2026-09-18 — CAS convention unified on row `version`
+
+`MetadataPackage` keeps a stable `revision` (identity); mutations are
+in-place at that revision, so compare-and-swap uses the `records` row
+`version` for both `select` and `freeze` (unified — previously mixed).
+The API now exposes `version` on every collection row and on
+`GET /api/metadata/{id}` so clients have the handle to send back;
+the dashboard's metadata actions send `pkg.version`. Handover §5.1
+gained the two-handle rule so future in-place records follow the same
+convention. 17 targeted tests + E2E re-verified green.
+
+## 2026-09-18 — Publishing/learning implementation complete (W0–W9)
+
+Staged implementation of `docs/factory-publishing-learning-handover.md`
+landed in nine waves, each verified before the next started. Baseline
+was locked at 990 passing tests before any change; the full suite now
+runs **1044 passed, zero regressions** under `make test`'s interpreter
+(`.venv` Python 3.14 — note: `modules/factory/analytics/client.py` uses
+PEP 701 multi-line f-strings and does not parse under system Python
+3.11; always run tests via `make test` or `.venv/bin/python`).
+
+- W1 contracts — additive `Publication`/`Seed`/`DecisionPolicy` fields
+  plus five new records: `MetadataPackage`, `SeedSelection`,
+  `CheckpointSchedule`, `RoundLineage`, `LoopPolicy`.
+- W2 analytics capability layer — `24h`/`72h` horizons,
+  `PLATFORM_METRICS` per-platform normalization,
+  `WINDOW_SOURCES`/`window_capability` gate wired into
+  `freeze_policy` (`window_capability_missing` on unsupplied mature
+  windows), non-YouTube windows labeled `observed_lifetime_at_age`.
+- W3 metadata stage — `modules/factory/metadata/service.py` with
+  platform field limits, required disclosure answers, CAS via row
+  version, frozen-package binding in `PublicationWork.plan` with
+  `metadata_stale`/`metadata_variant_mismatch`/platform checks.
+- W4 destinations — `UploadPostPublisher` gained `analytics`,
+  `cancel_schedule`, `destinations` (provisional contracts);
+  `PUBLISHABLE`/`MANUAL_PLATFORMS` extended to all four platforms;
+  `plan_batch` fans out up to 16 slots with per-variant review +
+  frozen-metadata auto-attach and per-slot errors; `cancel_remote`
+  reports `cancelled`/`already_public`/`cancel_failed`/`not_scheduled`.
+- W5 checkpoints — `CheckpointService` + `enqueue(not_before=)`;
+  public-transition hook schedules 24h/48h/72h/7d/28d readbacks once
+  per publication; late/missed labeling; worker `readback` routes via
+  the checkpoint service.
+- W6 learning — `decide()` accepts `platform=` and reads per-
+  (variant, platform) publications; `select_seed` implements the
+  six-step evaluation (validity → eligibility → ranks → weighted score
+  → improvement rule → outcome) keyed by `(experiment, revision,
+  horizon)` + `inputs_hash`; lineage-aware independence counting.
+- W7 rounds — `modules/factory/services/rounds.py`: loop policy
+  freeze/pause/cancel, bounded Round-2 proposal minting a derived seed
+  (parent, round, independence group) + `RoundLineage`, idempotent on
+  selection.
+- W8 dashboard — Publishing and Learning screens (matrix, metadata
+  freeze, authorize/run/cancel-remote, readbacks; policy, decisions,
+  selections, lineage, loop controls) with the existing CSRF/
+  idempotency/revision/SSE conventions; 28 Vitest + build green.
+- W9 — offline E2E (`tests/test_factory_publishing_e2e.py`): 16 mocked
+  destinations → public → auto checkpoints → 24h collections →
+  per-platform decisions → champion-B selection → loop freeze →
+  Round-2 proposal + idempotent replay. Operator guide gained a Step-7
+  publishing/learning section and honest provisional caveats.
+
+Deferred: live read-only probes (Treg/Monid/Blotato) pending explicit
+credentials + qualification; Upload-Post qualification needs
+`UPLOAD_POST_API_KEY`. A previously-committed `LONGFORM_PLAN.md` had
+been deleted in the working tree (unrelated); restored.
+
+## 2026-09-18 — Handover spec gaps resolved (P1×2, P2×2)
+
+Four flagged contract gaps fixed in
+`docs/factory-publishing-learning-handover.md` before implementation:
+
+- §8.2 — mature `source_calendar_window` policy now gated on
+  measurement capability at freeze time: Upload-Post's cache selects
+  *when metrics were captured*, not *when views occurred*, so a
+  required reporting window with no qualified source fails
+  `window_capability_missing` instead of freezing an unusable policy;
+  an explicitly approved `observed_lifetime_at_age` fallback freezes
+  with honest labels.
+- §9.2 — selection evaluation separated from child creation:
+  `SeedSelection` keyed by `(experiment, revision, horizon)` +
+  `inputs_hash`; retries return the same evaluation, new horizons or
+  revised evidence mint `sel-…-v{N}`; one active child enforced
+  independently with status flow waiting→provisional→confirmed/revised.
+- §9.3 — fixed 6-step evaluation order: platform validity (unsafe
+  control → `invalid_comparison` → `inconclusive`), global eligibility,
+  ranks, weighted score, score-order winner evaluation under a declared
+  `improvement_rule` (`weighted_lift`|`min_platforms`), explicit
+  outcomes; five worked cases encoded as PL-T34.
+- §10 — pause/series_cancel/authority_revoked matrix vs remotely
+  scheduled provider jobs: pause changes nothing remotely, series
+  cancel issues the provider's scheduled-job cancel per destination
+  (`cancelled`/`already_public`/`cancel_failed`/`unknown`), revocation
+  lists outstanding jobs without implying they won't publish.
+- New acceptance tests PL-T31–PL-T35 covering all four.
+
+## 2026-09-18 — Publishing/learning handover tightened + Blotato resolved
+
+Review of the proposed four-platform publish→measure→select→reseed loop
+against the live code, then gap-closing edits to the implementation
+brief. No production code changed — this is documentation.
+
+- `docs/factory-publishing-learning-handover.md` — added §3.1 "Exact
+  seams": verified symbols the work must change —
+  `_publication_for(variant)` returns a publication only when exactly
+  one matches (16 destination posts would make every variant's coverage
+  `missing`); `_snapshot` picks unconditional latest instead of
+  checkpoint-eligible evidence; `decide()` enforces
+  `window_kind=='exact_rolling'` + `HORIZONS[horizon]`;
+  `freeze_policy` validates horizon/metric membership in
+  `HORIZONS`/`NORMALIZED` (YouTube-column-shaped); worker commands are
+  `publish`/`publication_observe`/`readback`/`decision` (decision
+  carries no horizon/platform today); `connections.json` `publish`
+  slot already reads `{user, accounts}`; loopback host allowlist means
+  real provider webhooks get `403` — polling is the required path.
+  Added §5.3 concrete record sketches (`MetadataPackage`,
+  `SeedSelection`, `RoundLineage`/seed lineage fields, frozen
+  `seed_policy` dict) and §9.2's decide-vs-select_seed separation
+  (control-relative decision vs best-of-4 ranking where A can win;
+  per-platform decision ids `dec-{id}-r{rev}-{horizon}-{platform}`).
+- `docs/factory-publishing-provider-research.md` + handover §4.2/§15 —
+  Blotato analytics conflict **resolved by direct evidence** from the
+  connected MCP: `blotato_get_post_analytics`/`list_top_posts`
+  descriptions state analytics cover X/IG/FB/Threads/Bluesky only —
+  no YouTube, no TikTok, and background-refreshed not on-demand.
+  Viable publisher, cannot power the learning loop. Upload-Post +
+  native YouTube Analytics remains the primary route.
+- `LearningService.independent_experiments` counts distinct `seed_id`s —
+  flagged in the handover: derived Round-2 seeds must count by lineage
+  root or independence is inflated (PL-T25 covers it).
+
+---
+
+## 2026-09-18 — Mandatory Hypit-directed reference analysis gate
+
+Manual observations + YouTube captions could previously become an
+accepted source blueprint and advance production — preliminary evidence
+treated as understanding. Added a durable `ReferenceAnalysis` record
+(`referenceanalysis.v1`, additive — no schema/fixture changes) and made
+a reviewed deep analysis bound to the exact source bytes a prerequisite
+for blueprint acceptance and every downstream production path.
+
+- `modules/factory/analysis/deep.py` — `ReferenceAnalysisService` with
+  staged machine evidence (acquire → transcript → evidence → documents)
+  behind the durable `analysis_evidence` worker command; per-stage
+  checkpoints make interruption safe and resume never repeats finished
+  work (verified: transcript is not re-generated on retry). Transcript
+  uses configured WhisperX via `hypit transcribe`; YouTube captions
+  attach as `preliminary` only; no-audio → `not_applicable`; operator
+  import/declare are the supported recoveries. Evidence is real hypit
+  boundaries + full-duration (+ boundary close-up) frame grids intaken
+  as content-addressed artifacts; hypit refuses existing `--to` dirs so
+  rebuilds rmtree first. `HypitTransport` wraps `scripts/hypit.sh`.
+- `analysis_gate` / `bound_gate` — shared enforcement. `analysis_gate`
+  re-verifies substantive completeness (stages, transcript status,
+  grids, coverage, all understanding fields, timeline, treatment), so
+  a self-reported `complete` flag alone can never pass.
+- Enforcement points: `BlueprintReview.accept` (gate + stamps
+  `{analysis_id, revision}` binding; `analysis` excluded from blueprint
+  content_hash so stamping doesn't rehash), `author_template`,
+  `create_experiment_draft`, `quote_experiment`, `authorize_experiment`,
+  `run_experiment`, and the worker `run` handler (`verify_run_gate`)
+  for recovery/replay paths. Legacy acceptances with no binding fail
+  closed with `analysis_required`.
+- Revision semantics: operator edits on a `complete` analysis open a
+  new revision (prior preserved, superseded); pre-approval edits stay
+  in-revision. Source-sha or revision mismatch → `analysis_stale`.
+- API: `POST /api/seeds/{id}/analysis`, `GET /api/analysis/{id}`,
+  `PUT /api/analysis/{id}/{understanding|timeline|treatment}`,
+  `POST …/transcript|declare|rerun|review`; `analyses` collection.
+- Dashboard: real `AnalysisScreen` replaces the generic operations
+  view — stage progress, capabilities, blocking + recovery actions,
+  acquisition facts, transcript status, evidence-grid previews,
+  plain-language understanding/timeline/treatment forms, review.
+- Real run on `seed-youtube-47a6411c25932535`: acquisition verified
+  (93.521s 1080×1920@30, audio), 12 boundary candidates, 8 grids
+  covering full duration; transcript correctly `blocked` (no WhisperX
+  endpoint configured) with three named recoveries. Old manual
+  blueprint annotated `analysis_state: preliminary_manual`.
+- Tests: `tests/test_factory_analysis_gate.py` (16) — preliminary
+  blocked, stale sha/revision, bypass paths, nonverbal, resume without
+  duplicate paid work, captions-can't-qualify, hand-forged `complete`
+  rejected. `prepare()` in `test_factory_application.py` now completes
+  a scripted-FakeHypit analysis before blueprint review; direct-accept
+  tests seed a completed record. Full suite 990 passed; dashboard
+  28/28 + build green.
+
+Open: dog-and-ball transcript still needs a WhisperX endpoint (local
+model prep or hosted profile — user decision, potentially a download/
+spend) or an operator import/declare; understanding/timeline/treatment
+forms and review are the operator's manual step in the dashboard.
+
 ## 2026-09-17 (evening) — Post-repair defect repairs N01–N20
 
 The post-repair review at `c6ffad2` (`docs/factory-reports/REVIEW-POST-REPAIR-2026-09-17.md`)

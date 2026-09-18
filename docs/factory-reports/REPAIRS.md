@@ -1,5 +1,11 @@
 # Factory repair ledger
 
+> **Current status (2026-09-18):** after the S0–S8 packages below, the
+> independent [REVIEW-2026-09-18](REVIEW-2026-09-18.md) found 15
+> implementation defects (Q01–Q15) — all patched; see its resolution
+> table and `tests/test_factory_review_fixes.py`. Suite: 1062 backend +
+> 29 frontend green.
+
 Starting revision: `dae132a`, branch `feat/factory`. The user authorized S0–S8
 implementation and the public test boundaries listed in REPAIR-BASELINE.json.
 All checks use offline providers; no new live spend or publication scope exists.

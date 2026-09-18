@@ -62,22 +62,28 @@ def test_wrong_file_empty_accounts_and_manual_declaration_cannot_publish(db,tmp_
     with pytest.raises(ContractError,match='publication_not_public'):ReadbackService(db,None).due(p.id)
 
 
-def test_missing_reach_days_and_midnight_mismatch_are_not_complete(db):
+def test_missing_reach_days_optional_midnight_mismatch_source_calendar(db):
     from test_factory_analytics import _publication,T48
     _publication(db)
     fake=FakeAnalytics(reach_rows=[['2026-09-11',30000,5]])
     svc=ReadbackService(db,FactoryAnalyticsClient(transport=fake.transport))
     snap=svc.collect('pub-1','48h',now=T48)
-    assert snap.completeness=='partial'
+    # §8.2: optional thumbnail reach must not block a usable snapshot —
+    # required coverage is complete; the reach gap stays recorded.
+    assert snap.completeness=='complete'
     assert snap.actual_coverage['metrics']['views']['complete']
     assert not snap.actual_coverage['metrics']['thumbnail_ctr']['complete']
     assert snap.timezone=='America/Los_Angeles'
     p=json.loads(db.uow().records.get('publication','pub-1')['body']);p['published_at']='2026-09-10T08:05:00Z'
     with db.uow() as u:u.conn.execute("UPDATE records SET body=? WHERE kind='publication' AND id='pub-1'",(json.dumps(p),))
     fake.reach_rows=[['2026-09-10',10,5],['2026-09-11',10,5],['2026-09-12',10,5]]
-    fake.analytics_rows.append(['2026-09-12',17,55,1,1,1,500])
+    fake.analytics_rows.append(['2026-09-12',17,55,1,300,1,1,1,500])
     snap=svc.collect('pub-1','48h',now=T48)
-    assert snap.completeness=='partial' and snap.missing_reason=='source_calendar_not_exact_horizon'
+    # Coverage of the source days is complete; the non-midnight-aligned
+    # age is recorded as a source_calendar (not exact_rolling) window.
+    assert snap.completeness=='complete'
+    assert snap.requested_period['window_kind']=='source_calendar'
+    assert snap.actual_coverage['exact_horizon'] is False
 
 
 def test_current_decisions_and_numeric_revision_order(db):

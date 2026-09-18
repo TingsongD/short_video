@@ -259,8 +259,8 @@ Do not populate them until the corresponding live pilot passes.
 | `google_vertex` | project, account_id, location, input_modes, verified rates |
 | `elevenlabs` | model `eleven_v3`; dated pricing with credits_per_character, valid_until, evidence |
 | `audiovisual_analysis` | project, model, location; pricing with estimate_usd_micros, reserve_usd_micros, valid_until, evidence |
+| `generated_music` | model; dated pricing with credits_per_second, valid_until, evidence |
 | `shopify` | authorized `shop` ending in `.myshopify.com` |
-| `viral_outliers` | current native-credit pricing snapshot |
 | `publish` | Upload Post user and configured platform/account mapping |
 | `youtube_analytics` | exact OAuth account_id and Reporting API qualification |
 | `drive` | exact account_id, current contract_evidence, live_evidence and qualified_until |

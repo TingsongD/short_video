@@ -12,6 +12,11 @@ from ..testing.fakes import ProviderError
 
 UPLOAD_PATH='/api/upload'
 STATUS_PATH='/api/uploadposts/status'
+# Per-post analytics + scheduled-job management (docs.upload-post.com/
+# api/get-analytics, /api/schedule-posts). Field/param names marked
+# provisional until the PL-08 live qualification verifies them.
+ANALYTICS_PATH='/api/uploadposts/analytics'
+SCHEDULE_PATH='/api/uploadposts/schedule'
 DEFAULT_BASE='https://api.upload-post.com'
 TERMINAL={'public','failed','draft','scheduled'}
 ACCEPTED={'accepted','queued','uploading','processing'}
@@ -111,6 +116,28 @@ class UploadPostPublisher:
 
     def find_by_idempotency_key(self,idempotency_key,platform='youtube'):
         return self.status(idempotency_key,platform)
+
+    def analytics(self,remote_post_id='',post_url=''):
+        """Latest cached per-post metrics. Upload-Post captures these
+        in the background — the response's own timestamps describe when
+        the metrics were captured, not when views occurred (§8.1).
+        Returns the raw body; field mapping happens in the readback
+        service's PLATFORM_METRICS tables."""
+        if not remote_post_id and not post_url:
+            raise PublishTransportError('analytics_needs_identity')
+        query={}
+        if remote_post_id:query['post_id']=remote_post_id
+        if post_url:query['post_url']=post_url
+        body=self._send('GET',ANALYTICS_PATH+'?'+urlencode(query))
+        return body
+
+    def cancel_schedule(self,job_id):
+        """Cancel a provider-side scheduled job. Returns the raw body;
+        the caller reconciles the real outcome — a job that already
+        went live is 'already_public', never 'cancelled' (§10)."""
+        if not job_id:
+            raise PublishTransportError('cancel_needs_job_id')
+        return self._send('DELETE',SCHEDULE_PATH+'?'+urlencode({'job_id':job_id}))
 
     def verify_post(self,post_ref):
         if self.verifier is None:raise PublishTransportError('platform_verifier_unavailable')

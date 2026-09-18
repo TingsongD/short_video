@@ -18,7 +18,8 @@ ALLOWED_UPLOAD_TYPES = {"mp4", "mov", "webm", "png", "jpg", "jpeg", "mp3", "wav"
 COLLECTIONS = {"seeds":"seed", "blueprints":"referenceblueprint", "templates":"formattemplate",
     "products":"productsnapshot", "experiments":"experimentrevision", "variants":"variantplan",
     "plans":"productionplan", "compositions":"composition", "reviews":"review", "deliveries":"delivery",
-    "publications":"publication", "decisions":"decision",'research':'discoveryrun','effect_plans':'effectplan','metrics':'metricsnapshot','policies':'decisionpolicy'}
+    "publications":"publication", "decisions":"decision",'research':'discoveryrun','effect_plans':'effectplan','metrics':'metricsnapshot','policies':'decisionpolicy','analyses':'referenceanalysis',
+    'metadatapackages':'metadatapackage','checkpoints':'checkpointschedule','selections':'seedselection','lineages':'roundlineage','loops':'looppolicy'}
 
 
 class FactoryServices:
@@ -57,7 +58,7 @@ class FactoryServices:
         if not refresh and getattr(self,'_readiness_cache',None) is not None \
                 and time.monotonic()-self._readiness_at<60:
             return self._readiness_cache
-        out = {name:{'installed':False,'authenticated':False,'catalog_visible':False,'contract_tested':False,'live_qualified':False,'tested':False,'qualified':False,'detail':{'reason':'Route not configured and currently qualified; use imports or complete the recorded qualification gate'}} for name in ('jimeng_canvas','google_vertex','elevenlabs','viral_outliers','generated_music','audiovisual_analysis')}
+        out = {name:{'installed':False,'authenticated':False,'catalog_visible':False,'contract_tested':False,'live_qualified':False,'tested':False,'qualified':False,'detail':{'reason':'Route not configured and currently qualified; use imports or complete the recorded qualification gate'}} for name in ('jimeng_canvas','google_vertex','elevenlabs','generated_music','audiovisual_analysis')}
         for name, adapter in self.providers.items():
             try:
                 ready = adapter.readiness()
@@ -82,8 +83,12 @@ class FactoryServices:
         kind = COLLECTIONS.get(name)
         if not kind:
             raise ContractError('not_found','collection',name)
-        return [json.loads(r['body']) for r in self.db.conn.execute(
-            "SELECT r.body FROM records r WHERE kind=? AND revision=(SELECT MAX(revision) FROM records x WHERE x.kind=r.kind AND x.id=r.id) ORDER BY created_at DESC", (kind,))]
+        # `version` is the optimistic-lock row handle used by in-place
+        # CAS mutations (e.g. metadata select/freeze); `revision` in the
+        # body is the record's own version identity.
+        return [{**json.loads(r['body']), 'version': r['version']}
+                for r in self.db.conn.execute(
+            "SELECT r.body, r.version FROM records r WHERE kind=? AND revision=(SELECT MAX(revision) FROM records x WHERE x.kind=r.kind AND x.id=r.id) ORDER BY created_at DESC", (kind,))]
 
     def detail(self, kind, rid):
         row = self.db.uow().records.get(kind, rid)
@@ -128,10 +133,62 @@ class FactoryServices:
         bp = self.require('blueprints').accept(blueprint_id,body['content_hash'],body['reviewer'])
         return bp.to_dict()
 
+    # --------------------------------------------- deep analysis gate
+    def _analysis_binding_gate(self,seed_id,provenance,binding):
+        from ..analysis.deep import bound_gate
+        bound_gate(self.db,seed_id,(provenance or {}).get('artifact_sha256',''),binding)
+
+    def _experiment_blueprint(self,exp):
+        bp=next((x for x in self.collection('blueprints') if x['content_hash']==exp.blueprint_hash),None)
+        if not bp: raise ContractError('blueprint_missing','experiment')
+        return bp
+
+    def verify_run_gate(self,plan_id):
+        row=self.db.conn.execute("SELECT body FROM records WHERE kind='productionplan' AND id=?",(plan_id,)).fetchone()
+        if not row: raise ContractError('no_quote','plan_id')
+        plan=json.loads(row[0])
+        exp=self.require('experiments')._latest(plan['experiment_id'])
+        bp=self._experiment_blueprint(exp)
+        self._analysis_binding_gate(bp['seed_id'],bp.get('provenance'),bp.get('analysis'))
+
+    def start_analysis(self,seed_id,body):
+        a=self.require('ref_analysis').start(seed_id,body.get('reviewer',''))
+        self.require('commands').enqueue('analysis_evidence',{'seed_id':seed_id},phase='analyze')
+        return a.to_dict()
+
+    def analysis_for(self,seed_id):
+        try: return self.require('ref_analysis').get(seed_id).to_dict()
+        except ContractError as e:
+            if e.code=='unknown_analysis': return None
+            raise
+
+    def save_analysis_section(self,seed_id,section,body,reviewer):
+        svc=self.require('ref_analysis')
+        if section=='understanding': return svc.save_understanding(seed_id,body,reviewer).to_dict()
+        if section=='timeline': return svc.save_timeline(seed_id,body.get('sections',body),reviewer).to_dict()
+        if section=='treatment': return svc.save_treatment(seed_id,body,reviewer).to_dict()
+        raise ContractError('unknown_section','section',section)
+
+    def import_analysis_transcript(self,seed_id,body):
+        return self.require('ref_analysis').import_transcript(seed_id,body,body.get('reviewer','')).to_dict()
+
+    def declare_analysis(self,seed_id,body):
+        return self.require('ref_analysis').declare(seed_id,body.get('status',''),body.get('note',''),body.get('reviewer','')).to_dict()
+
+    def rerun_analysis_stages(self,seed_id,body):
+        svc=self.require('ref_analysis'); svc.get(seed_id)
+        if body.get('rebuild_evidence'): svc.invalidate_evidence(seed_id)
+        return self.require('commands').enqueue('analysis_evidence',{'seed_id':seed_id},phase='analyze')
+
+    def review_analysis(self,seed_id,body):
+        if not body.get('reviewer'): raise ContractError('reviewer_required','reviewer')
+        return self.require('ref_analysis').review(seed_id,body['reviewer'],body.get('verdict','accept'),body.get('notes','')).to_dict()
+
     def author_template(self, body):
         bp = self.require('analysis').get(body['blueprint_id'])
         if bp.status != 'accepted':
             raise ContractError('blueprint_not_accepted','blueprint_id')
+        self._analysis_binding_gate(bp.seed_id,bp.provenance,bp.analysis)
         return self.require('templates').author(bp,body.get('id') or 'tpl-'+uuid.uuid4().hex).to_dict()
 
     def _current(self, eid, expected=None, required=False):
@@ -150,6 +207,7 @@ class FactoryServices:
         template = self.require('templates').get(body['template_id'])
         if template.derived_from_blueprint != bp.content_hash:
             raise ContractError('template_blueprint_mismatch','template_id')
+        self._analysis_binding_gate(bp.seed_id,bp.provenance,bp.analysis)
         products = [ProductSnapshot(**self.detail('productsnapshot', pid)) for pid in body.get('product_ids',[])]
         self._validate_segments(body['segments'],bp.target_frames)
         branches = body['variants']
@@ -205,6 +263,8 @@ class FactoryServices:
 
     def quote_experiment(self,eid,expected_revision=None):
         exp=self._current(eid,expected_revision,True)
+        bp=self._experiment_blueprint(exp)
+        self._analysis_binding_gate(bp['seed_id'],bp.get('provenance'),bp.get('analysis'))
         for key in 'ABCD':
             if self.experiments._variant(eid,key).stale_reason:
                 raise ContractError('stale_variant','variant',key)
@@ -221,8 +281,8 @@ class FactoryServices:
         body=body or {}; exp=self._current(eid,expected_revision,True); plan=self.plan_for(eid)
         if body.get('plan_hash') != plan['plan_hash'] or not body.get('reviewer'):
             raise ContractError('approval_binding_required','plan_hash/reviewer')
-        bp=next((x for x in self.collection('blueprints') if x['content_hash']==exp.blueprint_hash),None)
-        if not bp: raise ContractError('blueprint_missing','experiment')
+        bp=self._experiment_blueprint(exp)
+        self._analysis_binding_gate(bp['seed_id'],bp.get('provenance'),bp.get('analysis'))
         # Product evidence is pinned to the packaged snapshot REVISION —
         # a post-approval refresh must never rewrite the approved facts.
         pins={p['snapshot_id']:p.get('revision') for p in exp.packaging.get('products',[])}
@@ -252,6 +312,8 @@ class FactoryServices:
         row=self.db.conn.execute("SELECT value FROM meta WHERE key=?",('local-run:'+plan['id'],)).fetchone()
         if not row or json.loads(row[0])['plan_hash']!=plan['plan_hash'] or exp.status!='accepted':
             raise ContractError('not_authorized','experiment_id')
+        bp=self._experiment_blueprint(exp)
+        self._analysis_binding_gate(bp['seed_id'],bp.get('provenance'),bp.get('analysis'))
         return self.require('commands').enqueue('run',{'plan_id':plan['id']},experiment_id=eid,
             revision=exp.revision,identity=f'run-{eid}-r{exp.revision}')
 

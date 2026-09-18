@@ -9,7 +9,113 @@ from modules.factory.bootstrap import bootstrap
 from modules.factory.api import create_app
 from modules.factory.services.worker import ApplicationWorker
 from modules.factory.audio import pcm
-from modules.factory.testing.fixtures import _moving_mp4
+from modules.factory.testing.fixtures import _moving_mp4, _png
+
+
+class FakeHypit:
+    """Scripted Hypit transport for tests — offline, no Runtime Profile,
+    produces real PNG evidence files and a word-timed transcript."""
+    def __init__(self, whisperx=True):
+        self.whisperx = whisperx; self.calls = []
+    def available(self): return True
+    def transcribe_available(self): return self.whisperx
+    def paths(self): return {"profileSource": "test"}
+    def probe(self, src): return {}
+    def boundaries(self, src):
+        self.calls.append(("boundaries", str(src)))
+        return {"boundaries": [{"t": 1.0, "score": 0.9}]}
+    def transcribe(self, src, language, dest):
+        self.calls.append(("transcribe", str(src)))
+        Path(dest).parent.mkdir(parents=True, exist_ok=True)
+        Path(dest).write_text(json.dumps({
+            "format": "hypit.transcript@1", "source": str(src),
+            "language": language, "audio_seconds": 3.0,
+            "passages": [{"text": "dog ball", "start_seconds": 0.0,
+                          "end_seconds": 1.0, "words": [
+                    {"text": "dog", "start_seconds": 0.0,
+                     "end_seconds": 0.4},
+                    {"text": "ball", "start_seconds": 0.5,
+                     "end_seconds": 1.0}]}]}))
+        return type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+    def tiles(self, src, dest_dir, every, transcript=None, start=None,
+              end=None, columns=4, rows=3):
+        self.calls.append(("tiles", str(src), start, end))
+        d = Path(dest_dir); d.mkdir(parents=True, exist_ok=True)
+        for i in range(2):
+            _png(d / f"grid-{i}.png")
+        return type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+
+def complete_deep_analysis(s, act, w, seed, seconds, hypit=None):
+    """Drive the mandatory Hypit-directed analysis to 'complete' —
+    machine stages via the worker, operator stages + review via API."""
+    s.ref_analysis.hypit = hypit or FakeHypit()
+    r = act('post', f'/api/seeds/{seed}/analysis', {'reviewer': 'fixture-operator'})
+    assert r.status_code == 202, r.text
+    out = w.tick()
+    assert out and out.get('analysis'), out
+    fields = {f: f'{f} reading' for f in
+              ('premise', 'progression', 'hook', 'setups', 'payoffs',
+               'ending', 'replay_appeal', 'intended_response')}
+    fields['observations'] = ['a dog fetches a ball and misses']
+    fields['interpretations'] = ['the miss is the joke']
+    fields['uncertainties'] = ['whether the bounce was staged']
+    r = act('put', f'/api/analysis/{seed}/understanding',
+            {'reviewer': 'fixture-operator', **fields})
+    assert r.status_code == 200, r.text
+    span = seconds / 3
+    sections = [{'start_s': i * span, 'end_s': (i + 1) * span,
+                 'phase': p, 'summary': f'{p} section'}
+                for i, p in enumerate(('hook', 'body', 'payoff'))]
+    r = act('put', f'/api/analysis/{seed}/timeline',
+            {'reviewer': 'fixture-operator', 'sections': sections})
+    assert r.status_code == 200, r.text
+    r = act('put', f'/api/analysis/{seed}/treatment',
+            {'reviewer': 'fixture-operator',
+             **{f: f'{f} note' for f in
+                ('summary', 'preserves', 'redesigns',
+                 'script_direction')}})
+    assert r.status_code == 200, r.text
+    r = act('post', f'/api/analysis/{seed}/review',
+            {'reviewer': 'fixture-operator', 'verdict': 'accept'})
+    assert r.status_code == 200, r.text
+    return s.ref_analysis.get(seed)
+
+
+def seed_completed_analysis(db, seed_id, source_sha256, duration_s=30.0):
+    """Insert a complete ReferenceAnalysis record directly (unit tests
+    of downstream mechanics that only need the gate satisfied)."""
+    from modules.factory.analysis.deep import (
+        analysis_id_for, _hash, UNDERSTANDING_FIELDS, TREATMENT_FIELDS)
+    from modules.factory.domain.records import ReferenceAnalysis
+    from modules.factory.store.uow import utcnow
+    a = ReferenceAnalysis(
+        schema_version='referenceanalysis.v1',
+        id=analysis_id_for(seed_id), created_at=utcnow(), seed_id=seed_id,
+        revision=1, status='complete', stage='review',
+        stages={s: {'done': True, 'at': utcnow()} for s in
+                ('acquire', 'transcript', 'evidence', 'documents')},
+        source_asset_id='art-x', source_sha256=source_sha256,
+        acquisition={'duration_s': duration_s, 'audio_present': True,
+                     'verified_at': utcnow()},
+        transcript={'status': 'aligned', 'provider': 'whisperx',
+                    'word_count': 2, 'preliminary': False},
+        evidence={'boundaries': [{'t': 1.0, 'score': 1}],
+                  'grids': [{'artifact_id': 'art-g', 'start_s': 0.0,
+                             'end_s': duration_s, 'every_s': 1.0,
+                             'transcript_linked': True}],
+                  'coverage_s': duration_s},
+        understanding={f: 'x' for f in UNDERSTANDING_FIELDS} | {
+            'observations': ['o'], 'interpretations': ['i'],
+            'uncertainties': []},
+        timeline=[{'start_s': 0.0, 'end_s': duration_s, 'phase': 'all',
+                   'summary': 'x'}],
+        treatment={f: 'x' for f in TREATMENT_FIELDS},
+        review={'reviewer': 'qa', 'at': utcnow(), 'verdict': 'accept'})
+    a.content_hash = _hash(a)
+    with db.uow() as u:
+        u.records.put(a)
+    return a
 
 
 class DiskDrive:
@@ -56,7 +162,9 @@ def prepare(application,seconds=3):
         'transcript':[{'id':'speech','start_s':0,'end_s':seconds,'text':'Source timing reference'}],'music':{'role':'bed'}}
     r=act('post',f'/api/seeds/{seed}/analyze',{'observations':observations,'reviewer':'fixture-operator'}); assert r.status_code==202,r.text
     out=w.tick(); assert out.get('blueprint'),out
-    bp=out['blueprint']; r=act('post',f"/api/blueprints/{bp['id']}/review",{'content_hash':bp['content_hash'],'reviewer':'fixture-operator'}); assert r.status_code==200,r.text
+    bp=out['blueprint']
+    complete_deep_analysis(s,act,w,seed,seconds)
+    r=act('post',f"/api/blueprints/{bp['id']}/review",{'content_hash':bp['content_hash'],'reviewer':'fixture-operator'}); assert r.status_code==200,r.text
     tpl=act('post','/api/templates',{'blueprint_id':bp['id'],'id':'fixture-template'}); assert tpl.status_code==201,tpl.text
     wav=pcm.write_wav(pcm.sine(seconds,amp=6500))
     sound=act('post','/api/imports',content=wav,headers={'x-filename':'licensed-fixture-bed.wav'}).json()['artifact']['id']

@@ -1,0 +1,95 @@
+# Publishing providers for the four-platform learning loop
+
+Research date: 2026-09-18 UTC. Scope: YouTube Shorts, Instagram Reels, TikTok and Facebook Reels. This is a documentation review, not live qualification; no account connections, paid API calls or posts were created.
+
+## Recommendation
+
+**Qualify Upload-Post first and extend the existing adapter.** It presents the best documented combination of four-platform publishing, useful analytics, metadata assistance and low entry cost for this repository. Keep native YouTube Analytics for measurement gaps. Ayrshare is a credible more expensive alternative when its deeper analytics or operational support justify the cost. Blotato remains a viable publishing candidate, but its conflicting analytics documentation needs resolution before making it the learning loop's sole data source.
+
+No publisher can guarantee immunity from distribution restrictions or guarantee views. API integration, content quality and recommendation eligibility are separate concerns. This recommendation does not authorize subscriptions or publication.
+
+## Shortlist
+
+| Provider | Fit for this factory | Published price observed | Qualification concern |
+|---|---|---|---|
+| Upload-Post | Existing adapter; all four target destinations; metadata generation and post analytics | Basic: USD16/month equivalent, USD192 billed annually; five profiles, scheduling and analytics. A profile permits one account per platform. | Verify each connected account's actual metrics, freshness and Reel identity. |
+| Blotato | All four publishing destinations; useful AI writing and agent surface | Starter: USD29/month; 20 accounts and social API; free trial excludes API | Conflicting official claims about analytics; verify endpoint schemas and actual four-platform coverage. |
+| Ayrshare | Publishing plus detailed per-post analytics; documented freshness metadata | Premium: USD149/month, one profile, basic analytics. Launch: USD299/month, up to ten profiles, advanced analytics and webhooks | Confirm which desired fields require which plan before purchasing. |
+
+Prices are the displayed terms, not a quote or a like-for-like billing comparison. Sources: [Upload-Post pricing](https://www.upload-post.com/#pricing), [Blotato pricing](https://www.blotato.com/pricing), [Ayrshare pricing](https://www.ayrshare.com/pricing/).
+
+## Upload-Post evidence
+
+The [video upload contract](https://docs.upload-post.com/api/upload-video/) covers the four destinations, asynchronous publication and scheduling. It supports platform-specific text, YouTube metadata, AI-disclosure fields, Instagram Reels and Facebook Reels. Facebook publishing targets Pages, not personal profiles; explicitly resolve the destination Page. Instagram and TikTok do not use the generic description field as their caption. TikTok publishing requires a paid plan. Persist the request/job IDs and per-platform post IDs; a successful submission is not proof every destination published. The API distinguishes a correlation-only `external_id` from an `Idempotency-Key` that prevents duplicate submissions.
+
+The [webhook contract](https://docs.upload-post.com/api/webhooks/) includes publication outcomes and account reconnection events. Validate the timestamped HMAC signature and deduplicate delivery IDs. Webhooks can be paused after repeated receiver failures, and skipped deliveries are not replayed; retain status/history reconciliation. The [reference](https://docs.upload-post.com/api/reference/) provides status, history, schedule management and native post-ID lookup endpoints.
+
+The [AI Shorts endpoint](https://docs.upload-post.com/api/ai-shorts/) accepts a video up to 100 MB and five minutes and generates platform-specific title/description/caption/hashtag suggestions for all four destinations. Successful calls consume the account's monthly analysis allowance. Treat this as an optional metadata assistant: the factory should retain approved text and hypotheses, and cannot infer effectiveness from the API's generation claim.
+
+The [analytics contract](https://docs.upload-post.com/api/get-analytics/) supports per-post queries by upload request ID or native post ID, including posts published elsewhere. Instagram examples include views, likes, comments, shares, reach and saves. TikTok additionally documents watch duration, completion fraction, retention, audience and traffic-source breakdowns; missing fields are omitted and can arrive later. The YouTube per-post example demonstrates views, likes, comments and favorites, but does not establish engaged views, retention or per-post shares. Do not substitute accompanying account snapshots for a video's measurements. Facebook is listed as supported, but exact Reels field coverage requires live qualification. The cached endpoint only replays previously fetched measurements and has no background refresh. The factory must schedule reads and preserve its own immutable snapshots. Cross-platform aliases such as `impressions` must not obscure whether a number means views or reach.
+
+Repository evidence: `modules/factory/integrations/publisher.py` already contains `UploadPostPublisher` with multipart upload, client-assigned request identity, status normalization and an injected native verifier. This reduces integration effort; it does not demonstrate authenticated accounts or successful four-platform publishing. Verify all currently documented ID forms and native visibility in adapter qualification.
+
+## Blotato evidence — analytics conflict resolved (2026-09-18)
+
+The [publish API](https://help.blotato.com/api/publish-post) documents video publishing, scheduled times and per-platform settings for YouTube, Instagram, TikTok and Facebook. [Status polling](https://help.blotato.com/api/publish-post/get-post) returns submission status and a public URL. Obtain native post identity before attaching performance records.
+
+The [current homepage](https://www.blotato.com/) advertises per-post analytics with snapshot histories on eight platforms. Its [MCP page](https://www.blotato.com/mcp) names `blotato_get_post_analytics` and `blotato_list_top_posts`, says all platforms except LinkedIn support analytics, but also says TikTok analytics is unavailable. Meanwhile the [help FAQ](https://help.blotato.com/support/faqs) says engagement tracking remains on the roadmap, and the [machine-readable REST reference](https://help.blotato.com/api/llm) lists publishing without analytics endpoints.
+
+**Direct verification through the user's connected Blotato MCP resolves the conflict.** The live tool surface exposes `blotato_get_post_analytics`, `blotato_list_top_posts`, `blotato_get_post_status`, `blotato_list_posts`, `blotato_list_accounts` and `blotato_create_post`. The tool's own descriptions state: analytics are "currently collected for Twitter/X, Instagram, Facebook, Threads, and Bluesky" and "other platforms return no metrics yet" — analytics are also background-refreshed snapshots, not on-demand ("does not trigger a re-fetch"). **YouTube and TikTok — the two platforms carrying this factory's experiment — are not covered.**
+
+Conclusion: Blotato remains a viable four-platform *publisher* (create-post supports all four targets, returns `postSubmissionId` for async status polling and `publicUrl` when published). It cannot serve as the sole or primary analytics source for this loop — at best it could supply Instagram/Facebook measurements, and only as cached snapshots. Do not purchase a Blotato subscription for analytics; generating an API key starts paid service according to its [quickstart](https://help.blotato.com/api/start).
+
+## Ayrshare evidence
+
+The [publishing API](https://app.ayrshare.com/docs/apis/post/overview) supports multi-platform media publication and scheduling. Its [webhook overview](https://app.ayrshare.com/docs/apis/webhooks/overview) describes asynchronous operational notifications. Account/plan qualification remains necessary.
+
+The [post analytics response](https://app.ayrshare.com/docs/apis/analytics/post) covers all four destinations with platform-specific fields. Examples include Facebook Reels watch time and shares, Instagram Reels measures, TikTok views/likes/comments/shares and retention, and YouTube engaged views and viewing averages. Do not assume a complete YouTube retention curve or universal field availability from these examples. The documentation warns that TikTok and some YouTube analytics can lag 24–48 hours; availability also depends on the account and content.
+
+The [analytics overview](https://app.ayrshare.com/docs/apis/analytics/overview) supplies `lastUpdated` and `nextUpdate` to describe caching and the next fresh fetch. Repeated calls before refresh can return identical measurements. This is useful for the factory's 24-hour snapshot scheduler, but neither a provider's fetch time nor its lifetime counters proves exact event coverage through the 24-hour mark.
+
+## Required acceptance checks for any selected provider
+
+These are proposed engineering checks, not existing verified capabilities:
+
+1. Connect the intended account through the provider's supported authorization flow; verify all four destinations, publication permissions and a specific Facebook Page.
+2. Map every export and metadata revision to its native platform post ID, verified visibility and actual publication timestamp. Store separate outcomes for each destination.
+3. Qualify video publication and four-counter readback using authorized test posts. Record unsupported metrics and distinguish missing data from zero.
+4. Schedule observations from actual publication time, including 24 hours, and retain requested time, observation time, upstream freshness, raw response and normalized metric definitions. Retry delayed metrics without rewriting an old observation as if it had arrived on time.
+5. Store history in the factory database/object storage. A provider's dashboard or mutable cache must not be the experiment's only evidence.
+6. Keep platform comparisons separate, preserving units and definitions. Resolve capability gaps through native owned-account APIs rather than scraping private analytics.
+7. Reconcile ambiguous publish outcomes before attempting a fallback provider. Reusing identical content through another publisher must not create duplicate posts.
+
+## Treg and Monid discovery and access checks
+
+Read-only catalog searches were executed on 2026-09-18 UTC. Monid discovery/inspection and Treg access inspection used the previously supplied keys, kept out of logs. No provider execution, upload, subscription or social-account connection was made. Local discovery responses are in `/tmp/factory-publishing-catalog-discovery.json` and `/tmp/factory-publishing-catalog-inspection.json`; those temporary receipts are not the factory's permanent production evidence store.
+
+Treg returned real own-account publishing candidates: `youtube.youtube.video.upload`, `tiktok.tiktok.video.publish.init`, `instagram.instagram.post.publish`, and `facebook.facebook.page.video.create`. Instagram also exposes container creation/status and owned-post insights. These are account-authorized platform routes, not permission to publish to arbitrary accounts. Treg's access checks returned `tier: none` and no connected provider credential for each of the four in the current organization. Its generated connection guidance sometimes suggests read access for a write endpoint; verify the actual required posting scopes rather than blindly using that suggestion. [Instagram tools](https://treg.to/tools/instagram), [YouTube tools](https://treg.to/tools/youtube), [TikTok catalog](https://treg.to/catalog/tiktok), [Facebook tools](https://treg.to/tools/facebook), [catalog/access contract](https://treg.to/llms.txt).
+
+Recommendation: Treg is a credible future direct-platform adapter, especially where a qualified connection adds an owned-account insight. It is not yet a verified replacement for the existing publisher. Resumable upload, media-container processing, schedules, post visibility and reconciliation still need application code and live qualification. Catalog prices, quota descriptions and reliability badges should be checked against current upstream contracts; they do not establish every mode's readiness.
+
+Monid searches for cross-platform publishing and named providers did not return a verified all-four-platform publisher. They returned TikHub/Apify/MrScraper data endpoints and a Strale text generator. This is a scoped search finding, not proof the whole catalog lacks publishing. Inspected TikHub `/api/v1/tiktok/analytics/fetch_video_metrics` describes views, likes, comments, favorites and daily trends at USD0.0015/call; no paid run was made, and its schema does not establish owned-account retention or universal share coverage. Strale `/x402/social-post-generate` describes Twitter/LinkedIn/Instagram text and hashtags at USD0.0594/call, with unknown health status; it does not cover our four-platform publishing need. Prefer the existing creative pipeline for metadata and authorized platform/provider analytics for our posts. [Discover contract](https://monid.ai/docs/api/discover), [inspection contract](https://monid.ai/docs/api/inspect).
+
+## Recommendation eligibility and metadata
+
+There is no verified publisher capability that guarantees reach or prevents a so-called shadow ban. Separate upload success, public visibility, recommendation eligibility and actual audience response. TikTok explicitly restricts unaudited direct-post clients to private visibility; connecting an API key alone does not remove that condition. [TikTok direct posting](https://developers.tiktok.com/docs/en/content-posting-api-get-started).
+
+Use supported account connections, honor platform limits and required disclosure fields, verify native visibility, and check restriction/recommendation notices through supported sources. Where account-health APIs do not expose a signal, label it unknown and allow documented Studio review. Low views alone are not evidence of a restriction. TikTok documents recommendation-ineligibility notifications and appeals. [TikTok account recommendation status](https://support.tiktok.com/en/safety-hc/account-and-user-safety/why-is-my-account-not-being-recommended).
+
+Keep the close mimic an original adaptation of the format. Meta says minor edits of another creator's material can remain unoriginal and receive reduced recommendations. YouTube distinguishes a few experimental variations from flooding the platform with minimally changed automated output. Use bounded experiments and audience-aware scheduling; do not design an endless near-duplicate reupload loop or evasion techniques. [Meta originality guidance](https://about.fb.com/news/2026/03/rewarding-original-creators-on-facebook/amp/), [YouTube spam guidance](https://support.google.com/youtube/answer/2801973?hl=en).
+
+Build a versioned metadata package from the accepted final video and Hypit treatment: title where supported, description/caption, relevant hashtags, cover choice where supported, language, category, audience/disclosure fields and publishing slot. Validate actual provider field mappings. Generate several candidates, select one before publication, and record its rationale. Upload-Post's AI Shorts endpoint is optional; its published quota tier names differ from the core pricing table, so confirm the chosen plan's entitlement before depending on it. [AI Shorts contract](https://docs.upload-post.com/api/ai-shorts/).
+
+For a video-creative experiment, keep metadata stable within each platform unless metadata is the declared treatment. Platform-specific copy can differ across networks while staying fixed across A/B/C/D on a given network. If accuracy requires substantive metadata differences, record a combined package experiment and do not attribute the outcome solely to the video edit. Test titles, covers or captions in a separate controlled round when appropriate. YouTube emphasizes titles/thumbnails/descriptions and says tags mainly help with misspellings; avoid treating hashtag volume as an optimization target. [YouTube metadata guidance](https://support.google.com/youtube/answer/146402?hl=en).
+
+## Twenty-four-hour snapshots and round-two selection
+
+Proposed durable chain: accepted export and metadata → authorized publication → verified native post identity/time → scheduled observations → immutable performance records → decision → new seed and next experiment. Four videos across four platforms create up to sixteen distinct publication records per round. Do not store one shared publication timestamp or one counter for all destinations.
+
+Schedule at 24h, 48h, 72h, 7d and 28d from each platform's confirmed public timestamp. Preserve requested observation time, actual observation time, upstream last-update time, source coverage and raw/normalized values in the factory database and artifact store. A late observation or cached result must not be labeled an exact 24-hour event total. Missing shares/retention are unknown, not zero. Late backfills create new evidence revisions and cannot reconstruct an exact missed snapshot unless the source provides suitable historical data. YouTube's own Analytics documentation describes processing latency and fully available reporting days. [YouTube data availability](https://developers.google.com/youtube/analytics/data_model).
+
+At 24 hours, the factory may choose a provisional champion for Round 2 only when the frozen fast-iteration policy's required observations are comparable and sufficiently informative. Otherwise wait. Preserve later confirmation/revision at mature horizons; generating a Round 2 proposal need not wait for an unsupported metric, while spending and publication remain governed by the approved policy. A, B, C or D may win; ties, inadequate exposure, failed publication and invalid comparisons must be representable.
+
+Compute within-platform comparisons using platform-specific definitions. Do not sum raw YouTube, Instagram, TikTok and Facebook views as if they were the same exposure. To select one cross-platform seed, freeze either a primary platform or explicit platform weights and a documented normalized scoring method before publication. A practical default to evaluate is equal platform weight on within-platform ranks, with exposure/retention guardrails and an inconclusive outcome for ties; rank aggregation measures broad consistency, not total business value or causal lift. Keep per-platform winners visible.
+
+Use the winner's exact accepted local master, edit plan, metadata, analysis and performance evidence as the new seed. Link parent experiment, selected variant, decision revision and new round. Avoid downloading a recompressed social copy when the original master exists. Reuse valid source analysis, reanalyze changed content through the mandatory Hypit process, and record why each new hypothesis follows from the observations. Confirm general creative findings on fresh independent material; keep the original reference and controls for audit rather than repeatedly reposting identical files.

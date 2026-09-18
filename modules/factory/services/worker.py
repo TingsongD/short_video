@@ -2,6 +2,7 @@
 import json
 import math
 import time
+from datetime import datetime, timedelta
 from pathlib import Path
 from ..domain.errors import ContractError
 from ..domain.records import content_hash
@@ -46,7 +47,7 @@ class ApplicationWorker:
                 with self.s.db.uow() as u:
                     u.conn.execute('DELETE FROM capacity_holds WHERE job_id=?',(job['id'],))
             elif outcome in DEFERRED:
-                self.scheduler.defer(job['id'],job['fencing_token'],outcome)
+                self.scheduler.defer(job['id'],job['fencing_token'],outcome,result.get('defer_s',2))
             elif outcome is None or outcome in SUCCEEDED:
                 self.s.commands.finish(job['id'],result)
                 self.scheduler.complete(job['id'],job['fencing_token'])
@@ -92,9 +93,50 @@ class ApplicationWorker:
         if kind=='analysis_collect':return s.analysis_work.collect(body)
         if kind=='speech_fit':return s.audio_work.fit(body)
         if kind=='publish':return s.publication_work.execute(body,job)
-        if kind=='publication_observe':return {'publication':s.publishing.reconcile(body['publication_id'])}
-        if kind=='readback':return {'snapshot':s.require('readback').collect(body['publication_id'],body['horizon']).to_dict()}
-        if kind=='decision':return {'decision':s.learning.decide(body['experiment_id'],body['revision'])}
+        if kind=='publication_observe':
+            out=s.publishing.reconcile(body['publication_id'])
+            pub=s.publishing.get(body['publication_id']) or {}
+            if pub.get('status')=='scheduled':
+                sched=pub.get('scheduled_at') or ''
+                now_dt=self.scheduler.clock()
+                try:
+                    sched_dt=datetime.fromisoformat(
+                        sched.replace('Z','+00:00')) if sched else None
+                except ValueError:
+                    sched_dt=None
+                if sched_dt is not None and \
+                        now_dt < sched_dt + timedelta(hours=24):
+                    # Keep polling a remotely-scheduled post until it
+                    # goes public (bounded to 24h past its instant) —
+                    # a local 'scheduled' is not a terminal state.
+                    delay=max(60.0,(sched_dt-now_dt).total_seconds()+60)
+                    delay=min(delay,900.0)
+                    return {'status':'pending','publication':out,
+                            'defer_s':delay}
+                with s.db.uow() as u:
+                    u.events.append(
+                        f"publication:{body['publication_id']}",
+                        'observation_exhausted',{})
+                return {'status':'complete','publication':out,
+                        'observation':'exhausted'}
+            return {'publication':out}
+        if kind=='readback':
+            chk=getattr(s,'checkpoints',None)
+            if chk is not None:
+                snap=chk.collect(body['publication_id'],body['horizon'])
+                snap=snap.to_dict() if hasattr(snap,'to_dict') else snap
+                if snap.get('completeness')=='complete':
+                    self._after_readback(s,body)
+                    return {'status':'complete','snapshot':snap}
+                delay,st=chk.next_delay(body['publication_id'],
+                                        body['horizon'])
+                if st=='retrying' and delay is not None:
+                    return {'status':'pending','snapshot':snap,
+                            'defer_s':delay}
+                return {'status':'failed','snapshot':snap}
+            return {'snapshot':s.require('readback').collect(body['publication_id'],body['horizon']).to_dict()}
+        if kind=='decision':return {'decision':s.learning.decide(body['experiment_id'],body['revision'],body.get('horizon',''),body.get('platform',''),account=body.get('account',''))}
+        if kind=='select_seed':return {'selection':s.learning.select_seed(body['experiment_id'],body['revision'],body.get('horizon',''),account=body.get('account',''),accounts=body.get('accounts'))}
         if kind=='effect':return s.effect_work.execute(body,job)
         if kind=='research_evaluate':
             from ..discovery.service import DiscoveryService
@@ -126,6 +168,8 @@ class ApplicationWorker:
             return {'status':'complete','discovery':result.to_dict()}
         if kind=='analyze':
             return {'blueprint':s.analysis.import_observations(body['seed_id'],body['observations'],body['reviewer']).to_dict()}
+        if kind=='analysis_evidence':
+            return {'analysis':s.ref_analysis.run_machine_stages(body['seed_id']).to_dict()}
         if kind=='quote':
             exp=s._current(body['experiment_id'],body['revision']); fps=exp.output_clock['num']/exp.output_clock['den']
             takes=[]
@@ -160,6 +204,7 @@ class ApplicationWorker:
             if old: return s.production.status(pid)
             return s.production.plan(pid,exp.experiment_id,exp.revision,takes,provider,model,durations,now=utcnow())
         if kind=='run':
+            s.verify_run_gate(body['plan_id'])
             return {'jobs':s.production.submit(body['plan_id']),'plan_id':body['plan_id']}
         if kind=='reconcile':
             rows=s.db.conn.execute('SELECT id FROM attempts WHERE job_id=?',(body['job_id'],)).fetchall()
@@ -247,6 +292,33 @@ class ApplicationWorker:
             u.conn.execute("UPDATE jobs SET status='succeeded',lease_owner=NULL,lease_expires=NULL,updated_at=? WHERE id=? AND status='awaiting_review'",(utcnow(),plan['id']+':del:'+v['variant_key']))
             u.events.append('factory','video_completed',{'variant_id':v['id'],'delivery_id':delivery_id,'link':result['link']})
         return {**result,'cleanup':cleanup}
+
+    def _after_readback(self,s,body):
+        """A completed checkpoint feeds the frozen-policy decision
+        automatically when its horizon is the policy's horizon — the
+        decision job is durable and idempotent by identity."""
+        pub = (s.publishing.get(body['publication_id'])
+               if getattr(s, 'publishing', None) else None) or {}
+        exp = pub.get('experiment_id')
+        rev = pub.get('experiment_revision')
+        if not exp or not rev:
+            return
+        try:
+            pol = s.learning.policy(exp, rev)
+        except Exception:
+            pol = None
+        if not pol or pol.get('horizon') != body.get('horizon'):
+            return
+        platform = pub.get('platform', '')
+        account = pub.get('account_id', '')
+        s.commands.enqueue(
+            'decision',
+            {'experiment_id': exp, 'revision': rev,
+             'horizon': body['horizon'], 'platform': platform,
+             'account': account},
+            experiment_id=exp, revision=rev, phase='collect',
+            identity=f"decision:{exp}:{rev}:{body['horizon']}:"
+                     f"{platform}:{account}")
 
     def production(self,job):
         s=self.s

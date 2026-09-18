@@ -11,7 +11,7 @@ class CommandQueue:
     def __init__(self, db, scheduler):
         self.db, self.scheduler = db, scheduler
 
-    def enqueue(self, kind, body, *, experiment_id='', revision=0, phase='plan', depends=(), identity=None):
+    def enqueue(self, kind, body, *, experiment_id='', revision=0, phase='plan', depends=(), identity=None, not_before=None):
         jid = identity or f'cmd-{uuid.uuid4().hex}'
         with self.db.uow() as u:
             prior = u.records.get('appcommand', jid)
@@ -28,6 +28,11 @@ class CommandQueue:
             self.scheduler.submit_plan([Job(schema_version='job.v1', id=jid, created_at=utcnow(),
                 logical_key=jid, phase=phase, experiment_id=experiment_id, revision=revision,
                 depends_on=list(depends))])
+            if not_before:
+                # Durable delayed job: claim() skips until the UTC due
+                # instant — no lease is held while waiting (PL-04).
+                u.conn.execute("UPDATE jobs SET next_attempt_at=? WHERE id=?",
+                               (not_before, jid))
             u.events.append('factory', 'command_queued', {'job_id': jid, 'kind': kind})
         return {'job_id': jid, 'accepted': True}
 

@@ -146,8 +146,18 @@ class TestReview:
         # is "reviewed" so flags should be empty here
         review = BlueprintReview(env["db"])
         assert review.flags(bp.id) == []
+        from test_factory_application import seed_completed_analysis
+        seed_completed_analysis(env["db"], env["seed"].id, env["sha"])
         acc = review.accept(bp.id, bp.content_hash, reviewer="qa")
         assert acc.status == "accepted"
+        assert acc.analysis["revision"] == 1
+
+    def test_accept_without_analysis_blocked(self, env):
+        bp = env["svc"].analyze(env["seed"].id)
+        review = BlueprintReview(env["db"])
+        with pytest.raises(ContractError) as e:
+            review.accept(bp.id, bp.content_hash, reviewer="qa")
+        assert e.value.code == "analysis_required"
 
     def test_accept_hash_mismatch(self, env):
         bp = env["svc"].analyze(env["seed"].id)
@@ -167,6 +177,8 @@ class TestReview:
     def test_edit_creates_child_and_stales_dependents(self, env):
         bp = env["svc"].analyze(env["seed"].id)
         review = BlueprintReview(env["db"])
+        from test_factory_application import seed_completed_analysis
+        seed_completed_analysis(env["db"], env["seed"].id, env["sha"])
         review.accept(bp.id, bp.content_hash)
         # bind a template to this blueprint hash
         from modules.factory.domain.records import FormatTemplate
