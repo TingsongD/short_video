@@ -9,16 +9,28 @@ import json
 import subprocess
 
 
-def auto_review_beats(payload):
-    """Upgrade beat confidence only where the evidence supports it.
+def auto_review_beats(payload, evidence=None):
+    """Upgrade beat confidence only where evidence supports it.
 
-    A beat earns 'reviewed' when it has a visual description, a sane
-    duration, and — for speech-critical roles — actual transcript overlap.
-    Anything else stays uncertain so the blueprint gate can flag it."""
+    'reviewed' requires a visual description, a sane duration, transcript
+    overlap for speech-critical roles, and — for beats the provider
+    itself declared uncertain or unresolved — corroborating local visual
+    evidence: a detected scene boundary anchoring the beat's start (or
+    the media head). Without that anchor the declared uncertainty stands
+    and the blueprint gate flags the beat for a human."""
     beats = payload.get("beats") or []
     transcript = payload.get("transcript") or []
+    bounds = [float(c.get("t", -1)) for c in
+              (evidence or {}).get("boundaries") or []]
     speech_critical = {"product_reveal", "proof", "hook", "cta"}
     for b in beats:
+        declared = str(b.get("confidence") or "").strip().lower()
+        if declared in ("uncertain", "unresolved"):
+            start = float(b.get("start_s") or 0)
+            anchored = start <= 0.05 or b.get("evidence_ids") or \
+                any(abs(t - start) <= 0.25 for t in bounds)
+            if not anchored:
+                continue
         dur = (b.get("end_s") or 0) - (b.get("start_s") or 0)
         if not str(b.get("visual_event") or "").strip() or dur < 0.4:
             b["confidence"] = "uncertain"
@@ -123,13 +135,18 @@ def build_sections(payload, duration_s, target_frames):
 
 
 def _ffmpeg_report(path, vf):
+    """Filter output, or None when the scan never actually ran —
+    a missing binary, timeout, or nonzero exit must not be mistaken
+    for a clean result downstream."""
     cmd = ["ffmpeg", "-hide_banner", "-nostats", "-i", path,
            "-vf", vf, "-f", "null", "-"]
     try:
         p = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-        return p.stderr or ""
     except (OSError, subprocess.TimeoutExpired):
-        return ""
+        return None
+    if p.returncode != 0:
+        return None
+    return p.stderr or ""
 
 
 def inspect_asset(path, info, expected):
@@ -166,6 +183,9 @@ def inspect_asset(path, info, expected):
     if kind != "video" or dur < 0.5:
         return "pass", notes or ["checked: container, duration, resolution"]
     black = _ffmpeg_report(path, "blackdetect=d=0.1:pix_th=0.10")
+    if black is None:
+        return "uncertain", ["black-frame scan did not run "
+                             "(ffmpeg unavailable or failed)"]
     total = 0.0
     for line in black.splitlines():
         if "blackdetect" not in line or "black_start" not in line:
@@ -180,6 +200,9 @@ def inspect_asset(path, info, expected):
     if total / dur > 0.6:
         return "fail", [f"mostly black frames ({total:.1f}s of {dur:.1f}s)"]
     freeze = _ffmpeg_report(path, "freezedetect=n=-60dB:d=1.5")
+    if freeze is None:
+        return "uncertain", ["freeze-frame scan did not run "
+                             "(ffmpeg unavailable or failed)"]
     if "freeze_start" in freeze:
         notes.append("frozen frames detected (>1.5s)")
         return "fail", notes

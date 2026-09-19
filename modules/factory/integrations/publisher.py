@@ -59,6 +59,11 @@ class UploadPostPublisher:
 
     def readiness(self):
         issues=[] if (self.api_key or self.credentials) and self.user else ['missing_credentials_or_user']
+        if self.verifier is None:
+            # Verified manual registration is impossible without a
+            # platform-native post inspector — surface the gap at
+            # configuration time, not mid-registration.
+            issues.append('platform_verifier_unavailable')
         return {'provider':'upload_post','configured':not issues,'problems':issues}
 
     def _send(self,method,path,fields=None,file=None,body=None,headers=None):
@@ -153,3 +158,36 @@ class UploadPostPublisher:
         result=self._send('POST','/api/uploadposts/posts/unpublish',body={'platform':platform,'user':user or self.user,'post_id':post_ref})
         if result.get('success') is not True:raise PublishTransportError('deletion_not_confirmed')
         return result
+
+
+def youtube_post_verifier(transport):
+    """Platform-native post inspection via the YouTube Data API.
+
+    transport: the youtube_analytics connection's bounded transport —
+    `request -> {"status", "body"}` with OAuth already attached. Returns
+    the normalized post-identity dict register_manual checks, or None
+    when the platform reports no such video."""
+    def verify(remote_post_id):
+        url = ("https://www.googleapis.com/youtube/v3/videos?"
+               + urlencode({"id": remote_post_id,
+                            "part": "status,snippet"}))
+        resp = transport({"url": url, "headers": {}})
+        if resp.get("status", 200) >= 400:
+            raise PublishTransportError(
+                "verifier_transport_failed", resp.get("status", 0))
+        items = (resp.get("body") or {}).get("items") or []
+        if not items:
+            return None
+        item = items[0]
+        status = item.get("status") or {}
+        snippet = item.get("snippet") or {}
+        public = status.get("privacyStatus") == "public" and \
+            status.get("uploadStatus") in ("processed", "")
+        return {"remote_post_id": remote_post_id, "platform": "youtube",
+                "status": "public" if public else
+                          status.get("privacyStatus") or "unknown",
+                "post_url": f"https://www.youtube.com/watch?v={remote_post_id}",
+                "account_id": snippet.get("channelId", ""),
+                "visibility": status.get("privacyStatus", ""),
+                "published_at": snippet.get("publishedAt", "")}
+    return verify

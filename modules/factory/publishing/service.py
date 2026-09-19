@@ -407,7 +407,14 @@ class PublishingService:
                                 "remote_post_id", remote_post_id)
         post = None
         if verify and self.publisher is not None:
-            post = self.publisher.verify_post(remote_post_id)
+            try:
+                post = self.publisher.verify_post(remote_post_id)
+            except PublishTransportError as error:
+                if str(error) == "platform_verifier_unavailable":
+                    raise ContractError(
+                        "platform_verifier_unavailable",
+                        "remote_post_id", remote_post_id) from error
+                raise
             if post is None:
                 raise ContractError("post_not_found",
                                     "remote_post_id", remote_post_id)

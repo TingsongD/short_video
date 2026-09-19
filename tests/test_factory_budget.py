@@ -182,6 +182,71 @@ class TestAmbiguousAndSettlement:
         with pytest.raises(ContractError, match="dispatch_blocked"):
             svc.reserve("new", [("b", 1)])
 
+    def test_settlement_upgrades_to_invoice_without_conflict(self, svc):
+        """A usage_estimate hold settled first can later be corrected to
+        the invoice-confirmed charge — the original estimate stays in the
+        ledger as the adjustment's prior state."""
+        svc.create_budget("b", "usd_micros", "aggregate", cap=1000)
+        rid = svc.reserve("rh1", [("b", 400)])
+        svc.settle(rid, "usage_estimate", {"b": 400}, evidence="estimate")
+        svc.adjust_settlement(rid, "invoice_confirmed", {"b": 385},
+                              evidence="invoice INV-1042",
+                              operator="op-7")
+        assert svc.available("b") == 615
+        events = [json.loads(r[0]) for r in svc.db.conn.execute(
+            "SELECT body FROM events WHERE type='settlement_adjusted'")]
+        assert events[0]["prior"]["b"] == {"amount": 400,
+                                          "kind": "usage_estimate"}
+        assert events[0]["amounts"] == {"b": 385}
+        # Never downgrade a confirmed charge back to an estimate.
+        with pytest.raises(ContractError,
+                           match="settlement_downgrade_refused"):
+            svc.adjust_settlement(rid, "usage_estimate", {"b": 385},
+                                  evidence="x", operator="op-7")
+        # Idempotent replay — same kind and amounts is a no-op.
+        svc.adjust_settlement(rid, "invoice_confirmed", {"b": 385},
+                              evidence="invoice INV-1042",
+                              operator="op-7")
+        # A still-held reservation was never settled — nothing to adjust.
+        rid2 = svc.reserve("rh2", [("b", 100)])
+        with pytest.raises(ContractError, match="not_settled"):
+            svc.adjust_settlement(rid2, "invoice_confirmed", {"b": 100},
+                                  evidence="x", operator="op-7")
+        # Missing operator/evidence is refused before touching the books.
+        rid3 = svc.reserve("rh3", [("b", 10)])
+        svc.settle(rid3, "usage_estimate", {"b": 10}, evidence="e")
+        with pytest.raises(ContractError,
+                           match="adjustment_needs_evidence"):
+            svc.adjust_settlement(rid3, "invoice_confirmed", {"b": 10},
+                                  evidence="", operator="op-7")
+
+    def test_overrun_blocks_dispatch_until_operator_resolves(self, svc):
+        svc.create_budget("b", "usd_micros", "aggregate", cap=1000)
+        rid = svc.reserve("rh1", [("b", 900)])
+        svc.settle(rid, "invoice_confirmed", {"b": 1200},
+                   evidence="receipt")
+        with pytest.raises(ContractError, match="dispatch_blocked"):
+            svc.reserve("new", [("b", 1)])
+        # Resolution needs operator + evidence + resolution detail.
+        with pytest.raises(ContractError,
+                           match="overrun_resolution_incomplete"):
+            svc.resolve_overrun("op", "", "paid invoice")
+        prior = svc.resolve_overrun(
+            "op-7", "invoice INV-1042 reconciled",
+            "overage confirmed real; ceiling raised to cover it")
+        assert prior["budget"] == "b" and prior["actual"] == 1200
+        # The overrun event is preserved; the block is lifted — but the
+        # real overage still counts, so the declared remedy must be
+        # applied before new spend fits.
+        svc.create_budget("b", "usd_micros", "aggregate", cap=1300)
+        svc.reserve("new", [("b", 1)])
+        resolved = svc.db.conn.execute(
+            "SELECT 1 FROM events WHERE type='spend_overrun_resolved'"
+            ).fetchone()
+        assert resolved
+        with pytest.raises(ContractError, match="no_overrun_pending"):
+            svc.resolve_overrun("op-7", "e", "r")
+
 
 class TestAuthorization:
     def test_authorized_passes(self, svc):

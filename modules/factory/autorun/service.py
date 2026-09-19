@@ -174,6 +174,31 @@ class AutoRunService:
                     + (" — an aggregate ceiling is held in full alongside "
                        "the others; it does not raise them"
                        if scope == "aggregate" else ""))
+        resolved = body.get("resolve_qc")
+        if resolved is not None:
+            self._resolve_qc(run, resolved, body)
+        # Operator-approved parameter updates — the only way a pause's
+        # recovery action can be acted on. Restricted to keys whose
+        # change is safe mid-run; every change is audited in notes.
+        settable = {"limits", "valid_until", "visual_reviews",
+                    "generate_music"}
+        for key, value in (body.get("set_params") or {}).items():
+            if key not in settable:
+                raise ContractError("param_not_resumable", key)
+            if key == "valid_until":
+                text = str(value or "")
+                if text and text <= utcnow():
+                    raise ContractError("authorization_not_renewed",
+                                        "valid_until")
+            if key == "limits":
+                if not isinstance(value, dict):
+                    raise ContractError("invalid_limits", "limits")
+                run.params["limits"] = {str(k): v for k, v in
+                                        value.items()}
+            else:
+                run.params[key] = value
+            run.notes.append(
+                f"operator updated {key} at resume")
         self._reset_budget_blocked_effect(run)
         run.status = "running"
         run.pause = {}
@@ -198,26 +223,91 @@ class AutoRunService:
             self._reset_revised_speech(run)
             return
         tags = {
-            "video_analysis": "analysis",
-            "script": "script",
-            "music": "music",
-            "tts": "tts",
-            "final_qc": "qc",
+            "video_analysis": ["analysis"],
+            "script": ["script"],
+            "music": ["music"],
+            "tts": run.state.get("tts_batch_tags") or ["tts"],
+            "final_qc": [f"qc_{k}" for k in "ABCD"],
         }
-        tag = tags.get(run.stage)
-        if not tag:
-            return
-        jobs = run.state.get(f"{tag}_jobs") or []
-        if not any((self.s.db.uow().jobs.get(jid) or {}).get("status")
-                   in ("failed", "blocked", "cancelled") for jid in jobs):
-            return
-        run.state.pop(f"{tag}_jobs", None)
-        run.state.pop(f"{tag}_plan", None)
-        if tag == "tts":
+        for tag in tags.get(run.stage, []):
+            jobs = run.state.get(f"{tag}_jobs") or []
+            if not any((self.s.db.uow().jobs.get(jid) or {}).get("status")
+                       in ("failed", "blocked", "cancelled")
+                       for jid in jobs):
+                continue
+            run.state.pop(f"{tag}_jobs", None)
+            run.state.pop(f"{tag}_plan", None)
+            run.state.pop(f"{tag}_auth", None)
+            # A new plan id for identical requests — the dead jobs'
+            # queue identities are bound to the old plan and stay dead.
+            run.state[f"{tag}_plan_seq"] = \
+                run.state.get(f"{tag}_plan_seq", 0) + 1
+            submitted = run.state.get("qc_submitted") or {}
+            for key, sub in list(submitted.items()):
+                if sub.get("job_id") in jobs:
+                    submitted.pop(key)
+        if run.stage == "tts":
             run.state.pop("tts_synth_jobs", None)
-        run.notes.append(
-            f"discarded terminal {tag} plan after budget recovery; "
-            "a fresh quote and authorization will be created")
+            run.state.pop("tts_batch_tags", None)
+            run.notes.append(
+                f"discarded terminal {tag} plan after budget recovery; "
+                "a fresh quote and authorization will be created")
+
+    def _resolve_qc(self, run, resolved, body):
+        """Explicit operator decision on flagged final QC.
+
+        'accept' records a human verdict bound to each current final's
+        identity and lets the run finish; 'recheck' discards the flagged
+        submissions so the stage re-reviews the current bytes once more.
+        A plain Resume re-reads the same machine verdicts and re-pauses —
+        the flagged state is never silently repeated or silently paid
+        for again."""
+        if run.pause.get("code") != "final_qc_flagged":
+            raise ContractError("no_qc_resolution_pending", "resolve_qc")
+        flagged = list(run.state.get("qc_flagged") or [])
+        if resolved == "accept":
+            reviewer = str(body.get("reviewer") or "").strip()
+            if not reviewer:
+                raise ContractError("reviewer_required", "reviewer")
+            finals = self._finals(run)
+            for key in flagged:
+                f = finals.get(key)
+                if not f:
+                    continue
+                path = self.s.artifacts.verified_path(f["artifact_id"])
+                binding = self.s.quality.binding(
+                    path, f["composition_id"], f["artifact_id"])
+                self.s.quality.record_verdict(
+                    "human-visual-" + uuid.uuid4().hex[:16],
+                    f["sha256"], "creative", "pass",
+                    evidence=[f["artifact_id"]], binding=binding,
+                    reviewer=reviewer,
+                    limitations=["manual acceptance after automated "
+                                 "flag"],
+                    reviewer_type="human")
+            run.state["qc_human_accepted"] = True
+            run.notes.append(
+                f"flagged finals accepted by {reviewer} after human "
+                "review in Compare")
+        elif resolved == "recheck":
+            rechecks = run.state.setdefault("qc_rechecks", [])
+            submitted = run.state.get("qc_submitted") or {}
+            for key in flagged:
+                if key in rechecks:
+                    raise ContractError("qc_recheck_exhausted", key)
+                rechecks.append(key)
+                submitted.pop(key, None)
+                for k in (f"qc_{key}_jobs", f"qc_{key}_plan",
+                          f"qc_{key}_auth", f"qc_verdict_{key}"):
+                    run.state.pop(k, None)
+                run.state[f"qc_{key}_plan_seq"] = \
+                    run.state.get(f"qc_{key}_plan_seq", 0) + 1
+            run.state.pop("qc_flagged", None)
+            run.notes.append(
+                "flagged finals resubmitted for a fresh paid visual "
+                "review at the operator's request")
+        else:
+            raise ContractError("invalid_resolve_qc", "resolve_qc")
 
     def _reset_revised_speech(self, run):
         """Continue TTS on the new draft revision after copy was edited."""
@@ -232,9 +322,14 @@ class AutoRunService:
         if current.revision == prior:
             return
         run.state["experiment_revision"] = current.revision
-        for key in ("tts_jobs", "tts_plan", "tts_synth_jobs", "tts_fits",
-                    "tts_done"):
+        for tag in run.state.get("tts_batch_tags") or ["tts"]:
+            for suffix in ("_jobs", "_plan", "_auth"):
+                run.state.pop(f"{tag}{suffix}", None)
+        for key in ("tts_synth_jobs", "tts_fits", "tts_done",
+                    "tts_batch_tags"):
             run.state.pop(key, None)
+        run.state["tts_plan_seq"] = \
+            run.state.get("tts_plan_seq", 0) + 1
         run.experiment_id = eid
         run.notes.append(
             f"copy revised from experiment revision {prior} to "
@@ -249,8 +344,11 @@ class AutoRunService:
         try:
             outcome = self._drive(run)
         except ContractError as e:
-            outcome = self._pause(run, "stage_error",
-                                  f"{e.code}: {e.detail}",
+            detail = f"{e.code}: {e.detail}"
+            trace = traceback.format_exc(limit=12).strip().splitlines()
+            if trace:
+                detail = detail + " | " + " | ".join(trace[-8:])
+            outcome = self._pause(run, "stage_error", detail,
                                   "Resolve the cause, then Resume")
         except Exception as e:                       # noqa: BLE001
             detail = type(e).__name__
@@ -413,11 +511,40 @@ class AutoRunService:
             ceilings[unit] = cap if cap is not None else total
         return ceilings
 
+    def _plan_auth(self, plan):
+        """An authorization already committed for this exact plan, or ''.
+
+        The crash window between ``authorize``'s commit and the run-state
+        write leaves a valid authorization with its reservations held;
+        reusing it is the only way a retry avoids double-reserving the
+        same logical work."""
+        rows = self.s.db.conn.execute(
+            "SELECT id, body FROM records WHERE kind='authorization' AND "
+            "status='authorized' AND "
+            "json_extract(body,'$.binding.kind')='effectplan' AND "
+            "json_extract(body,'$.binding.id')=? "
+            "ORDER BY created_at DESC", (plan["id"],)).fetchall()
+        for row in rows:
+            body = json.loads(row["body"])
+            if body.get("scope_hash") != plan["plan_hash"]:
+                continue
+            until = body.get("valid_until") or ""
+            if until and until <= utcnow():
+                continue
+            return row["id"]
+        return ""
+
     def _run_effect(self, run, kind, provider, model, requests, tag,
                     experiment_id="", revision=0):
         """Prepare→authorize→queue an effect plan under the run's exact
-        budget scope. Returns job ids, 'wait' once dispatched, or a
-        pause tuple. Idempotent: the plan id is content-keyed."""
+        budget scope. Returns 'wait' once dispatched, or a pause tuple.
+
+        Each sub-step is persisted before the next paid commit: the plan
+        id is content-keyed to this run/stage/request set (prepare is
+        get-or-create), an authorization that already committed for the
+        plan is reused, and queue identities are deterministic per
+        plan+operation — so a crash at any point re-lands on the same
+        paid work instead of minting duplicates."""
         state_key = f"{tag}_jobs"
         if run.state.get(state_key):
             return "wait"
@@ -426,26 +553,63 @@ class AutoRunService:
             return ("pause", "route_unavailable",
                     f"provider {provider} is not configured",
                     "Configure the provider route, then Resume")
-        plan = self.s.effect_work.prepare(
-            kind, provider, model, requests,
-            experiment_id=experiment_id, revision=revision)
-        gap = self._cover(run, plan["total"], providers=(provider,))
-        if gap:
-            return ("pause", "budget_exhausted", gap,
-                    "Raise the named ceiling (same id, higher amount) or "
-                    "settle finished holds, then Resume")
-        ceilings = self._ceilings(run, plan["operations"])
-        if isinstance(ceilings, tuple):
-            return ceilings
-        auth = self.s.effect_work.authorize(plan["id"], {
-            "plan_hash": plan["plan_hash"], "reviewer": AUTO_REVIEWER,
-            "ceilings": ceilings,
-            "budget_ids": run.params["budget_ids"],
-            "valid_until": run.params.get("valid_until") or ""})
+        plan_id = run.state.get(f"{tag}_plan")
+        if plan_id:
+            plan = self.s.effect_work.get(plan_id)
+        else:
+            # plan_seq discriminates a deliberate re-plan: an operator
+            # reset (budget recovery, revised copy) bumps it so the new
+            # plan gets fresh queue identities instead of resurrecting
+            # terminally-failed jobs.
+            plan_id = "effect-" + content_hash({
+                "run": run.id, "tag": tag, "kind": kind,
+                "provider": provider, "model": model,
+                "requests": requests, "experiment_id": experiment_id,
+                "revision": revision,
+                "seq": run.state.get(f"{tag}_plan_seq", 0)})
+            plan = self.s.effect_work.prepare(
+                kind, provider, model, requests,
+                experiment_id=experiment_id, revision=revision,
+                plan_id=plan_id)
+            run.state[f"{tag}_plan"] = plan["id"]
+            self._put(run)
+        auth_id = run.state.get(f"{tag}_auth")
+        if auth_id:
+            # A stored authorization is only valid for the plan it was
+            # bound to — a reset that left stale state must not queue
+            # the new plan under another plan's scope.
+            row = self.s.db.uow().records.get("authorization", auth_id)
+            bound = row and json.loads(row["body"]).get(
+                "binding", {}).get("id") == plan["id"]
+            if not bound:
+                run.state.pop(f"{tag}_auth", None)
+                auth_id = ""
+        if not auth_id:
+            auth_id = self._plan_auth(plan)
+        if not auth_id:
+            # Only checked when no authorization exists yet — once the
+            # plan is authorized its reservations are already held, and
+            # re-measuring headroom would count our own hold against us.
+            gap = self._cover(run, plan["total"], providers=(provider,))
+            if gap:
+                return ("pause", "budget_exhausted", gap,
+                        "Raise the named ceiling (same id, higher amount) or "
+                        "settle finished holds, then Resume")
+            ceilings = self._ceilings(run, plan["operations"])
+            if isinstance(ceilings, tuple):
+                return ceilings
+            auth = self.s.effect_work.authorize(plan["id"], {
+                "plan_hash": plan["plan_hash"], "reviewer": AUTO_REVIEWER,
+                "ceilings": ceilings,
+                "budget_ids": run.params["budget_ids"],
+                "valid_until": run.params.get("valid_until") or ""})
+            auth_id = auth["authorization_id"]
+        if auth_id != run.state.get(f"{tag}_auth"):
+            run.state[f"{tag}_auth"] = auth_id
+            self._put(run)
         queued = self.s.effect_work.queue(
-            plan["id"], auth["authorization_id"])
+            plan["id"], auth_id)
         run.state[state_key] = [j["job_id"] for j in queued["jobs"]]
-        run.state[f"{tag}_plan"] = plan["id"]
         self._put(run)
         return "wait"
 
@@ -604,7 +768,9 @@ class AutoRunService:
         except ContractError:
             pass
         payload, _, _ = self._beats(run)
-        payload = checks.auto_review_beats(payload)
+        a = self.s.ref_analysis.get(run.seed_id)
+        payload = checks.auto_review_beats(
+            payload, evidence=a.evidence or {})
         bp = self.s.analysis.import_observations(
             run.seed_id, payload, AUTO_REVIEWER)
         try:
@@ -753,6 +919,14 @@ class AutoRunService:
             self._advance(run, "draft")
             return "next"
         aid = run.params.get("music_artifact_id")
+        if not run.params.get("generate_music") and not aid:
+            # Only reachable when the operator declared the fallback at
+            # resume — the script stage never routes here otherwise.
+            run.notes.append("no music bed — the operator declined "
+                             "generated music")
+            run.state["music"] = {}
+            self._advance(run, "draft")
+            return "next"
         if aid:
             self.s.artifacts.verified_path(aid)
             run.state["music"] = {"artifact_id": aid, "gain": 0.12,
@@ -761,11 +935,14 @@ class AutoRunService:
             return "next"
         adapter = self.s.providers.get("generated_music")
         if adapter is None or not getattr(adapter, "account", ""):
-            run.notes.append("generated music unavailable — rendering "
-                             "without a music bed")
-            run.state["music"] = {}
-            self._advance(run, "draft")
-            return "next"
+            # Music was requested — an unavailable route is a missing
+            # capability, not a note to quietly absorb.
+            return ("pause", "capability_unavailable",
+                    "generated music was requested but the music "
+                    "provider route is not configured",
+                    "Configure the provider, or Resume with "
+                    "set_params generate_music=false to declare the "
+                    "no-music fallback")
         bp = self.s.analysis.get(run.state["blueprint_id"])
         dur_s = bp.target_frames / (bp.clock.num / bp.clock.den)
         out = self._run_effect(
@@ -895,6 +1072,9 @@ class AutoRunService:
             return "next"
         eid = run.state["experiment_id"]
         rev = run.state["experiment_revision"]
+        # Synthesis is bought once per normalized text, but fitting and
+        # attachment are per occurrence — every segment that speaks the
+        # line gets its own speech record, target interval and captions.
         needed = {}
         for key in "ABCD":
             variant = self.s.experiments._variant(eid, key)
@@ -903,8 +1083,8 @@ class AutoRunService:
                 if not text:
                     continue
                 norm = self.s.audio_work.speech.normalize(text)
-                if norm not in needed:
-                    needed[norm] = (key, seg["id"], text)
+                needed.setdefault(norm, []).append(
+                    (key, seg["id"], text))
         if not needed:
             run.notes.append("silent scripts — no narration required")
             run.state["tts_done"] = True
@@ -919,21 +1099,28 @@ class AutoRunService:
                      (self.s.db.uow().jobs.get(j) or {}).get("status")
                      == "succeeded"}
             fresh = [n for n in needed if n not in reuse]
-            if fresh:
-                requests = [{"text": needed[n][2],
+            synth = {}
+            # Effect plans cap at 20 operations — dispatch batches, each
+            # persisted under its own tag so a restart re-lands on the
+            # same paid work.
+            batch_tags = []
+            for bi in range(0, len(fresh), 20):
+                chunk = fresh[bi:bi + 20]
+                tag = "tts" if not batch_tags else \
+                    f"tts_{len(batch_tags)}"
+                requests = [{"text": needed[n][0][2],
                              "voice_id": run.params["voice_id"],
                              "model": "eleven_v3",
                              "language": run.params["language"],
-                             "settings": {}} for n in fresh]
+                             "settings": {}} for n in chunk]
                 out = self._run_effect(run, "tts", "elevenlabs",
-                                       "eleven_v3", requests, "tts", eid,
+                                       "eleven_v3", requests, tag, eid,
                                        rev)
                 if out != "wait":
                     return out
-                synth = dict(zip(fresh, run.state["tts_jobs"]))
-            else:
-                synth = {}
-                run.state["tts_jobs"] = []
+                batch_tags.append(tag)
+                synth.update(zip(chunk, run.state[f"{tag}_jobs"]))
+            run.state["tts_batch_tags"] = batch_tags
             run.state["tts_synth_jobs"] = {**reuse, **synth}
             history.update(synth)
             if reuse:
@@ -948,14 +1135,15 @@ class AutoRunService:
             return res
         fits = run.state.setdefault("tts_fits", {})
         for norm, jid in run.state["tts_synth_jobs"].items():
-            if norm in fits:
-                continue
-            key, seg_id, _text = needed[norm]
-            queued = self.s.audio_work.queue_fit(
-                eid, rev, {"variant_key": key, "segment_id": seg_id,
-                           "job_id": jid})
-            fits[norm] = queued["job_id"]
-            self._put(run)
+            for key, seg_id, _text in needed[norm]:
+                fkey = f"{key}:{seg_id}:{norm}"
+                if fkey in fits:
+                    continue
+                queued = self.s.audio_work.queue_fit(
+                    eid, rev, {"variant_key": key, "segment_id": seg_id,
+                               "job_id": jid})
+                fits[fkey] = queued["job_id"]
+                self._put(run)
         res = self._jobs(run, list(fits.values()), "speech_fit_failed")
         if res != "next":
             if res == "wait":
@@ -969,7 +1157,7 @@ class AutoRunService:
                     "Edit the draft copy so it fits its beat, then "
                     "Resume — the run continues on the new revision")
         sids = []
-        for norm, fit_jid in fits.items():
+        for fkey, fit_jid in fits.items():
             cmd = self.s.commands.get(fit_jid)
             sid = cmd["command"]["input"]["speech_id"]
             speech = self.s.audio_work.speech.get(sid)
@@ -981,7 +1169,7 @@ class AutoRunService:
                         f"speech {sid} status {speech['status']}",
                         "Edit the draft copy, then Resume")
             caps = cmd["command"]["result"].get("captions") or {}
-            if norm and not caps.get("cues"):
+            if not caps.get("cues"):
                 return ("pause", "speech_fit_failed",
                         f"speech {sid} produced no caption cues",
                         "Inspect the segment, then Resume")
@@ -998,8 +1186,9 @@ class AutoRunService:
         run.state["experiment_revision"] = result["revision"]
         run.state["tts_done"] = True
         run.notes.append(
-            f"narration attached — {len(sids)} unique speech segments "
-            f"across A–D (one voice, eleven_v3, "
+            f"narration attached — {len(sids)} spoken segment(s) "
+            f"across A–D ({len(run.state.get('tts_synth_jobs') or {})} "
+            f"unique lines synthesized; one voice, eleven_v3, "
             f"{run.params['language']})")
         self._advance(run, "quote")
         return "next"
@@ -1020,14 +1209,14 @@ class AutoRunService:
         rev = run.state["experiment_revision"]
         repairs = run.state.setdefault("tts_repairs", [])
         targets = []
-        for norm, fit_jid in fits.items():
+        for fkey, fit_jid in fits.items():
             j = self.s.db.uow().jobs.get(fit_jid)
             if not j or j["status"] not in ("failed", "blocked"):
                 continue
             if "copy_revision_required" not in str(j["blocked_reason"]
                                                    or ""):
                 return None
-            key, seg_id, _ = needed[norm]
+            key, seg_id, norm = fkey.split(":", 2)
             changed = base["changed"]
             fallback = base[key].get(seg_id) if key != "A" and \
                 changed.get(key) == seg_id else base["A"].get(seg_id, "")
@@ -1090,9 +1279,14 @@ class AutoRunService:
                     f"repair rejected: {e.code}: {e.detail}",
                     "Edit the draft copy, then Resume")
         run.state["experiment_revision"] = result["revision"]
-        for k in ("tts_jobs", "tts_plan", "tts_synth_jobs", "tts_fits",
-                  "tts_done"):
+        for tag in run.state.get("tts_batch_tags") or ["tts"]:
+            for suffix in ("_jobs", "_plan", "_auth"):
+                run.state.pop(f"{tag}{suffix}", None)
+        for k in ("tts_synth_jobs", "tts_fits", "tts_done",
+                  "tts_batch_tags"):
             run.state.pop(k, None)
+        run.state["tts_plan_seq"] = \
+            run.state.get("tts_plan_seq", 0) + 1
         self._put(run)
         return "next"
 
@@ -1352,72 +1546,127 @@ class AutoRunService:
                 "passed technical checks only")
             self._finish(run)
             return "next"
-        adapter = self.s.providers.get("audiovisual_analysis")
-        if adapter is None or not getattr(adapter, "account", ""):
-            run.notes.append("final visual QC unavailable — technical "
-                             "checks only")
+        if run.state.get("qc_human_accepted"):
             self._finish(run)
             return "next"
+        adapter = self.s.providers.get("audiovisual_analysis")
+        if adapter is None or not getattr(adapter, "account", ""):
+            # Visual QC was requested — an unavailable route is a missing
+            # capability, not a note to quietly absorb.
+            return ("pause", "capability_unavailable",
+                    "visual QC was requested but the audiovisual "
+                    "analysis route is not configured",
+                    "Configure the provider, or Resume with "
+                    "set_params visual_reviews=false to finish on "
+                    "technical checks only")
         eid = run.state["experiment_id"]
-        if not run.state.get("qc_jobs"):
-            finals = self._finals(run)
-            if len(finals) < 4:
-                return "wait"
-            requests = []
-            for key in "ABCD":
+        finals = self._finals(run)
+        if len(finals) < 4:
+            return "wait"
+        # Each variant's review is bound to the exact artifact submitted.
+        # A final replaced after dispatch can never inherit the old
+        # verdict — the stale submission is discarded and the current
+        # bytes are reviewed once more, then the run pauses rather than
+        # chase a moving target.
+        submitted = run.state.setdefault("qc_submitted", {})
+        resubmitted = run.state.setdefault("qc_resubmitted", [])
+        pending = []
+        for key in "ABCD":
+            sub = submitted.get(key)
+            if sub and sub["artifact_id"] == \
+                    finals[key]["artifact_id"] and \
+                    sub["sha256"] == finals[key]["sha256"]:
+                continue
+            if sub:
+                if key in resubmitted:
+                    return ("pause", "final_qc_stale",
+                            f"variant {key}'s final changed again after "
+                            "a second visual review",
+                            "Stabilize the final, then Resume")
+                resubmitted.append(key)
+                for k in (f"qc_{key}_jobs", f"qc_{key}_plan",
+                          f"qc_{key}_auth"):
+                    run.state.pop(k, None)
+                run.state[f"qc_{key}_plan_seq"] = \
+                    run.state.get(f"qc_{key}_plan_seq", 0) + 1
+                run.notes.append(
+                    f"variant {key}: final was replaced after its visual "
+                    "review — the old verdict is discarded and the "
+                    "current cut is being reviewed")
+                submitted.pop(key)
+            pending.append(key)
+        if pending:
+            for key in pending:
                 variant = self.s.experiments._variant(eid, key)
                 f = finals[key]
-                requests.append({
-                    "task": "review_final", "model": adapter.model,
+                out = self._run_effect(
+                    run, "analysis", "audiovisual_analysis",
+                    adapter.model, [{
+                        "task": "review_final", "model": adapter.model,
+                        "artifact_id": f["artifact_id"],
+                        "artifact_sha256": f["sha256"],
+                        "expected": {
+                            "variant": key,
+                            "script": [{"segment": s["id"],
+                                        "copy": s.get("copy", "")}
+                                       for s in variant.segments],
+                            "factor": variant.changed_factor,
+                            "hypothesis": variant.hypothesis}}],
+                    f"qc_{key}")
+                if out != "wait":
+                    return out
+                submitted[key] = {
+                    "job_id": run.state[f"qc_{key}_jobs"][0],
                     "artifact_id": f["artifact_id"],
-                    "artifact_sha256": f["sha256"],
-                    "expected": {
-                        "variant": key,
-                        "script": [{"segment": s["id"],
-                                    "copy": s.get("copy", "")}
-                                   for s in variant.segments],
-                        "factor": variant.changed_factor,
-                        "hypothesis": variant.hypothesis}})
-            out = self._run_effect(run, "analysis",
-                                   "audiovisual_analysis",
-                                   adapter.model, requests, "qc")
-            if out != "wait":
-                return out
+                    "sha256": f["sha256"]}
+                self._put(run)
             return "wait"
-        res = self._jobs(run, run.state["qc_jobs"], "final_qc_failed")
+        res = self._jobs(run, [submitted[k]["job_id"] for k in "ABCD"],
+                         "final_qc_failed")
         if res != "next":
             return res
         flagged = []
-        for i, jid in enumerate(run.state["qc_jobs"]):
-            key = "ABCD"[i]
-            cmd = self.s.commands.get(jid)
+        for key in "ABCD":
+            sub = submitted[key]
+            f = finals[key]
+            cmd = self.s.commands.get(sub["job_id"])
             review = cmd["command"]["result"]["result"].get("review")
             if not review:
                 flagged.append(f"{key}: no review payload")
                 continue
-            variant = self.s.experiments._variant(eid, key)
-            f = self._finals(run)[key]
-            path = self.s.artifacts.verified_path(f["artifact_id"])
-            binding = self.s.quality.binding(path, f["composition_id"],
-                                             f["artifact_id"])
             verdict = review.get("verdict")
             if verdict not in ("pass", "uncertain", "fail"):
                 verdict = "uncertain"
-            self.s.quality.record_verdict(
-                "auto-visual-" + uuid.uuid4().hex[:16], f["sha256"],
-                "automated_visual", verdict,
-                evidence=[f["artifact_id"]], binding=binding,
-                reviewer=AUTO_REVIEWER,
-                limitations=list(review.get("notes") or []),
-                reviewer_type="automated")
+            recorded = run.state.get(f"qc_verdict_{key}")
+            if recorded is None:
+                # Verdicts are durable evidence — a resume that re-reads
+                # the same jobs must not write duplicate review rows.
+                path = self.s.artifacts.verified_path(f["artifact_id"])
+                binding = self.s.quality.binding(
+                    path, f["composition_id"], f["artifact_id"])
+                self.s.quality.record_verdict(
+                    "auto-visual-" + uuid.uuid4().hex[:16], f["sha256"],
+                    "automated_visual", verdict,
+                    evidence=[f["artifact_id"]], binding=binding,
+                    reviewer=AUTO_REVIEWER,
+                    limitations=list(review.get("notes") or []),
+                    reviewer_type="automated")
+                run.state[f"qc_verdict_{key}"] = verdict
+                self._put(run)
+            else:
+                verdict = recorded
             if verdict != "pass":
                 flagged.append(f"{key}: {verdict} — " +
                                "; ".join(review.get("notes") or []))
         if flagged:
+            run.state["qc_flagged"] = [f.split(":", 1)[0]
+                                       for f in flagged]
+            self._put(run)
             return ("pause", "final_qc_flagged",
                     " | ".join(flagged),
                     "Review the flagged finals in Compare, then Resume "
-                    "to finish (or re-render after fixes)")
+                    "with resolve_qc=accept (human acceptance) or "
+                    "resolve_qc=recheck (a fresh paid review)")
         self._finish(run)
         return "next"
 

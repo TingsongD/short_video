@@ -226,6 +226,111 @@ class BudgetService:
                             {"kind": kind, "amounts": amounts})
         return reservation_id
 
+    # Settlement certainty only ever climbs the ladder — an estimate is
+    # later replaced by provider-reported usage, and finally by the
+    # invoice. A confirmed charge never degrades back to an estimate.
+    _KIND_ORDER = {"usage_estimate": 0, "native_quote": 0,
+                   "reported_usage": 1, "invoice_confirmed": 2}
+
+    def adjust_settlement(self, reservation_id, kind, amounts,
+                          evidence="", operator=""):
+        """Correct a settled reservation to a more-confirmed kind.
+
+        The original settlement is preserved verbatim in the event log
+        before the accounting identity changes — an invoice never silently
+        overwrites the estimate it replaced. Amounts may move in either
+        direction; a new actual above the hold is an overrun, same as at
+        first settlement."""
+        if kind not in ("native_quote", "usage_estimate",
+                        "reported_usage", "invoice_confirmed"):
+            raise ContractError("bad_settlement_kind", "kind", kind)
+        if not evidence or not operator:
+            raise ContractError("adjustment_needs_evidence",
+                                "operator/evidence")
+        with self.db.uow() as u:
+            row = u.conn.execute(
+                "SELECT status FROM reservations WHERE id=?",
+                (reservation_id,)).fetchone()
+            if row is None:
+                raise ContractError("unknown_reservation", "id",
+                                    reservation_id)
+            if row["status"] != "settled":
+                raise ContractError("not_settled", "reservation_id",
+                                    reservation_id)
+            saved = u.conn.execute(
+                "SELECT budget_id,amount,settled_amount,kind FROM "
+                "reservation_lines WHERE reservation_id=?",
+                (reservation_id,)).fetchall()
+            if set(amounts) != {r["budget_id"] for r in saved}:
+                raise ContractError("incomplete_settlement", "amounts")
+            prior = {r["budget_id"]: {"amount": r["settled_amount"],
+                                      "kind": r["kind"]}
+                     for r in saved}
+            if any(self._KIND_ORDER[r["kind"]] > self._KIND_ORDER[kind]
+                   for r in saved):
+                raise ContractError(
+                    "settlement_downgrade_refused", "kind", kind)
+            if all(amounts[r["budget_id"]] == r["settled_amount"]
+                   and kind == r["kind"] for r in saved):
+                return reservation_id            # idempotent replay
+            u.events.append(
+                f"reservation:{reservation_id}", "settlement_adjusted",
+                {"prior": prior, "kind": kind, "amounts": amounts,
+                 "operator": operator, "evidence": evidence})
+            for budget_id, actual in amounts.items():
+                if type(actual) is not int or actual < 0:
+                    raise ContractError("invalid_amount", budget_id,
+                                        repr(actual))
+                if actual > next(r["amount"] for r in saved
+                                 if r["budget_id"] == budget_id):
+                    u.conn.execute(
+                        "INSERT OR REPLACE INTO meta(key,value) "
+                        "VALUES('spend_overrun',?)",
+                        (json.dumps({"reservation": reservation_id,
+                                     "budget": budget_id,
+                                     "actual": actual,
+                                     "reserved": next(
+                                         r["amount"] for r in saved
+                                         if r["budget_id"]
+                                         == budget_id)}),))
+                    u.events.append(
+                        f"reservation:{reservation_id}",
+                        "charge_variance",
+                        {"budget_id": budget_id, "actual": actual,
+                         "reserved": next(r["amount"] for r in saved
+                                          if r["budget_id"]
+                                          == budget_id)})
+                u.conn.execute(
+                    "UPDATE reservation_lines SET settled_amount=?, "
+                    "kind=? WHERE reservation_id=? AND budget_id=?",
+                    (actual, kind, reservation_id, budget_id))
+            u.conn.execute(
+                "UPDATE reservations SET evidence=? WHERE id=?",
+                (evidence, reservation_id))
+        return reservation_id
+
+    def resolve_overrun(self, operator, evidence, resolution):
+        """Explicit operator resolution of a spend_overrun flag.
+
+        The overrun event itself stays in the append-only ledger — this
+        only lifts the dispatch block, with the resolution recorded."""
+        if not operator or not evidence or not resolution:
+            raise ContractError("overrun_resolution_incomplete",
+                                "operator/evidence/resolution")
+        with self.db.uow() as u:
+            row = u.conn.execute(
+                "SELECT value FROM meta WHERE key='spend_overrun'"
+                ).fetchone()
+            if row is None:
+                raise ContractError("no_overrun_pending", "spend_overrun")
+            prior = json.loads(row[0])
+            u.events.append("budget", "spend_overrun_resolved",
+                            {"overrun": prior, "operator": operator,
+                             "resolution": resolution,
+                             "evidence": evidence})
+            u.conn.execute("DELETE FROM meta WHERE key='spend_overrun'")
+        return prior
+
     def release(self, reservation_id, evidence=""):
         """Free a hold ONLY on evidence of a terminal no-charge outcome."""
         if not evidence:

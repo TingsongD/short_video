@@ -161,6 +161,40 @@ class FactoryServices:
                             {'reservation_id':reservation_id,'reviewer':body['reviewer'],'attempts':[a['id'] for a in att]})
         return {'reservation_id':reservation_id,'status':'released'}
 
+    def adjust_reservation(self, reservation_id, body):
+        """Upgrade a settled reservation to a more-confirmed kind —
+        usage_estimate → reported_usage → invoice_confirmed — with the
+        original entry preserved in the event log."""
+        from ..budget import BudgetService
+        if not body.get('reviewer') or not body.get('evidence'):
+            raise ContractError('evidence_required','reviewer/evidence')
+        kind=body.get('kind') or 'invoice_confirmed'
+        saved={l['budget_id']:l for l in self.db.conn.execute(
+            "SELECT budget_id,amount,settled_amount FROM reservation_lines "
+            "WHERE reservation_id=?",(reservation_id,))}
+        if not saved:
+            raise ContractError('unknown_reservation','id',reservation_id)
+        amounts={b:l['settled_amount'] for b,l in saved.items()}
+        for b,v in (body.get('amounts') or {}).items():
+            if b not in saved or type(v) is not int or v<0:
+                raise ContractError('invalid_amount',b,repr(v))
+            amounts[b]=v
+        evidence=(f"{kind} by {body['reviewer']}: {body['evidence']}")
+        BudgetService(self.db).adjust_settlement(
+            reservation_id,kind,amounts,evidence,operator=body['reviewer'])
+        return {'reservation_id':reservation_id,'status':'settled',
+                'kind':kind,'amounts':amounts}
+
+    def resolve_overrun(self, body):
+        """Lift the dispatch block after a spend overrun — the overrun
+        event stays in the ledger; the resolution is recorded."""
+        from ..budget import BudgetService
+        prior=BudgetService(self.db).resolve_overrun(
+            body.get('reviewer',''),body.get('evidence',''),
+            body.get('resolution',''))
+        return {'reservation_id':prior.get('reservation'),
+                'resolved':True,'overrun':prior}
+
     def detail(self, kind, rid):
         row = self.db.uow().records.get(kind, rid)
         if not row:

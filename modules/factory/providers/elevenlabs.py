@@ -55,11 +55,18 @@ class ElevenLabsAdapter(SynchronousAdapter):
         try:
             doc = json.loads(raw)
             audio = base64.b64decode(doc["audio_base64"], validate=True)
-            alignment = doc.get("normalized_alignment") or doc["alignment"]
+            raw_alignment = doc.get("alignment") or {}
+            norm_alignment = doc.get("normalized_alignment") or {}
+            alignment = norm_alignment or raw_alignment
             count = len(alignment["characters"])
             if not audio or count != len(alignment["character_start_times_seconds"]) or count != len(alignment["character_end_times_seconds"]):
                 raise ValueError()
-            if "".join(alignment["characters"]) != request["text"]:
+            # The provider's normalized form is legitimate — numerals and
+            # contractions are spelled out for speech ("2" → "two"). Reject
+            # only when NEITHER representation reproduces the request.
+            texts = {"".join(a.get("characters") or [])
+                     for a in (raw_alignment, norm_alignment) if a}
+            if request["text"] not in texts:
                 raise ValueError()
         except (KeyError, ValueError, TypeError):
             raise ProviderError("malformed_tts_response") from None

@@ -24,12 +24,26 @@ class EffectPlan(Record):
 class EffectWork:
     def __init__(self,services):self.s=services
 
-    def prepare(self,kind,provider,model,requests,experiment_id='',revision=0):
+    def prepare(self,kind,provider,model,requests,experiment_id='',revision=0,plan_id=''):
         if kind not in ('research','tts','music','analysis'):raise ContractError('invalid_effect_kind','kind')
         adapter=self.s.providers.get(provider)
         if adapter is None or not getattr(adapter,'account',None):raise ContractError('route_unavailable','provider',provider)
         if not requests or len(requests)>20 or any(not isinstance(x,dict) for x in requests):raise ContractError('invalid_requests','operations')
         if experiment_id:self.s._current(experiment_id,revision,True)
+        if plan_id:
+            # Content-keyed plans are get-or-create: a caller that crashes
+            # after this commit and retries must land on the same plan, not
+            # mint a second paid scope.
+            prior=self.s.db.uow().records.get('effectplan',plan_id)
+            if prior:
+                body=json.loads(prior['body'])
+                same=(body.get('kind')==kind and body.get('provider')==provider
+                    and body.get('model')==model
+                    and body.get('experiment_id','')==experiment_id
+                    and body.get('experiment_revision',0)==revision
+                    and [op.get('request') for op in body.get('operations',[])]==list(requests))
+                if not same:raise ContractError('plan_id_conflict','plan_id')
+                return body
         operations=[];totals={}
         for i,request in enumerate(requests):
             request=dict(request)
@@ -48,7 +62,7 @@ class EffectWork:
             if datetime.fromisoformat(quote.valid_until.replace('Z','+00:00'))<=datetime.now(timezone.utc):raise ContractError('quote_expired','price')
             totals[quote.unit]=totals.get(quote.unit,0)+quote.reserve_amount
             operations.append({'key':str(i),'request':request,'price':quote.to_dict()})
-        plan=EffectPlan(schema_version='effect_plan.v1',id='effect-'+uuid.uuid4().hex,created_at=utcnow(),
+        plan=EffectPlan(schema_version='effect_plan.v1',id=plan_id or 'effect-'+uuid.uuid4().hex,created_at=utcnow(),
             kind=kind,provider=provider,model=model,account=adapter.account,experiment_id=experiment_id,
             experiment_revision=revision,operations=operations,total=totals)
         plan.plan_hash=content_hash(plan.to_dict());plan.validate_or_raise()

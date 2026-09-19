@@ -495,12 +495,28 @@ class ReferenceAnalysisService:
                           "phase": str(s["phase"]).strip(),
                           "summary": str(s["summary"]).strip(),
                           "evidence_ids": list(s.get("evidence_ids") or [])})
-        covered = all(any(s["start_s"] <= t < s["end_s"] for s in clean)
-                      for t in (0, dur / 2, max(0.0, dur - 0.01))) \
-            if dur else bool(clean)
-        if not covered:
+        # Coverage is the union of the sections' intervals, not three
+        # probe points — a gap anywhere in the reference (or a section
+        # buried inside a larger one leaving the middle unwatched) must
+        # fail. 0.25s absorbs timestamp-rounding slack, nothing more.
+        ordered = sorted(clean, key=lambda s: s["start_s"])
+        covered_end = 0.0
+        gaps = []
+        for i, s in enumerate(ordered):
+            if s["start_s"] > covered_end + 0.25:
+                gaps.append(f"gap {covered_end:.2f}–{s['start_s']:.2f}s")
+            elif i and s["start_s"] < covered_end - 0.25:
+                gaps.append(f"overlap before {s['end_s']:.2f}s")
+            covered_end = max(covered_end, s["end_s"])
+        if dur:
+            if ordered[0]["start_s"] > 0.25:
+                gaps.append("uncovered head")
+            if covered_end < dur - 0.25:
+                gaps.append("uncovered tail")
+        if gaps:
             raise ContractError("timeline_coverage_required", "sections",
-                                "sections must span the whole reference")
+                                "sections must span the whole reference: "
+                                + "; ".join(gaps))
         a.timeline = sorted(clean, key=lambda s: s["start_s"])
         return self._after_edit(a, "timeline")
 

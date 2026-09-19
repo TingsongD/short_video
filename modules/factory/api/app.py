@@ -274,6 +274,18 @@ def create_app(services, session_token=None):
         status,resp=mutation(request,body,lambda:(200,services.release_reservation(reservation_id,body)))
         return JSONResponse(resp,status_code=status)
 
+    @app.post('/api/reservations/{reservation_id}/adjust')
+    async def adjust_reservation(reservation_id:str,request:Request):
+        body=await json_command(request)
+        status,resp=mutation(request,body,lambda:(200,services.adjust_reservation(reservation_id,body)))
+        return JSONResponse(resp,status_code=status)
+
+    @app.post('/api/budgets/resolve-overrun')
+    async def resolve_overrun(request:Request):
+        body=await json_command(request)
+        status,resp=mutation(request,body,lambda:(200,services.resolve_overrun(body)))
+        return JSONResponse(resp,status_code=status)
+
     @app.post("/api/seeds/{seed_id}/analyze", status_code=202)
     async def analyze(seed_id: str, request: Request):
         body=await json_command(request)

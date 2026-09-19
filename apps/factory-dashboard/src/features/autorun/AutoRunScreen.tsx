@@ -52,6 +52,7 @@ export function AutoRunScreen({ seeds, budgets, runs, act, media,
   const [music, setMusic] = useState(false);
   const [reviews, setReviews] = useState(true);
   const [account, setAccount] = useState("");
+  const [reviewer, setReviewer] = useState("");
   const seed = seeds.find((s) => s.id === seedId);
   const units = useMemo(
     () => [...new Set(budgets.map((b) => b.unit))] as string[], [budgets]);
@@ -194,6 +195,40 @@ export function AutoRunScreen({ seeds, budgets, runs, act, media,
                   amount) or settle finished holds there, then Resume.
                   Every aggregate ceiling is held in full, so adding a
                   second aggregate budget does not add headroom.</p>)}
+              {run.pause.code === "final_qc_flagged" && (
+                <p>
+                  <label>Reviewer
+                    <input value={reviewer} placeholder="your name"
+                           onChange={(e) =>
+                             setReviewer(e.target.value)} /></label>{" "}
+                  <button disabled={!reviewer.trim()}
+                          onClick={() => act(
+                    () => api.autorunResume(run.id,
+                      { resolve_qc: "accept",
+                        reviewer: reviewer.trim() }),
+                    "Flagged finals accepted")}>
+                    Accept after human review</button>{" "}
+                  <button onClick={() => act(
+                    () => api.autorunResume(run.id,
+                      { resolve_qc: "recheck" }),
+                    "Flagged finals resubmitted for review")}>
+                    Recheck once</button>
+                </p>)}
+              {run.pause.code === "capability_unavailable" && (
+                <p>
+                  {run.stage === "final_qc" && (
+                    <button onClick={() => act(
+                      () => api.autorunResume(run.id,
+                        { set_params: { visual_reviews: false } }),
+                      "Run finishing on technical checks only")}>
+                      Finish on technical checks only</button>)}
+                  {run.stage === "music" && (
+                    <button onClick={() => act(
+                      () => api.autorunResume(run.id,
+                        { set_params: { generate_music: false } }),
+                      "Run continuing without music")}>
+                      Finish without music</button>)}
+                </p>)}
               <button onClick={() => act(
                 () => api.autorunResume(run.id,
                   selectedBudgets.length

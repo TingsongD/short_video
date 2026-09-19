@@ -72,7 +72,9 @@ class MusicAdapter(SynchronousAdapter):
             raise ProviderError('music_http_error', http_status=status)
         if not raw or len(raw) < 1024:
             raise ProviderError('malformed_music_response')
-        actual = response_headers.get('x-credits-charged') or response_headers.get('x-credits-remaining')
+        # Only the charged header is charge evidence — x-credits-remaining
+        # is the account balance and must never settle an operation's spend.
+        actual = response_headers.get('x-credits-charged')
         return {}, raw, {'request_id': response_headers.get('request-id'),
                          'actual_credits': int(actual) if actual and str(actual).lstrip('-').isdigit() else None,
                          'content_type': 'audio/mpeg'}

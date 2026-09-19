@@ -3,27 +3,47 @@
 #   hypit runtime (whisperx.local + media.local + hyperframes.local programs)
 #   factory API on :8100
 #   one factory worker (a second worker races BEGIN IMMEDIATE — never run two)
-# Logs go to .run/*.log. Safe to re-run: running services are left alone.
+# Logs go to .run/*.log, pids to .run/*.pid. Safe to re-run: running
+# services are left alone.
+#
+# Workspace scoping: processes are launched via this checkout's absolute
+# .venv path, so their command lines contain the checkout directory.
+# All liveness/pgrep checks match on that absolute path — another
+# checkout's factory processes never match.
 set -u
 cd "$(dirname "$0")/.."
+ROOT="$PWD"
+PYBIN="$ROOT/.venv/bin/python"
 mkdir -p .run
+
+pid_alive() {
+  # alive && cmdline belongs to THIS checkout's venv
+  local pid="$1" want="$2"
+  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null || return 1
+  ps -p "$pid" -o command= 2>/dev/null | grep -q "$PYBIN.*$want"
+}
+scoped_pgrep() { pgrep -f "$PYBIN -m modules.factory.cli $1" || true; }
 
 echo "== hypit runtime (local programs) =="
 ./scripts/hypit.sh runtime up || echo "  (runtime up reported issues; programs status below shows what is live)"
 
 echo "== factory api + worker =="
-if pgrep -f "modules.factory.cli serve" >/dev/null; then
+api_pid=$(cat .run/api.pid 2>/dev/null || true)
+if pid_alive "$api_pid" "serve" || [ -n "$(scoped_pgrep serve)" ]; then
   echo "  api:    already running"
 else
-  nohup .venv/bin/python -m modules.factory.cli serve --port 8100 >> .run/api.log 2>&1 &
+  nohup "$PYBIN" -m modules.factory.cli serve --port 8100 >> .run/api.log 2>&1 &
+  echo $! > .run/api.pid
   disown
-  echo "  api:    started (pid $!) -> .run/api.log"
+  echo "  api:    started (pid $(cat .run/api.pid)) -> .run/api.log"
 fi
-if pgrep -f "modules.factory.cli worker" >/dev/null; then
+worker_pid=$(cat .run/worker.pid 2>/dev/null || true)
+if pid_alive "$worker_pid" "worker" || [ -n "$(scoped_pgrep worker)" ]; then
   echo "  worker: already running (only one may run)"
 else
-  nohup .venv/bin/python -m modules.factory.cli worker >> .run/worker.log 2>&1 &
+  nohup "$PYBIN" -m modules.factory.cli worker >> .run/worker.log 2>&1 &
   worker_pid=$!
+  echo "$worker_pid" > .run/worker.pid
   disown
   sleep 2
   if kill -0 "$worker_pid" 2>/dev/null; then

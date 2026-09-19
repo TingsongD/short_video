@@ -83,6 +83,44 @@ def _complete(env, seed, seconds=3, hypit=None):
     return svc.review(seed.id, "qa", "accept")
 
 
+def test_timeline_middle_and_edge_gaps_rejected(env):
+    """Three probe instants used to pass sections with a hole in the
+    middle; coverage is now the union of the intervals."""
+    seed, _ = _seed(env, seconds=9)
+    svc = env["s"].ref_analysis
+    svc.hypit = FakeHypit()
+    svc.start(seed.id, "qa")
+    svc.run_machine_stages(seed.id)
+    fields = {f: f"{f} reading" for f in
+              ("premise", "progression", "hook", "setups", "payoffs",
+               "ending", "replay_appeal", "intended_response")}
+    fields["observations"] = ["x"]
+    fields["interpretations"] = ["y"]
+    svc.save_understanding(seed.id, fields, "qa")
+    ok = [{"start_s": 0, "end_s": 3, "phase": "a", "summary": "s"},
+          {"start_s": 3, "end_s": 6, "phase": "b", "summary": "s"},
+          {"start_s": 6, "end_s": 9, "phase": "c", "summary": "s"}]
+    svc.save_timeline(seed.id, ok, "qa")
+    for bad in (
+            # hole in the middle — the old 0/dur/2/dur probes sat inside
+            # the outer sections and passed
+            [{"start_s": 0, "end_s": 2, "phase": "a", "summary": "s"},
+             {"start_s": 7, "end_s": 9, "phase": "b", "summary": "s"}],
+            # uncovered tail
+            [{"start_s": 0, "end_s": 3, "phase": "a", "summary": "s"},
+             {"start_s": 3, "end_s": 6, "phase": "b", "summary": "s"}],
+            # uncovered head
+            [{"start_s": 2, "end_s": 5, "phase": "a", "summary": "s"},
+             {"start_s": 5, "end_s": 9, "phase": "b", "summary": "s"}],
+            # substantial overlap inside the span
+            [{"start_s": 0, "end_s": 6, "phase": "a", "summary": "s"},
+             {"start_s": 2, "end_s": 5, "phase": "b", "summary": "s"},
+             {"start_s": 6, "end_s": 9, "phase": "c", "summary": "s"}]):
+        with pytest.raises(ContractError) as e:
+            svc.save_timeline(seed.id, bad, "qa")
+        assert e.value.code == "timeline_coverage_required"
+
+
 # ------------------------------------------------------------ gate
 
 def test_accept_blocked_without_analysis(env):

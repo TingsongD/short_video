@@ -64,6 +64,18 @@ def test_rejections(tmp_path):
         adapter.price({**REQ, "music_length_ms": 2500})
 
 
+def test_remaining_balance_is_never_a_charge(tmp_path):
+    """x-credits-remaining is the account balance — exporting it as the
+    operation's charge would settle spend that was never incurred."""
+    adapter = _adapter(tmp_path, headers={"x-credits-remaining": "95432"})
+    _meta, _raw, receipt = adapter.execute(dict(REQ))
+    assert receipt["actual_credits"] is None
+    adapter = _adapter(tmp_path / "b", headers={"x-credits-charged": "300",
+                                              "x-credits-remaining": "95432"})
+    _meta, _raw, receipt = adapter.execute(dict(REQ))
+    assert receipt["actual_credits"] == 300
+
+
 def test_http_and_malformed_failures(tmp_path):
     with pytest.raises(ProviderError):
         _adapter(tmp_path / "a").__class__(tmp_path / "a2", transport=_transport(status=429),

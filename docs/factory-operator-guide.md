@@ -105,7 +105,23 @@ Automatic mode performs real intermediate checks (technical validity,
 duration/resolution coverage per asset, caption alignment, optional
 visual QC). Automated verdicts are labelled `automated` — never shown
 as human approval. A flagged final pauses the run with the issue and
-a resume path instead of passing silently.
+a resume path instead of passing silently. **Resolve a flagged QC**
+with *Accept after human review* (records your name as a human verdict)
+or *Recheck once* (one fresh paid review — never an unbounded loop).
+A `capability_unavailable` pause means something you asked for has no
+configured route; the pause block offers the explicit downgrade
+(*finish on technical checks only* / *finish without music*) — the
+run never silently weakens a requested capability.
+
+**Copy provenance (declared).** In automatic mode the control (A)
+speaks the seed's own words — verbatim transcript-derived narration is
+the close-adaptation contract, and B/C/D treatments may only rearrange
+source vocabulary, never invent facts. When generated copy cannot fit
+its beat at the voice's documented pace, the bounded repair reverts
+that one segment to the source-derived line rather than inventing
+words. This is a deliberate *close-copy* workflow: the handover's
+"original copy" requirement applies to authored scripts; making the
+exception an explicit per-run choice remains a follow-up (W02).
 
 ### Manual lane — work left to right through the tabs
 

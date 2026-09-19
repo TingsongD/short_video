@@ -50,6 +50,80 @@ SCRIPT = {"variants": {
 REVIEW = {"verdict": "pass", "notes": ["content matches script"]}
 
 
+def test_declared_uncertainty_needs_local_evidence():
+    """Transcript overlap is not visual evidence — a provider-declared
+    uncertain/unresolved beat keeps its confidence unless local machine
+    evidence (a detected scene boundary at its start, or the media head)
+    corroborates the interval."""
+    import copy as _copy
+    from modules.factory.autorun.review import auto_review_beats
+    payload = {"beats": [
+        {"id": "b0", "role": "hook", "start_s": 0, "end_s": 3,
+         "visual_event": "dog grabs ball", "confidence": "uncertain"},
+        {"id": "b1", "role": "body", "start_s": 3, "end_s": 6,
+         "visual_event": "dog runs", "confidence": "unresolved"},
+        {"id": "b2", "role": "body", "start_s": 6, "end_s": 9,
+         "visual_event": "dog drops ball", "confidence": "uncertain"}],
+        "transcript": [{"id": "t0", "start_s": 0, "end_s": 9,
+                        "text": "good dog"}]}
+    out = auto_review_beats(_copy.deepcopy(payload))
+    confs = {b["id"]: b["confidence"] for b in out["beats"]}
+    assert confs == {"b0": "reviewed",      # media head anchors it
+                     "b1": "unresolved",    # no local evidence
+                     "b2": "uncertain"}
+    out = auto_review_beats(
+        _copy.deepcopy(payload),
+        evidence={"boundaries": [{"t": 3.0}, {"t": 6.0}]})
+    confs = {b["id"]: b["confidence"] for b in out["beats"]}
+    assert confs == {"b0": "reviewed", "b1": "reviewed",
+                     "b2": "reviewed"}
+
+
+def test_failed_media_scan_never_passes(tmp_path):
+    """A scan that did not run cannot yield a passing review."""
+    from modules.factory.autorun import review as checks
+    mp4 = tmp_path / "v.mp4"
+    _moving_mp4(mp4, 3, size="180x320")
+    info = {"streams": [{"codec_type": "video", "codec_name": "h264",
+                         "width": 180, "height": 320}],
+            "duration_s": 3.0}
+    verdict, _ = checks.inspect_asset(
+        str(mp4), info, {"kind": "video", "min_duration_s": 3})
+    assert verdict == "pass", "baseline real scan must pass"
+
+    missing = lambda *a, **k: (_ for _ in ()).throw(
+        FileNotFoundError("ffmpeg"))
+    orig = checks.subprocess.run
+    checks.subprocess.run = missing
+    try:
+        verdict, notes = checks.inspect_asset(
+            str(mp4), info, {"kind": "video", "min_duration_s": 3})
+    finally:
+        checks.subprocess.run = orig
+    assert verdict == "uncertain"
+    assert "did not run" in notes[0]
+
+    def timed_out(*a, **k):
+        raise checks.subprocess.TimeoutExpired("ffmpeg", 30)
+    checks.subprocess.run = timed_out
+    try:
+        verdict, _ = checks.inspect_asset(
+            str(mp4), info, {"kind": "video", "min_duration_s": 3})
+    finally:
+        checks.subprocess.run = orig
+    assert verdict == "uncertain"
+
+    def nonzero(*a, **k):
+        return type("P", (), {"returncode": 1, "stderr": "boom"})()
+    checks.subprocess.run = nonzero
+    try:
+        verdict, _ = checks.inspect_asset(
+            str(mp4), info, {"kind": "video", "min_duration_s": 3})
+    finally:
+        checks.subprocess.run = orig
+    assert verdict == "uncertain"
+
+
 def test_machine_timeline_covers_verified_media_tail():
     payload = {"beats": [
         {"id": "b1", "role": "body", "start_s": 0.0, "end_s": 14.0,
@@ -199,7 +273,8 @@ class Hypit9:
                               "stderr": ""})()
 
 
-def stack(application, review_result=None, script_result=None):
+def stack(application, review_result=None, script_result=None,
+          analyze_result=None):
     """Wire the fake provider world the run needs."""
     s, c, act, w, root = application
     s.providers["jimeng_canvas"] = DiskGeneration(root)
@@ -217,7 +292,8 @@ def stack(application, review_result=None, script_result=None):
     auth = VertexAuth(lambda: {
         "kind": "oauth", "access_token": "tok", "project": "fixture",
         "identity": "i", "scopes": ["cloud-platform"]}, "fixture")
-    results = {"analyze": ANALYZE, "script": script_result or SCRIPT,
+    results = {"analyze": analyze_result or ANALYZE,
+               "script": script_result or SCRIPT,
                "review": review_result or REVIEW}
     s.providers["audiovisual_analysis"] = VertexAnalyzer(
         root / "analysis", s.artifacts, auth, "fixture", "fixture",
@@ -328,6 +404,288 @@ def test_autorun_seed_to_four_finished_variants(application):
     assert len(tts_ops) == 6          # 3 shared + B/C/D changed copies
     gens = list((root / "fake-generation").glob("*.json"))
     assert len(gens) == 6             # 3 shared + 3 changed pictures
+
+
+def test_autorun_crash_after_paid_dispatch_reuses_work(application):
+    """Losing the run-state write after queue committed must re-land on
+    the same plan/authorization/jobs — never mint a second paid scope."""
+    s, c, act, w, root = stack(application)
+    seed = make_seed(act, root)
+    run = launch(act, seed)
+    for _ in range(800):
+        if w.tick() is None:
+            if not s.db.conn.execute(
+                    "SELECT 1 FROM jobs WHERE status='ready' AND "
+                    "next_attempt_at IS NOT NULL").fetchone():
+                break
+            future = s.scheduler.clock() + timedelta(seconds=5)
+            s.scheduler.clock = lambda: future
+        st = autorun(s, run["id"])
+        if st.state.get("music_jobs"):
+            break
+    st = autorun(s, run["id"])
+    assert st.state.get("music_jobs"), "music dispatch never committed"
+    first_jobs = list(st.state["music_jobs"])
+    plan_id = st.state["music_plan"]
+    auths = s.db.conn.execute(
+        "SELECT COUNT(*) FROM records WHERE kind='authorization' AND "
+        "json_extract(body,'$.binding.id')=?", (plan_id,)).fetchone()[0]
+    assert auths == 1
+    auth_id = st.state["music_auth"]
+    # The lost write: run record survives without the dispatch state
+    # while plan, authorization and queued jobs remain committed.
+    for key in ("music_jobs", "music_plan", "music_auth"):
+        st.state.pop(key, None)
+    s.autorun._put(st)
+    drive(s, w)
+    st = autorun(s, run["id"])
+    assert st.status == "succeeded", (
+        f"stage {st.stage} pause {st.pause}")
+    assert st.state["music_jobs"] == first_jobs
+    assert s.db.conn.execute(
+        "SELECT COUNT(*) FROM records WHERE kind='authorization' AND "
+        "json_extract(body,'$.binding.id')=?", (plan_id,)).fetchone()[0] \
+        == 1, "a second authorization was minted for the same plan"
+    assert st.state["music_auth"] == auth_id
+    ops = json.loads((root / "music.json").read_text()).get("ops", {})
+    assert len(ops) == 1, "the music provider was charged twice"
+
+
+class HypitMany(Hypit9):
+    """Boundary evidence for a dense beat map: a detected cut at every
+    beat start so the machine-review gate has local corroboration."""
+
+    def __init__(self, n, seconds):
+        self._n, self._seconds = n, seconds
+
+    def boundaries(self, src):
+        return {"boundaries": [
+            {"t": i * self._seconds / self._n, "score": 0.8}
+            for i in range(1, self._n)]}
+
+
+def test_autorun_chunks_tts_plans_over_twenty_lines(application):
+    """Effect plans cap at 20 operations — a run needing more unique
+    narration lines must dispatch multiple persisted batches."""
+    n = 21
+    # b0–b12 are provider-uncertain and get anchored by the detected cut
+    # at each start (evidence caps at 12 boundaries); the provider marks
+    # the tail reviewed itself.
+    beats = [{"id": f"b{i}",
+              "role": "hook" if i == 0 else "cta" if i == n - 1
+                      else "body",
+              "start_s": i * 9 / n, "end_s": (i + 1) * 9 / n,
+              "visual_event": f"beat {i}",
+              "confidence": "uncertain" if i <= 12 else "reviewed"}
+             for i in range(n)]
+    analyze = {"beats": beats,
+               "transcript": [{"id": f"t{i}", "start_s": b["start_s"],
+                               "end_s": b["end_s"],
+                               "text": f"source line {i}"}
+                              for i, b in enumerate(beats)],
+               "music": {"role": "bed"}, "uncertainty": []}
+    script = {"variants": {
+        "A": {f"b{i}": f"unique line number {i}" for i in range(n)},
+        "B": {"b0": "changed hook copy"},
+        "C": {"b10": "changed body copy"},
+        "D": {"b20": "changed ending copy"}},
+        "hypotheses": {"B": "h", "C": "h", "D": "h"}}
+    s, c, act, w, root = stack(application, analyze_result=analyze,
+                               script_result=script)
+    s.ref_analysis.hypit = HypitMany(n, 9)
+    seed = make_seed(act, root)
+    run = launch(act, seed)
+    for _ in range(800):
+        out = w.tick()
+        st = autorun(s, run["id"]).state
+        if st.get("tts_batch_tags"):
+            break
+        if out is None:
+            if s.db.conn.execute(
+                    "SELECT 1 FROM jobs WHERE status='ready' AND "
+                    "next_attempt_at IS NOT NULL").fetchone():
+                future = s.scheduler.clock() + timedelta(seconds=5)
+                s.scheduler.clock = lambda: future
+            else:
+                break
+    st = autorun(s, run["id"]).state
+    # 24 unique lines → two immutable plans, each persisted under its own
+    # tag so a restart lands on the same paid work.
+    assert st["tts_batch_tags"] == ["tts", "tts_1"]
+    assert len(st["tts_synth_jobs"]) == n + 3
+    assert st["tts_plan"] != st["tts_1_plan"]
+    assert st["tts_auth"] and st["tts_1_auth"]
+    assert len(st["tts_jobs"]) == 20 and len(st["tts_1_jobs"]) == 4
+
+
+def test_autorun_repeated_line_binds_every_segment(application):
+    """One synthesis is bought per unique line, but every segment that
+    speaks it gets its own fitted speech record and attachment."""
+    repeated = dict(SCRIPT)
+    repeated["variants"] = {k: dict(v) for k, v in SCRIPT["variants"].items()}
+    repeated["variants"]["A"] = dict(SCRIPT["variants"]["A"])
+    repeated["variants"]["A"]["b2"] = repeated["variants"]["A"]["b0"]
+    s, c, act, w, root = stack(application, script_result=repeated)
+    seed = make_seed(act, root)
+    run = launch(act, seed)
+    drive(s, w)
+    run = autorun(s, run["id"])
+    assert run.status == "succeeded", run.pause
+    results = s.experiment_results(run.state["experiment_id"])
+    va = next(v for v in results["variants"] if v["variant_key"] == "A")
+    segs = {seg["id"]: seg for seg in va["segments"]}
+    assert segs["b0"]["speech"]["artifact_id"]
+    assert segs["b2"]["speech"]["artifact_id"]
+    assert segs["b0"]["captions"]
+    assert segs["b2"]["captions"]
+    assert segs["b0"]["speech"]["artifact_id"] == \
+        segs["b2"]["speech"]["artifact_id"]
+    # Every speaking segment across A–D is a fitted speech record —
+    # 12 occurrences in total — while the shared line was synthesized
+    # once: 5 paid operations for 5 unique normalized texts.
+    assert len(s.db.conn.execute(
+        "SELECT id FROM records WHERE kind='speechsegment'"
+        ).fetchall()) == 12
+    tts_ops = json.loads((root / "tts.json").read_text())["ops"]
+    assert len(tts_ops) == 5
+
+
+def test_autorun_flagged_qc_needs_operator_resolution(application):
+    """A flagged final must not re-read the same machine verdict forever:
+    a plain resume re-pauses without duplicating reviews, recheck buys one
+    fresh look, and accept records the human decision that ends the run."""
+    flagged = {"verdict": "uncertain", "notes": ["murky ending frame"]}
+    s, c, act, w, root = stack(application, review_result=flagged)
+    seed = make_seed(act, root)
+    rid = launch(act, seed)["id"]
+    drive(s, w)
+    run = autorun(s, rid)
+    assert run.status == "paused" and run.pause["code"] == \
+        "final_qc_flagged", (run.status, run.pause)
+    n_reviews = len(s.collection("reviews"))
+
+    # Plain resume: identical verdicts, same pause, no duplicate rows.
+    r = act("post", f"/api/autoruns/{rid}/resume", {})
+    assert r.status_code == 200, r.text
+    drive(s, w)
+    run = autorun(s, rid)
+    assert run.status == "paused" and run.pause["code"] == \
+        "final_qc_flagged"
+    assert len(s.collection("reviews")) == n_reviews
+
+    # Recheck: a fresh paid review once; the same verdict flags again.
+    r = act("post", f"/api/autoruns/{rid}/resume",
+            {"resolve_qc": "recheck"})
+    assert r.status_code == 200, r.text
+    drive(s, w)
+    run = autorun(s, rid)
+    assert run.pause.get("code") == "final_qc_flagged"
+    # A second recheck of the same flagged variant is refused — the
+    # bounded allowance is exhausted, not silently repeated.
+    r = act("post", f"/api/autoruns/{rid}/resume",
+            {"resolve_qc": "recheck"})
+    assert r.status_code != 200
+    run = autorun(s, rid)
+    assert run.pause.get("code") == "final_qc_flagged"
+
+    # Human acceptance is durable and ends the run.
+    r = act("post", f"/api/autoruns/{rid}/resume",
+            {"resolve_qc": "accept", "reviewer": "operator-7"})
+    assert r.status_code == 200, r.text
+    drive(s, w)
+    run = autorun(s, rid)
+    assert run.status == "succeeded", run.pause
+    human = [x for x in s.collection("reviews")
+             if x.get("reviewer") == "operator-7"]
+    assert len(human) == 4
+    assert all(x.get("reviewer_type") == "human" for x in human)
+
+
+def test_autorun_resume_updates_limits_and_valid_until(application):
+    """set_params on resume is the audited way out of a limit pause —
+    the run continues under the new authority, with a note."""
+    s, c, act, w, root = stack(application)
+    seed = make_seed(act, root)
+    rid = launch(act, seed,
+                 limits={"elevenlabs_credits": 1})["id"]
+    drive(s, w)
+    run = autorun(s, rid)
+    assert run.status == "paused", run.stage
+    assert run.pause["code"] == "limit_too_low", run.pause
+    # An expired authorization renewal is rejected.
+    past = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    r = act("post", f"/api/autoruns/{rid}/resume",
+            {"set_params": {"valid_until": past}})
+    assert r.status_code != 200
+    run = autorun(s, rid)
+    assert run.status == "paused"
+    future = (datetime.now(timezone.utc) + timedelta(hours=4)).isoformat()
+    r = act("post", f"/api/autoruns/{rid}/resume",
+            {"set_params": {"limits": {"elevenlabs_credits": 500},
+                            "valid_until": future}})
+    assert r.status_code == 200, r.text
+    drive(s, w)
+    run = autorun(s, rid)
+    assert run.status == "succeeded", run.pause
+    assert run.params["limits"]["elevenlabs_credits"] == 500
+    assert run.params["valid_until"] == future
+    assert any("operator updated limits" in n for n in run.notes)
+
+
+def test_autorun_pauses_when_requested_music_unavailable(application):
+    """Requested generated music + no provider route = explicit pause;
+    the operator may then declare the no-music fallback."""
+    s, c, act, w, root = stack(application)
+    del s.providers["generated_music"]
+    seed = make_seed(act, root)
+    rid = launch(act, seed)["id"]
+    drive(s, w)
+    run = autorun(s, rid)
+    assert run.status == "paused" and run.stage == "music"
+    assert run.pause["code"] == "capability_unavailable"
+    r = act("post", f"/api/autoruns/{rid}/resume",
+            {"set_params": {"generate_music": False}})
+    assert r.status_code == 200, r.text
+    drive(s, w)
+    run = autorun(s, rid)
+    assert run.status == "succeeded", run.pause
+    assert any("no music bed" in n for n in run.notes)
+
+
+def test_autorun_pauses_when_visual_qc_route_lost(application):
+    """Requested visual QC with a missing provider pauses; the operator
+    may explicitly finish on technical checks only."""
+    s, c, act, w, root = stack(application)
+    seed = make_seed(act, root)
+    rid = launch(act, seed)["id"]
+    # The same route serves upstream analysis; lose it mid-run.
+    provider = s.providers["audiovisual_analysis"]
+    for _ in range(400):
+        out = w.tick()
+        run = autorun(s, rid)
+        if run.stage in ("compose", "final_qc") or \
+                run.status != "running":
+            break
+        if out is None:
+            if s.db.conn.execute(
+                    "SELECT 1 FROM jobs WHERE status='ready' AND "
+                    "next_attempt_at IS NOT NULL").fetchone():
+                future = s.scheduler.clock() + timedelta(seconds=5)
+                s.scheduler.clock = lambda: future
+            else:
+                break
+    del s.providers["audiovisual_analysis"]
+    drive(s, w)
+    run = autorun(s, rid)
+    assert run.status == "paused" and run.stage == "final_qc"
+    assert run.pause["code"] == "capability_unavailable"
+    r = act("post", f"/api/autoruns/{rid}/resume",
+            {"set_params": {"visual_reviews": False}})
+    assert r.status_code == 200, r.text
+    drive(s, w)
+    run = autorun(s, rid)
+    assert run.status == "succeeded", run.pause
+    assert any("technical checks only" in n for n in run.notes)
 
 
 def test_autorun_pauses_for_missing_media(application):
@@ -660,6 +1018,51 @@ def test_autorun_flagged_final_pauses(application):
     assert run.status == "paused"
     assert run.pause["code"] == "final_qc_flagged"
     assert "script" in run.pause["detail"]
+
+
+def test_final_qc_never_stamps_stale_artifact(application):
+    """A final replaced after its review was dispatched earns its own
+    verdict — the old machine review is never stamped onto new bytes."""
+    s, c, act, w, root = stack(application)
+    seed = make_seed(act, root)
+    run = launch(act, seed)
+    for _ in range(800):
+        if w.tick() is None:
+            if not s.db.conn.execute(
+                    "SELECT 1 FROM jobs WHERE status='ready' AND "
+                    "next_attempt_at IS NOT NULL").fetchone():
+                break
+            future = s.scheduler.clock() + timedelta(seconds=5)
+            s.scheduler.clock = lambda: future
+        st = autorun(s, run["id"])
+        if len(st.state.get("qc_submitted") or {}) == 4:
+            break
+    st = autorun(s, run["id"])
+    assert len(st.state.get("qc_submitted") or {}) == 4
+    eid = st.state["experiment_id"]
+    old_final = st.state["qc_submitted"]["A"]["artifact_id"]
+    swap = root / "swap.mp4"
+    _moving_mp4(swap, 9, size="180x320", color="0xcc3366")
+    art = s.artifacts.intake_file(swap, provenance="operator_replacement",
+                                source_key="swap", requested_kind="video")
+    key = f"final:{eid}:a"
+    row = s.db.conn.execute("SELECT value FROM meta WHERE key=?",
+                            (key,)).fetchone()
+    fin = json.loads(row[0])
+    fin["artifact_id"], fin["sha256"] = art.id, art.sha256
+    with s.db.uow() as u:
+        u.conn.execute("INSERT OR REPLACE INTO meta(key,value) "
+                       "VALUES(?,?)", (key, json.dumps(fin)))
+    drive(s, w)
+    st = autorun(s, run["id"])
+    assert st.status == "succeeded", st.pause
+    assert "A" in (st.state.get("qc_resubmitted") or [])
+    reviews = s.collection("reviews")
+    stamped = [r for r in reviews if r["check_type"] == "automated_visual"]
+    bound = {r["binding"]["artifact_id"] for r in stamped}
+    assert art.id in bound, "the replacement final was never reviewed"
+    assert old_final not in bound, \
+        "a verdict was stamped onto bytes that are no longer the final"
 
 
 def test_compare_hides_previous_revision_finals(application):

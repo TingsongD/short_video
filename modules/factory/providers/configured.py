@@ -145,6 +145,12 @@ def configured_auxiliary(root,data,mode,artifacts=None):
         analytics=FactoryAnalyticsClient(transport=transport)
         from .reporting import ReportingSetup
         providers["youtube_reporting"]=ReportingSetup(Path(data)/"providers/reporting",analytics,identity)
+        if publisher is not None and publisher.verifier is None:
+            # Verified manual registration needs platform-native post
+            # inspection; the analytics route's OAuth transport already
+            # scopes youtube.readonly, so it can back the verifier.
+            from ..integrations.publisher import youtube_post_verifier
+            publisher.verifier=youtube_post_verifier(transport)
     for name,adapter in providers.items():
         connection=settings.get('youtube_analytics' if name=='youtube_reporting' else name,{})
         adapter.qualified=True

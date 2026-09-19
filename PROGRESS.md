@@ -1,17 +1,24 @@
 # PROGRESS
 
-## Factory program — offline implementation complete, not live-qualified
+## Factory program — current status index
 
-Publishing/learning waves W0–W9 implemented; S0–S8 and N01–N20 repairs
-landed; the 2026-09-18 independent review's 15 findings (Q01–Q15) are
-all patched — see [REVIEW-2026-09-18](docs/factory-reports/REVIEW-2026-09-18.md)
-resolution table. Evidence: **1062 backend + 29 frontend tests green**,
-7 inverted defect probes now assert repaired behavior,
-`tests/test_factory_review_fixes.py` regression coverage.
-Not qualified for unattended use: live provider qualification, a real
-four-variant journey with elapsed readbacks, and F-module human
-sign-offs remain open (tracker below, review §"still open").
-Legacy G-gates and production records remain independent.
+**As of 2026-09-19:** the automatic seed→A–D pipeline (Auto tab) runs
+end-to-end with durable autorun records, paid-effect plans, budgets,
+holds and honest pauses; one real four-variant run completed locally
+(Drive delivery was aborted by operator decision — it remains an abort).
+The 2026-09-19 review's 16 code findings (C01–C16) are patched with
+regression coverage — see
+[REVIEW-2026-09-19](docs/factory-reports/REVIEW-2026-09-19.md); the
+2026-09-18 review's Q01–Q15 remain patched. The dated entries below are
+historical evidence — the authoritative newest-first narrative is
+[DEV_LOG.md](DEV_LOG.md).
+
+Not qualified for unattended use: verified Drive delivery + cleanup is
+not yet wired to autorun completion (W01), live publication/analytics/
+learning qualification is incomplete (W04), provider actuals are not
+reconciled against the recorded holds/overrun (W03), and the copy-
+provenance exception needs an explicit run-level choice (W02). Legacy
+G-gates and production records remain independent.
 
 ## Wave 0 — Foundation & Contracts ✅ DONE (2026-09-14)
 

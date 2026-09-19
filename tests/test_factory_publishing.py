@@ -397,6 +397,66 @@ def test_manual_registration_verifies_real_post(db):
     assert p.post_url == "https://youtu.be/yt-man1"
 
 
+def test_manual_registration_without_verifier_is_capability_error(db):
+    """A publisher built without a platform verifier must surface the
+    gap as a capability error at registration — and in readiness — not
+    as an opaque transport failure mid-flow."""
+    adapter = UploadPostPublisher(api_key="k", user="acct-main",
+                                  transport=lambda r: {})
+    assert "platform_verifier_unavailable" in adapter.readiness()[
+        "problems"]
+    accounts = {"youtube:acct-main": "acct-main"}
+    svc = PublishingService(db, publisher=adapter,
+                            effects=FixtureEffects(db, Executor(db)),
+                            accounts=accounts)
+    with pytest.raises(ContractError) as e:
+        svc.register_manual(
+            "pub-m1", variant_plan_id="vp-1", final_sha256=SHA,
+            platform="youtube", account_id="acct-main",
+            remote_post_id="yt-man1",
+            published_at="2026-09-10T09:00:00+00:00")
+    assert e.value.code == "platform_verifier_unavailable"
+    # verify=False stays an explicit unverified lane.
+    p = svc.register_manual(
+        "pub-m2", variant_plan_id="vp-1", final_sha256=SHA,
+        platform="youtube", account_id="acct-main",
+        remote_post_id="yt-man1",
+        published_at="2026-09-10T09:00:00+00:00", verify=False)
+    assert p.status == "unverified"
+
+
+def test_youtube_post_verifier_maps_native_status():
+    from modules.factory.integrations.publisher import (
+        youtube_post_verifier, PublishTransportError)
+    seen = {}
+
+    def transport(request):
+        seen["url"] = request["url"]
+        return {"status": 200, "body": {"items": [{
+            "id": "yt-1",
+            "status": {"privacyStatus": "public",
+                       "uploadStatus": "processed"},
+            "snippet": {"channelId": "chan-9",
+                        "publishedAt": "2026-09-10T09:00:00Z"}}]}}
+
+    post = youtube_post_verifier(transport)("yt-1")
+    assert post["status"] == "public" and post["platform"] == "youtube"
+    assert post["account_id"] == "chan-9"
+    assert post["post_url"].startswith("https://")
+    assert post["published_at"]
+    assert "part=status%2Csnippet" in seen["url"] or \
+        "part=status,snippet" in seen["url"]
+
+    def empty(request):
+        return {"status": 200, "body": {"items": []}}
+    assert youtube_post_verifier(empty)("yt-ghost") is None
+
+    def down(request):
+        return {"status": 503, "body": {}}
+    with pytest.raises(PublishTransportError):
+        youtube_post_verifier(down)("yt-1")
+
+
 def test_manual_rejects_unverified_or_wrong_account(db):
     pub = FakePublisher()
     svc = _svc(db, pub)

@@ -7,6 +7,257 @@ decisions) is my direct work.
 
 ---
 
+## 2026-09-19 — Review-finding patch: all 16 items (REVIEW-2026-09-19)
+
+Second independent review found 16 code/recovery issues; all verified
+against source and patched in dependency order, each with regression
+coverage. Offline only — no paid calls in tests.
+
+### Paid-work atomicity (C01, C02)
+
+- Effect plans are now content-keyed (`plan_hash` → stable id) with
+  get-or-create semantics; `_run_effect` persists plan id, authorization
+  id and job ids **between** commits, and reuses an existing
+  authorization when `scope_hash` matches — a crash after queue commit
+  no longer mints a second plan/auth/job set. Explicit budget-blocked
+  resets bump `{tag}_plan_seq` so a deliberate re-plan never reuses dead
+  job identities.
+- Music adapter no longer maps `x-credits-remaining` (a balance) to
+  `actual_credits`; missing actuals stay unknown instead of becoming
+  false spend.
+
+### Fail-closed review (C03, C04, C15, C16)
+
+- Final QC dispatch records `{artifact_id, sha256}` per variant; a final
+  replaced after submission discards the stale verdict, reviews the new
+  bytes once, then pauses — an old review can never stamp new bytes.
+- `inspect_asset` fails closed: missing ffmpeg, timeout and nonzero exit
+  now produce `uncertain` verdicts with explicit notes — a scan that did
+  not run cannot pass.
+- `auto_review_beats` promotes provider-declared `uncertain`/`unresolved`
+  beats only when local evidence anchors the start edge (detected scene
+  cut or media head); transcript overlap alone no longer manufactures
+  "reviewed".
+- Timeline coverage checks the full interval — union of segment ranges
+  must cover `[0, duration]` without gaps or overlaps, replacing the
+  three-point probe.
+
+### Speech correctness (C05, C06, C14)
+
+- TTS synthesis is bought once per normalized text while fit/attach run
+  per segment occurrence — repeated lines across A–D each get their own
+  speech record, target interval and captions off one paid synthesis.
+- Fresh TTS requests are chunked into ≤20-op plans (`tts`, `tts_1`, …),
+  each persisted under its own tag for clean restart/repair.
+- ElevenLabs alignment accepts `normalized_alignment` equivalent to the
+  request ("two" vs "2") — paid successes are no longer rejected for
+  provider-side normalization.
+
+### Honest pause/resume (C07, C08, C09)
+
+- Flagged final QC: plain resume re-reads recorded verdicts (no
+  duplicates); `resolve_qc=accept` writes a named human verdict and
+  finishes; `resolve_qc=recheck` buys exactly one fresh paid review.
+- `set_params` on resume audits changes to `limits`, `valid_until`,
+  `visual_reviews`, `generate_music` — the pause's stated recovery is
+  now actually actionable; the dashboard pause block exposes them.
+- Requested-but-unavailable music or visual QC pauses with
+  `capability_unavailable` and an explicit declared-fallback path
+  instead of a silent note.
+
+### Ops/accounting escape hatches (C10–C13)
+
+- `POST /api/reservations/{id}/adjust` upgrades a settlement up the
+  confirmation ladder (estimate → reported → invoice); the prior entry
+  is preserved in a `settlement_adjusted` event. Downgrades refused.
+- `POST /api/budgets/resolve-overrun` lifts the `spend_overrun` dispatch
+  block with operator + evidence + resolution recorded; the overrun
+  event stays in the ledger.
+- `factory-up.sh`/`factory-down.sh` now launch via the checkout's
+  absolute `.venv` path, record `.run/*.pid`, and match only this
+  checkout's processes — a sibling repo's workers can no longer be
+  killed by a stray `pkill -f "modules.factory.cli"`.
+- `UploadPostPublisher` gains a real `youtube_post_verifier` (Data API
+  `videos.list` over the qualified analytics transport, wired in
+  `configured.py`); a missing verifier is reported by `readiness()` and
+  rejected as `platform_verifier_unavailable` — a capability error, not
+  a mid-flow transport crash.
+
+### Docs (W02, W06)
+
+- Operator guide documents the declared copy provenance (control A is
+  verbatim source-derived close adaptation; fit fallback reverts to
+  source copy, never invented words) and the new resume resolutions.
+- DEV_LOG order restored to newest-on-top; PROGRESS header is now a
+  current-status index pointing here. W01/W03–W05 and L01–L04 remain
+  recorded follow-ups.
+
+### Verification
+
+- New regression tests: C01 crash-resume dedupe, C02 balance≠charge,
+  C03 stale-final resubmit, C04 scan failures, C05 repeated-line
+  attachment, C06 two-batch dispatch, C07 flag→recheck→accept,
+  C08 limit/param updates, C09 both capability pauses, C10 adjustment
+  ladder, C11 overrun resolve, C13 verifier surface, C14 normalization,
+  C15 evidence anchoring, C16 interval coverage.
+- Backend: **1105 passed, 0 failed** (full suite, ~15min).
+- Dashboard: 30 tests passed; `npm run build` clean.
+
+---
+
+## 2026-09-19 — Automatic seed → A–D pipeline ("Auto" tab)
+
+### What was built
+
+- `modules/factory/autorun/` — durable orchestrator: an `autorun` record
+  plus one self-deferring `auto_step` worker job drives intake → evidence →
+  video_analysis → sections → analysis_review → blueprint → template →
+  script → music → draft → tts → quote → authorize → run → footage →
+  compose → final_qc → done. Waits defer through the scheduler (survives
+  worker restarts, no busy loop); failures pause with code/detail/action.
+- `autorun/scripts.py` — deterministic adaptation: A close control, B hook,
+  C body, D ending; each declares changed factor, hypothesis, primary
+  metric and changed region. Optional qualified `adapt_script` LLM route;
+  failure pauses (`script_llm_failed`) and resume falls back to
+  deterministic scripts instead of re-dispatching a dead job.
+- `autorun/review.py` — automated asset/final inspection (streams, duration,
+  resolution, black/frozen frames) written as `reviewer_type="automated"`
+  Review records bound to artifact id+sha and plan hash; the production
+  selector resolves awaiting_review nodes from these records.
+- Vertex adapter gained `adapt_script` and `review_final` tasks;
+  `generated_music` added to the Authorization provider whitelist;
+  `QualityService.record_verdict` accepts `reviewer_type`.
+- Finals stamped with `plan_id`/`experiment_revision`; `experiment_results`
+  exposes only current-plan finals — older renders can never be relabelled
+  as a new revision.
+- Budget semantics fixed: authority caps cover unit totals; exhausted
+  budgets pause as `budget_exhausted`; resume accepts `budget_ids`
+  (replace) / `add_budget_ids` (add), validated and audited.
+- Dashboard: Auto tab (seed link + media attach, voice, budget checks,
+  per-operation limits, music/visual-QC toggles, stage bar, pause card
+  with resume-including-budgets); Compare shows pending states and
+  per-variant hypotheses, changed sections and QC checks.
+- API: `POST /api/autoruns`, `GET /api/autoruns/{id}`,
+  `POST /api/autoruns/{id}/resume`; `autoruns` collection.
+
+### Verification
+
+- `tests/test_factory_autorun.py`: 8 passed (offline, fully mocked) —
+  seed→4 renders, rollback, revision scoping, receipt backup/restore,
+  caller-process loss, malformed command rejection, render capacity after
+  expired worker, OAuth redaction, fractional frame-rate caption clocks.
+- Full backend suite: 1075 passed; the pre-existing
+  `test_full_publish_learn_next_round_journey` failure at HEAD
+  (expected `provisional_winner`, got `no_improvement`) deselected —
+  unrelated, reproduced on a clean stash.
+- Dashboard: 30 tests + production build green.
+- Live smoke: `POST /api/autoruns` over the real API created a durable run;
+  the worker advanced it to an honest `missing_source_media` pause with a
+  resume action — zero paid calls.
+
+### Honest boundaries
+
+- Real paid end-to-end (live Vertex/Jimeng/TTS) not yet run — needs an
+  authorized budget covering the exact run plus Drive-delivery completion.
+- No paid fallback was inferred; every pause is explicit.
+
+## 2026-09-19 — Autorun hardening: holds UI, self-repair, honest pauses
+
+Follow-up fixes after the first real end-to-end run (`auto-5d3717e`,
+which succeeded but needed 16 manual resumes).
+
+### Spending authority
+
+- `GET /api/reservations` lists open holds; `POST
+  /api/reservations/{id}/settle|release` let an operator close a hold
+  with evidence — settle at the actual charge (`invoice_confirmed`,
+  `usage_estimate`), release only when the attempt verifiably never
+  charged (failed/cancelled/prepared or no attempt). Both audited with
+  reviewer identity.
+- Budgets tab gained an **Open holds** table driving those routes.
+- Resume copy and the autorun coverage check now state the real rule:
+  an aggregate ceiling is held in full on every applicable operation —
+  adding a second aggregate budget does not add headroom.
+
+### Click-once reliability
+
+- Script adaptation now word-budgets LLM copy against each beat's
+  seconds; over-budget lines fall back to source-derived copy with a
+  note instead of failing the measured fit downstream.
+- Measured speech-fit failures trigger a bounded repair (swap that one
+  segment to source-derived copy on a new draft revision); one repair
+  per segment, honest pause after that.
+- TTS results are reused across revisions by normalized text — editing
+  one beat no longer re-buys every other line.
+- Local compose timeouts (`TimeoutExpired`/`RenderTimeout` on `cmp`
+  jobs) are bounded scheduler retries, not pauses; `raise_worker_errors`
+  no longer re-raises handled retries.
+
+### Observability and ops
+
+- Pause history persists: every pause keeps code + detail + action in
+  `run.progress`, shown under **Pause history** after resume.
+- `done` now carries an explicit note that it is not verified Drive
+  delivery; disabled visual QC is noted too.
+- Worker rides through `database is locked` contention with bounded
+  backoff; `factory-up.sh` verifies the worker is still alive after
+  launch and prints the log tail if it died.
+- `GET /api/assets/{id}/media` returns 404 `unknown_artifact` instead
+  of a 500.
+- `tsconfig.tsbuildinfo` untracked (generated build cache).
+- Fixed two date-anchored tests: `test_q07_observe_job_defers_then_completes`
+  (pinned the scheduler clock) and
+  `test_full_publish_learn_next_round_journey` (the deliberate youtube
+  collect must observe after the readback clock's OBS_AT or ranking
+  prefers the stale auto-collected snapshot).
+
+### Verification
+
+- Full backend suite: 1085 passed, 0 failed (previously-failing
+  time-bomb tests included).
+- Dashboard: 30 tests + production build green.
+
+## 2026-09-19 — Production DB cleanup after first live run
+
+Operator-level maintenance on `data/factory/factory.db` following the
+`auto-5d3717e` run; no code changes.
+
+### Holds settled
+
+- All **40 open reservations settled** at their reserved amounts with
+  `kind=usage_estimate` via the new operator settle path — every linked
+  attempt was `downloaded`/`succeeded`, so the paid work verifiably ran.
+  Audited as `reservation_settled_by_operator` events.
+- **Overspend exposed:** `syp34-vertex-approved-4590780` is over its
+  18.37M µUSD cap by ~2.54M — repeated authorization rounds each held
+  against the aggregate ceiling and settled usage exceeded it. The
+  negative `available` is intentional honest accounting; do not
+  authorize further work under that budget.
+- Remaining headroom: `syp34-vertex-approved-6886170` ~522K µUSD,
+  `lezys-tts-approved-2000` 325 credits.
+
+### Aborted delivery and smoke residue
+
+- The 4 `awaiting_review` delivery jobs for the autorun experiment's
+  plan (`plan-a8d8a661`) cancelled — operator aborted Drive delivery —
+  recorded via a `delivery_aborted` event. Twenty pending delivery jobs
+  on other experiments (`exp-dog-ball-*`, `exp-ev-ranking-01`,
+  `exp-syp34-*`) were left untouched.
+- Smoke-test residue removed: autorun `auto-d91f3120c63a4f62`, its
+  autostep command record and job, and seed `seed-youtube-5f6b0b4e201f2a7e`.
+  The append-only event ledger was retained.
+
+### Shutdown
+
+- Full stack stopped: API (:8100), worker, hypit runtime worker, and
+  the whisperx.local program (:8765). `media.local`/`hyperframes.local`
+  keep stale "ready" records in the runtime DB but hold no ports —
+  reconciled on the next `runtime up`. Logs truncated.
+- Docs note added: `factory-down.sh` stops the API and worker only;
+  hypit programs need `./scripts/hypit.sh programs down`.
+
+---
+
 ## 2026-09-18 — One-command stack launch
 
 User asked to collapse the multi-terminal startup. Added
@@ -1208,3 +1459,4 @@ Operator-level maintenance on `data/factory/factory.db` following the
   reconciled on the next `runtime up`. Logs truncated.
 - Docs note added: `factory-down.sh` stops the API and worker only;
   hypit programs need `./scripts/hypit.sh programs down`.
+
