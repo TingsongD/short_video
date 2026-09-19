@@ -23,8 +23,15 @@ if pgrep -f "modules.factory.cli worker" >/dev/null; then
   echo "  worker: already running (only one may run)"
 else
   nohup .venv/bin/python -m modules.factory.cli worker >> .run/worker.log 2>&1 &
+  worker_pid=$!
   disown
-  echo "  worker: started (pid $!) -> .run/worker.log"
+  sleep 2
+  if kill -0 "$worker_pid" 2>/dev/null; then
+    echo "  worker: started (pid $worker_pid) -> .run/worker.log"
+  else
+    echo "  worker: EXITED within 2s of launch — check .run/worker.log" >&2
+    tail -5 .run/worker.log >&2 || true
+  fi
 fi
 
 echo "== waiting for api health =="

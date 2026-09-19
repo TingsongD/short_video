@@ -292,6 +292,10 @@ def test_q07_observe_job_defers_then_completes(db, tmp_path):
         "file_bytes": 0, "video_url": "",
         "steps": ["scheduled"], "i": 0}
     sched = Scheduler(db)
+    # The observe path reads the scheduler's wall clock — pin it to the
+    # fake's timeline or the deferral window decays in real time.
+    sched.clock = lambda: datetime.fromisoformat(
+        "2026-09-18T09:00:00+00:00")
     worker = ApplicationWorker(SimpleNamespace(
         db=db, scheduler=sched, publishing=svc, commands=commands))
     job = {"id": "job-obs", "fencing_token": 1}
@@ -302,6 +306,8 @@ def test_q07_observe_job_defers_then_completes(db, tmp_path):
     # The remote fires at its instant; the next poll completes and the
     # public transition has already scheduled checkpoints via on_public.
     fake.now_fn = lambda: "2026-09-18T11:00:00+00:00"
+    sched.clock = lambda: datetime.fromisoformat(
+        "2026-09-18T11:00:00+00:00")
     out = worker.execute("publication_observe",
                          {"publication_id": "pub-s"}, job)
     assert out.get("status") != "pending"

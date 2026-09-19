@@ -1113,3 +1113,59 @@ in progress” label was also corrected to match the completed evidence.
 - Real paid end-to-end (live Vertex/Jimeng/TTS) not yet run — needs an
   authorized budget covering the exact run plus Drive-delivery completion.
 - No paid fallback was inferred; every pause is explicit.
+
+## 2026-09-19 — Autorun hardening: holds UI, self-repair, honest pauses
+
+Follow-up fixes after the first real end-to-end run (`auto-5d3717e`,
+which succeeded but needed 16 manual resumes).
+
+### Spending authority
+
+- `GET /api/reservations` lists open holds; `POST
+  /api/reservations/{id}/settle|release` let an operator close a hold
+  with evidence — settle at the actual charge (`invoice_confirmed`,
+  `usage_estimate`), release only when the attempt verifiably never
+  charged (failed/cancelled/prepared or no attempt). Both audited with
+  reviewer identity.
+- Budgets tab gained an **Open holds** table driving those routes.
+- Resume copy and the autorun coverage check now state the real rule:
+  an aggregate ceiling is held in full on every applicable operation —
+  adding a second aggregate budget does not add headroom.
+
+### Click-once reliability
+
+- Script adaptation now word-budgets LLM copy against each beat's
+  seconds; over-budget lines fall back to source-derived copy with a
+  note instead of failing the measured fit downstream.
+- Measured speech-fit failures trigger a bounded repair (swap that one
+  segment to source-derived copy on a new draft revision); one repair
+  per segment, honest pause after that.
+- TTS results are reused across revisions by normalized text — editing
+  one beat no longer re-buys every other line.
+- Local compose timeouts (`TimeoutExpired`/`RenderTimeout` on `cmp`
+  jobs) are bounded scheduler retries, not pauses; `raise_worker_errors`
+  no longer re-raises handled retries.
+
+### Observability and ops
+
+- Pause history persists: every pause keeps code + detail + action in
+  `run.progress`, shown under **Pause history** after resume.
+- `done` now carries an explicit note that it is not verified Drive
+  delivery; disabled visual QC is noted too.
+- Worker rides through `database is locked` contention with bounded
+  backoff; `factory-up.sh` verifies the worker is still alive after
+  launch and prints the log tail if it died.
+- `GET /api/assets/{id}/media` returns 404 `unknown_artifact` instead
+  of a 500.
+- `tsconfig.tsbuildinfo` untracked (generated build cache).
+- Fixed two date-anchored tests: `test_q07_observe_job_defers_then_completes`
+  (pinned the scheduler clock) and
+  `test_full_publish_learn_next_round_journey` (the deliberate youtube
+  collect must observe after the readback clock's OBS_AT or ranking
+  prefers the stale auto-collected snapshot).
+
+### Verification
+
+- Full backend suite: 1085 passed, 0 failed (previously-failing
+  time-bomb tests included).
+- Dashboard: 30 tests + production build green.

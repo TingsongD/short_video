@@ -11,6 +11,7 @@ Pauses are the product: a missing choice, exhausted spend authority, or
 a problem automation must not paper over. Each pause carries a plain
 code, detail, and the action that resumes the run.
 """
+import copy
 import json
 import math
 import re
@@ -164,9 +165,15 @@ class AutoRunService:
             if bid not in run.params["budget_ids"]:
                 self.budgets.available(bid)       # raises unknown_budget
                 run.params["budget_ids"].append(bid)
+                scope = self.s.db.conn.execute(
+                    "SELECT scope FROM budgets WHERE id=?", (bid,)
+                ).fetchone()[0]
                 run.notes.append(
-                    f"spending authority extended: budget {bid} added "
-                    "by operator at resume")
+                    f"funded scope widened: budget {bid} ({scope}) added "
+                    "by operator at resume"
+                    + (" — an aggregate ceiling is held in full alongside "
+                       "the others; it does not raise them"
+                       if scope == "aggregate" else ""))
         self._reset_budget_blocked_effect(run)
         run.status = "running"
         run.pause = {}
@@ -318,7 +325,10 @@ class AutoRunService:
         run.status = "paused"
         run.pause = {"code": code, "detail": detail, "action": action,
                      "stage": run.stage, "at": utcnow()}
-        self._mark(run, run.stage, "paused", code=code)
+        # Keep the full explanation in progress history — resume clears
+        # run.pause, and the dashboard has to reconstruct what happened.
+        self._mark(run, run.stage, "paused", code=code, detail=detail,
+                   action=action)
         return "paused"
 
     def _jobs(self, run, ids, fail_code="job_failed"):
@@ -346,16 +356,38 @@ class AutoRunService:
 
     # -------------------------------------------------- budget checks
 
-    def _cover(self, run, totals):
-        units = {r["id"]: r["unit"] for r in self.s.db.conn.execute(
-            "SELECT id, unit FROM budgets").fetchall()}
+    def _cover(self, run, totals, providers=()):
+        """Mirror the reservation rule before any paid dispatch: a hold is
+        placed in full on every applicable budget — each selected one, every
+        aggregate ceiling of the unit, and provider ceilings for the routes
+        used — so the unit's headroom is the *minimum* across them, never a
+        sum. Name the budget that would block, so the pause is actionable."""
+        selected = set(run.params["budget_ids"])
+        retired = {r[0][len("retired:budget:"):] for r in
+                   self.s.db.conn.execute(
+                       "SELECT key FROM meta WHERE key LIKE "
+                       "'retired:budget:%'")}
         for unit, amount in (totals or {}).items():
-            have = sum(self.budgets.available(b)
-                       for b in run.params["budget_ids"]
-                       if units.get(b) == unit)
-            if have < amount:
-                return (f"{unit}: need {amount}, available {have} "
-                        f"across selected budgets")
+            applicable = [
+                r["id"] for r in self.s.db.conn.execute(
+                    "SELECT id, scope, scope_key FROM budgets WHERE unit=?",
+                    (unit,))
+                if r["id"] not in retired and not r["id"].startswith(
+                    "authority:") and (
+                    r["id"] in selected or r["scope"] == "aggregate" or
+                    (r["scope"] == "provider" and
+                     r["scope_key"] in providers))]
+            if not any(b in selected for b in applicable):
+                return (f"{unit}: none of the selected budgets funds this "
+                        "unit")
+            for bid in applicable:
+                have = self.budgets.available(bid)
+                if have < amount:
+                    kind = ("selected" if bid in selected
+                            else "aggregate ceiling")
+                    return (f"{unit}: need {amount}, budget {bid} "
+                            f"({kind}) has {have} — every applicable "
+                            "ceiling must cover the full amount")
         return ""
 
     def _ceilings(self, run, operations):
@@ -397,10 +429,11 @@ class AutoRunService:
         plan = self.s.effect_work.prepare(
             kind, provider, model, requests,
             experiment_id=experiment_id, revision=revision)
-        gap = self._cover(run, plan["total"])
+        gap = self._cover(run, plan["total"], providers=(provider,))
         if gap:
             return ("pause", "budget_exhausted", gap,
-                    "Top up the matching budget, then Resume")
+                    "Raise the named ceiling (same id, higher amount) or "
+                    "settle finished holds, then Resume")
         ceilings = self._ceilings(run, plan["operations"])
         if isinstance(ceilings, tuple):
             return ceilings
@@ -606,15 +639,18 @@ class AutoRunService:
                           else "draft")
             return "next"
         bp = self.s.analysis.get(run.state["blueprint_id"])
+        fps = bp.clock.num / bp.clock.den
         beats = [{"id": b.id, "role": b.role,
-                  "start_s": b.source.start / bp.clock.num * bp.clock.den
-                  if b.source else 0.0,
-                  "end_s": b.source.end / bp.clock.num * bp.clock.den
-                  if b.source else 0.0,
+                  "start_s": b.source.start / fps if b.source else 0.0,
+                  "end_s": b.source.end / fps if b.source else 0.0,
+                  "target_s": (b.target.end - b.target.start) / fps,
                   "visual_event": b.visual_event}
                  for b in bp.beats]
         transcript = self._transcript(run)
         base = scripts.adapt(beats, transcript)
+        # The source-derived adaptation is the bounded repair target when
+        # generated copy later fails its measured speech fit.
+        run.state["scripts_base"] = base
         mode = run.params.get("script_mode", "auto")
         adapter = self.s.providers.get("audiovisual_analysis")
         use_llm = mode in ("auto", "llm") and adapter is not None and \
@@ -640,7 +676,12 @@ class AutoRunService:
                 return res
             cmd = self.s.commands.get(run.state["script_jobs"][0])
             llm = cmd["command"]["result"]["result"].get("script")
-            merged = self._merge_llm_scripts(base, llm, beats)
+            merged, over = self._merge_llm_scripts(base, llm, beats)
+            for key, beat_id, words, budget in over:
+                run.notes.append(
+                    f"variant {key} beat {beat_id}: generated copy "
+                    f"({words} words) exceeds the beat's word budget "
+                    f"({budget}); source-derived copy used instead")
             if merged is None:
                 run.state["script_llm_failed"] = True
                 self._put(run)
@@ -670,15 +711,27 @@ class AutoRunService:
         """Apply an LLM adaptation only where it stays inside the
         declared treatment shape; anything else is rejected wholesale."""
         if not isinstance(llm, dict):
-            return None
+            return None, []
         variants = llm.get("variants") or {}
         a = variants.get("A")
         if not isinstance(a, dict) or any(
                 not str(a.get(b["id"], "")).strip()
                 and str(base["A"].get(b["id"], "")).strip()
                 for b in beats):
-            return None
-        out = {"A": {b["id"]: str(a.get(b["id"], ""))
+            return None, []
+        by_id = {b["id"]: b for b in beats}
+        over = []
+
+        def bounded(key, beat_id, text, fallback):
+            budget = scripts.word_budget(by_id[beat_id],
+                                         base["A"].get(beat_id, ""))
+            words = len(str(text).split())
+            if words > budget:
+                over.append((key, beat_id, words, budget))
+                return fallback
+            return str(text)
+        out = {"A": {b["id"]: bounded("A", b["id"], a.get(b["id"], ""),
+                                      base["A"].get(b["id"], ""))
                      for b in beats},
                "B": {}, "C": {}, "D": {},
                "hypotheses": base["hypotheses"],
@@ -688,11 +741,12 @@ class AutoRunService:
         for key in ("B", "C", "D"):
             beat_id = base["changed"][key]
             diff = (variants.get(key) or {}).get(beat_id)
-            out[key][beat_id] = str(diff) if str(diff or "").strip() \
-                else base[key][beat_id]
+            out[key][beat_id] = bounded(key, beat_id, diff,
+                                        base[key][beat_id]) \
+                if str(diff or "").strip() else base[key][beat_id]
             if str(hypotheses.get(key) or "").strip():
                 out["hypotheses"][key] = str(hypotheses[key])
-        return out
+        return out, over
 
     def _stage_music(self, run):
         if run.state.get("music") is not None:
@@ -857,17 +911,35 @@ class AutoRunService:
             self._advance(run, "quote")
             return "next"
         if not run.state.get("tts_synth_jobs"):
-            requests = [{"text": binding[2],
-                         "voice_id": run.params["voice_id"],
-                         "model": "eleven_v3",
-                         "language": run.params["language"],
-                         "settings": {}} for binding in needed.values()]
-            out = self._run_effect(run, "tts", "elevenlabs", "eleven_v3",
-                                   requests, "tts", eid, rev)
-            if out != "wait":
-                return out
-            run.state["tts_synth_jobs"] = dict(
-                zip(needed.keys(), run.state["tts_jobs"]))
+            # Speech already synthesized for this voice under an earlier
+            # revision is reused by normalized text — a copy edit to one
+            # beat must not re-buy every other line.
+            history = run.state.setdefault("tts_synth_history", {})
+            reuse = {n: j for n, j in history.items() if n in needed and
+                     (self.s.db.uow().jobs.get(j) or {}).get("status")
+                     == "succeeded"}
+            fresh = [n for n in needed if n not in reuse]
+            if fresh:
+                requests = [{"text": needed[n][2],
+                             "voice_id": run.params["voice_id"],
+                             "model": "eleven_v3",
+                             "language": run.params["language"],
+                             "settings": {}} for n in fresh]
+                out = self._run_effect(run, "tts", "elevenlabs",
+                                       "eleven_v3", requests, "tts", eid,
+                                       rev)
+                if out != "wait":
+                    return out
+                synth = dict(zip(fresh, run.state["tts_jobs"]))
+            else:
+                synth = {}
+                run.state["tts_jobs"] = []
+            run.state["tts_synth_jobs"] = {**reuse, **synth}
+            history.update(synth)
+            if reuse:
+                run.notes.append(
+                    f"narration reused for {len(reuse)} unchanged line(s) "
+                    "after copy revision — no repeat TTS charge")
             self._put(run)
             return "wait"
         res = self._jobs(run, list(run.state["tts_synth_jobs"].values()),
@@ -888,6 +960,11 @@ class AutoRunService:
         if res != "next":
             if res == "wait":
                 return "wait"
+            repaired = self._repair_speech_fit(run, needed, fits)
+            if repaired == "next":
+                return "next"
+            if repaired:
+                return repaired
             return ("pause", res[1], res[2],
                     "Edit the draft copy so it fits its beat, then "
                     "Resume — the run continues on the new revision")
@@ -927,6 +1004,98 @@ class AutoRunService:
         self._advance(run, "quote")
         return "next"
 
+    def _repair_speech_fit(self, run, needed, fits):
+        """Bounded, meaning-preserving repair when generated copy will not
+        fit its beat at the documented rate limits: swap that one segment
+        back to the source-derived copy, on a new draft revision, and let
+        the TTS stage resynthesize only that line. Copy that already IS the
+        source-derived text cannot be shortened without changing meaning —
+        that stays an honest pause. One repair per segment, ever.
+        Returns 'next' after a repair, a pause tuple, or None to fall
+        through to the caller's pause."""
+        base = run.state.get("scripts_base")
+        if not base:
+            return None
+        eid = run.state["experiment_id"]
+        rev = run.state["experiment_revision"]
+        repairs = run.state.setdefault("tts_repairs", [])
+        targets = []
+        for norm, fit_jid in fits.items():
+            j = self.s.db.uow().jobs.get(fit_jid)
+            if not j or j["status"] not in ("failed", "blocked"):
+                continue
+            if "copy_revision_required" not in str(j["blocked_reason"]
+                                                   or ""):
+                return None
+            key, seg_id, _ = needed[norm]
+            changed = base["changed"]
+            fallback = base[key].get(seg_id) if key != "A" and \
+                changed.get(key) == seg_id else base["A"].get(seg_id, "")
+            if self.s.audio_work.speech.normalize(fallback or "") == norm:
+                return ("pause", "speech_fit_failed",
+                        f"variant {key} segment {seg_id}: the source-"
+                        "derived narration itself does not fit this beat "
+                        "at this voice's pace",
+                        "Edit the draft copy or lengthen the beat, then "
+                        "Resume")
+            if f"{key}:{seg_id}" in repairs:
+                return ("pause", "speech_fit_failed",
+                        f"variant {key} segment {seg_id}: copy still does "
+                        "not fit after one automatic repair",
+                        "Edit the draft copy, then Resume")
+            targets.append((key, seg_id, fallback))
+        if not targets:
+            return None
+        exp = self.s._current(eid)
+        control = copy.deepcopy(exp.packaging["segments"])
+        branches = []
+        for vkey in ("B", "C", "D"):
+            v = self.s.experiments._variant(eid, vkey)
+            branches.append({
+                "key": vkey, "factor": v.changed_factor,
+                "regions": [r if isinstance(r, dict) else r.to_dict()
+                            for r in v.allowed_regions],
+                "segments": copy.deepcopy(v.segments),
+                "hypothesis": v.hypothesis,
+                "primary_metric": v.primary_metric,
+                "allowed_fields": list(v.allowed_fields),
+                "dependent_fields": list(v.dependent_fields)})
+        for key, seg_id, fallback in targets:
+            if key == "A":
+                for seg in control:
+                    if seg["id"] == seg_id:
+                        seg["copy"] = fallback
+                for br in branches:
+                    if base["changed"].get(br["key"]) != seg_id:
+                        for seg in br["segments"]:
+                            if seg["id"] == seg_id:
+                                seg["copy"] = fallback
+            else:
+                for br in branches:
+                    if br["key"] == key:
+                        for seg in br["segments"]:
+                            if seg["id"] == seg_id:
+                                seg["copy"] = fallback
+            repairs.append(f"{key}:{seg_id}")
+            run.notes.append(
+                f"variant {key} segment {seg_id}: generated copy did not "
+                "fit its beat; reverted to source-derived copy and "
+                "resynthesized that line only")
+        try:
+            result = self.s.patch_experiment_draft(
+                eid, {"segments": control, "variants": branches,
+                      "reason": "autorun speech-fit repair"}, rev)
+        except ContractError as e:
+            return ("pause", "speech_fit_failed",
+                    f"repair rejected: {e.code}: {e.detail}",
+                    "Edit the draft copy, then Resume")
+        run.state["experiment_revision"] = result["revision"]
+        for k in ("tts_jobs", "tts_plan", "tts_synth_jobs", "tts_fits",
+                  "tts_done"):
+            run.state.pop(k, None)
+        self._put(run)
+        return "next"
+
     def _stage_quote(self, run):
         eid = run.state["experiment_id"]
         rev = run.state["experiment_revision"]
@@ -954,12 +1123,15 @@ class AutoRunService:
             self._advance(run, "run")
             return "next"
         plan = self.s.plan_for(eid)
+        nodes = self.s.production._nodes(plan["id"])
         gap = self._cover(run, plan.get("total_price")
-                          or plan.get("total"))
+                          or plan.get("total"),
+                          providers={n.get("provider") for n in
+                                     nodes.values() if n.get("provider")})
         if gap:
             return ("pause", "budget_exhausted", gap,
-                    "Top up the matching budget, then Resume")
-        nodes = self.s.production._nodes(plan["id"])
+                    "Raise the named ceiling (same id, higher amount) or "
+                    "settle finished holds, then Resume")
         need = {}
         providers = set()
         models = {}
@@ -1164,15 +1336,27 @@ class AutoRunService:
         self._advance(run, "final_qc")
         return "next"
 
+    def _finish(self, run):
+        """Terminal notes: 'done' means the four finals exist and passed
+        the checks that ran — it is not verified delivery."""
+        run.notes.append(
+            "delivery pending — upload the finals via Deliveries before "
+            "treating the run as shipped; 'done' is not verified Google "
+            "Drive delivery")
+        self._advance(run, "done")
+
     def _stage_final_qc(self, run):
         if not run.params.get("visual_reviews", True):
-            self._advance(run, "done")
+            run.notes.append(
+                "automated visual QC was disabled for this run — finals "
+                "passed technical checks only")
+            self._finish(run)
             return "next"
         adapter = self.s.providers.get("audiovisual_analysis")
         if adapter is None or not getattr(adapter, "account", ""):
             run.notes.append("final visual QC unavailable — technical "
                              "checks only")
-            self._advance(run, "done")
+            self._finish(run)
             return "next"
         eid = run.state["experiment_id"]
         if not run.state.get("qc_jobs"):
@@ -1234,7 +1418,7 @@ class AutoRunService:
                     " | ".join(flagged),
                     "Review the flagged finals in Compare, then Resume "
                     "to finish (or re-render after fixes)")
-        self._advance(run, "done")
+        self._finish(run)
         return "next"
 
     def _stage_done(self, run):

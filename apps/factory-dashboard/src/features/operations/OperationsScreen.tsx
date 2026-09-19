@@ -11,6 +11,7 @@ export function OperationsScreen({section,data,selected,reviewer,act}:Props){
   const [speechJob,setSpeechJob]=useState(''),[speech,setSpeech]=useState<Row|null>(null),[fitJob,setFitJob]=useState('');
   const [account,setAccount]=useState(''),[title,setTitle]=useState(''),[publication,setPublication]=useState<Row|null>(null);
   const [horizon,setHorizon]=useState('48h'),[exposure,setExposure]=useState('1000');
+  const [holdEvidence,setHoldEvidence]=useState(''),[actuals,setActuals]=useState<Record<string,string>>({});
   const eid=selected?.experiment?.experiment_id||selected?.id,rev=selected?.revision;
   function reviewed(){if(!reviewer.trim())throw new Error('Enter your reviewer name first.');return reviewer.trim();}
   const post=(path:string,body:Row={},revision?:number)=>call<Row>('POST',path,{body,rev:revision});
@@ -23,7 +24,13 @@ export function OperationsScreen({section,data,selected,reviewer,act}:Props){
       <label>Unit<select value={unit} onChange={e=>setUnit(e.target.value)}>{['jimeng_credits','usd_micros','elevenlabs_credits'].map(x=><option key={x}>{x}</option>)}</select></label>
       <label>Ceiling in this unit<input type="number" min="0" step="1" value={ceiling} onChange={e=>setCeiling(e.target.value)}/></label>
       <button onClick={()=>act(()=>post('/api/budgets',{id:budgetId,unit,scope:'aggregate',scope_key:'',ceiling:Number(ceiling),reviewer:reviewed(),evidence:'Explicit dashboard budget scope'}),'Budget recorded')}>Record spending ceiling</button>
-      <table><thead><tr><th>Budget</th><th>Unit</th><th>Ceiling</th><th>Available</th></tr></thead><tbody>{(data.budgets||[]).map(b=><tr key={b.id}><td>{b.id}</td><td>{b.unit}</td><td>{b.cap_amount}</td><td>{b.retired?'Retired after restore':b.available}</td></tr>)}</tbody></table></>}
+      <table><thead><tr><th>Budget</th><th>Unit</th><th>Ceiling</th><th>Available</th></tr></thead><tbody>{(data.budgets||[]).map(b=><tr key={b.id}><td>{b.id}</td><td>{b.unit}</td><td>{b.cap_amount}</td><td>{b.retired?'Retired after restore':b.available}</td></tr>)}</tbody></table>
+      <h3>Open holds</h3><p>Every reservation stays held until a provider receipt or your evidence settles it. An aggregate ceiling is held in full for every operation of its unit — recording a second aggregate ceiling does not add headroom; raise the existing one (same id, higher amount). Settle finished work at its actual charge from the provider's usage page; release only holds whose attempt verifiably never charged.</p>
+      <label>Evidence for settle/release<input value={holdEvidence} onChange={e=>setHoldEvidence(e.target.value)} placeholder="invoice line, usage-page reading, provider failure notice"/></label>
+      <table><thead><tr><th>Hold</th><th>Attempt</th><th>Provider</th><th>Lines (budget: held)</th><th>Since</th><th>Actual</th><th></th></tr></thead><tbody>{(data.reservations||[]).filter(r=>['held','ambiguous'].includes(r.status)).map(r=><tr key={r.id}><td>{r.id}</td><td>{r.attempt_id?`${r.attempt_status}`:'none'}</td><td>{r.provider||'—'}</td><td>{(r.lines||[]).filter((l:Row)=>!String(l.budget_id).startsWith('authority:')).map((l:Row)=>`${l.budget_id}: ${l.amount}`).join(', ')}</td><td>{String(r.created_at).slice(0,16)}</td>
+        <td><input aria-label={`actual ${r.id}`} type="number" min="0" step="1" style={{width:90}} placeholder="as held" value={actuals[r.id]||''} onChange={e=>setActuals({...actuals,[r.id]:e.target.value})}/></td>
+        <td><button onClick={()=>act(()=>post(`/api/reservations/${r.id}/settle`,{kind:'invoice_confirmed',reviewer:reviewed(),evidence:holdEvidence,...(actuals[r.id]?{amount:Number(actuals[r.id])}:{})}),'Hold settled')}>Settle</button>
+        {['failed','cancelled','prepared',undefined,null].includes(r.attempt_status)&&<button onClick={()=>act(()=>post(`/api/reservations/${r.id}/release`,{reviewer:reviewed(),evidence:holdEvidence}),'Hold released')}>Release</button>}</td></tr>)}</tbody></table></>}
     {section==='Research'&&<><p>Prepare quotes, approve their funding, then start research. Creator history is evaluated separately from search results.</p>
       <label>Search topic<input value={query} onChange={e=>setQuery(e.target.value)}/></label><label>Platform<select value={platform} onChange={e=>setPlatform(e.target.value)}>{['youtube','tiktok','instagram'].map(x=><option key={x}>{x}</option>)}</select></label>
       <label>Creator handle for baseline (optional)<input value={handle} onChange={e=>setHandle(e.target.value)}/></label>

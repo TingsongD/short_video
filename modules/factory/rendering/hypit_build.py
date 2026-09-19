@@ -63,6 +63,16 @@ class HypitBuildRunner:
 
     def _recover(self, state, workspace):
         candidates = set()
+        try:
+            return self._recover_candidates(state, workspace, candidates)
+        except subprocess.TimeoutExpired:
+            # The local CLI did not answer in time; the build may or may
+            # not exist. Stay unresolved and let the scheduler retry the
+            # observation instead of declaring a terminal failure.
+            raise ContractError("retry_backoff", "svrun",
+                                "hypit reconcile timed out") from None
+
+    def _recover_candidates(self, state, workspace, candidates):
         result = self.runner(["builds", "--workspace", str(workspace)])
         doc = self._json(result.stdout)
         if result.returncode == 0 and doc.get("format") == "hypit.cli-builds@1":
@@ -104,7 +114,13 @@ class HypitBuildRunner:
     def retrieve(self, build_id, output_name, dest, workspace):
         dest = Path(dest).resolve()
         dest.parent.mkdir(parents=True, exist_ok=True)
-        result = self.runner(["get", build_id, "--output", output_name, "--to", str(dest), "--workspace", str(workspace)])
+        try:
+            result = self.runner(["get", build_id, "--output", output_name, "--to", str(dest), "--workspace", str(workspace)])
+        except subprocess.TimeoutExpired:
+            # A transfer that timed out produced nothing durable; the
+            # finished build is still there to fetch on the next attempt.
+            raise ContractError("retry_backoff", "svrun",
+                                "hypit output transfer timed out") from None
         doc = self._json(result.stdout)
         if (result.returncode or not dest.is_file() or doc.get("format") != "hypit.cli-get@1"
                 or doc.get("build") != build_id or doc.get("output") != output_name or doc.get("path") != str(dest)):

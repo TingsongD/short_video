@@ -17,7 +17,7 @@ import { AutoRunScreen } from "./features/autorun/AutoRunScreen";
 // optional fields; IDs, revision and hashes always come from the selected row.
 type Row = Record<string, any>;
 const TABS = ["Seeds", "Auto", "Plan", "Queue", "Compare", "Reviews", "Delivery", "Studio", "Providers", "Products", "Budgets", "Research", "Analysis", "Audio", "Publishing", "Learning"] as const;
-const names = ["seeds","blueprints","templates","experiments","plans","assets","reviews","deliveries","products","budgets","research","effect_plans","publications","metrics","policies","decisions","metadatapackages","checkpoints","selections","lineages","loops","autoruns"];
+const names = ["seeds","blueprints","templates","experiments","plans","assets","reviews","deliveries","products","budgets","research","effect_plans","publications","metrics","policies","decisions","metadatapackages","checkpoints","selections","lineages","loops","autoruns","reservations"];
 
 export default function App() {
   const [tab,setTab]=useState<(typeof TABS)[number]>("Seeds");

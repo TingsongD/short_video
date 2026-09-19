@@ -199,7 +199,7 @@ class Hypit9:
                               "stderr": ""})()
 
 
-def stack(application, review_result=None):
+def stack(application, review_result=None, script_result=None):
     """Wire the fake provider world the run needs."""
     s, c, act, w, root = application
     s.providers["jimeng_canvas"] = DiskGeneration(root)
@@ -217,7 +217,7 @@ def stack(application, review_result=None):
     auth = VertexAuth(lambda: {
         "kind": "oauth", "access_token": "tok", "project": "fixture",
         "identity": "i", "scopes": ["cloud-platform"]}, "fixture")
-    results = {"analyze": ANALYZE, "script": SCRIPT,
+    results = {"analyze": ANALYZE, "script": script_result or SCRIPT,
                "review": review_result or REVIEW}
     s.providers["audiovisual_analysis"] = VertexAnalyzer(
         root / "analysis", s.artifacts, auth, "fixture", "fixture",
@@ -384,17 +384,27 @@ def test_autorun_budget_enforcement(application):
 
 def test_autorun_resume_requotes_after_reservation_block(application):
     s, c, act, w, root = stack(application)
-    # Aggregate ceilings are enforced even when they are not selected as the
-    # funding grant.  This one passes Auto's selected-budget coverage check,
-    # then blocks the worker's atomic reservation.
+    seed = make_seed(act, root)
+    run = launch(act, seed)
+    # Let the analysis plan be quoted and dispatched, then have an
+    # unrelated aggregate ceiling appear before the worker reserves —
+    # the race the pre-dispatch check cannot see.
+    for _ in range(80):
+        drive(s, w, limit=1)
+        run = autorun(s, run["id"] if isinstance(run, dict) else run.id)
+        jobs = run.state.get("analysis_jobs") or []
+        if jobs and s.db.uow().jobs.get(jobs[0])["status"] in (
+                "ready", "waiting_dependencies"):
+            break
+    else:
+        raise AssertionError("analysis effect never reached ready")
+    assert run.stage == "video_analysis"
     act("post", "/api/budgets",
         {"id": "global-usd", "unit": "usd_micros", "scope": "aggregate",
          "scope_key": "", "ceiling": 0, "reviewer": "fixture",
          "evidence": "offline global ceiling"})
-    seed = make_seed(act, root)
-    run = launch(act, seed)
     drive(s, w)
-    run = autorun(s, run["id"])
+    run = autorun(s, run.id)
     assert run.status == "paused"
     assert run.stage == "video_analysis"
     assert run.pause["code"] == "budget_exhausted"
@@ -414,6 +424,175 @@ def test_autorun_resume_requotes_after_reservation_block(application):
     run = autorun(s, run.id)
     assert run.stage != "video_analysis", run.pause
     assert run.state["analysis_jobs"][0] != dead
+
+
+def test_cover_precheck_names_blocking_aggregate_ceiling(application):
+    """A second aggregate ceiling is held in full alongside the first, so
+    the pre-dispatch check must report the *minimum* headroom and name
+    the ceiling that blocks — not a sum across selected budgets."""
+    s, c, act, w, root = stack(application)
+    act("post", "/api/budgets",
+        {"id": "credits-tts-2", "unit": "elevenlabs_credits",
+         "scope": "aggregate", "scope_key": "", "ceiling": 3,
+         "reviewer": "fixture", "evidence": "offline second ceiling"})
+    seed = make_seed(act, root)
+    # Selecting BOTH tts ceilings must not read as 500+3 of headroom.
+    run = launch(act, seed, budget_ids=["credits-gen", "credits-tts",
+                                        "credits-tts-2", "credits-usd"])
+    drive(s, w)
+    run = autorun(s, run["id"])
+    assert run.status == "paused"
+    assert run.pause["code"] == "budget_exhausted", run.pause
+    assert "credits-tts-2" in run.pause["detail"]
+    assert "every applicable ceiling" in run.pause["detail"]
+    # Nothing was dispatched to the paid TTS route.
+    assert not (root / "tts.json").exists() or \
+        not json.loads((root / "tts.json").read_text()).get("ops")
+
+
+def test_operator_settle_and_release_holds(application):
+    s, c, act, w, root = stack(application)
+    seed = make_seed(act, root)
+    run = launch(act, seed)
+    drive(s, w)
+    assert autorun(s, run["id"]).status == "succeeded"
+    holds = [r for r in s.collection("reservations")
+             if r["status"] == "held" and r["attempt_status"]]
+    assert holds, "fake providers report no usage — holds stay held"
+    charged = next(r for r in holds if r["attempt_status"] in
+                   ("downloaded", "succeeded"))
+    # A charged attempt can never be released, only settled on evidence.
+    r = act("post", f"/api/reservations/{charged['id']}/release",
+            {"reviewer": "fixture", "evidence": "provider failure page"})
+    assert r.status_code == 400 and "release_refused" in r.text
+    r = act("post", f"/api/reservations/{charged['id']}/settle",
+            {"reviewer": "fixture", "evidence": ""})
+    assert r.status_code == 400 and "evidence_required" in r.text
+    r = act("post", f"/api/reservations/{charged['id']}/settle",
+            {"reviewer": "fixture", "kind": "reported_usage",
+             "evidence": "x"})
+    assert r.status_code == 400 and "bad_settlement_kind" in r.text
+    line = next(l for l in charged["lines"]
+                if not l["budget_id"].startswith("authority:"))
+    from modules.factory.budget import BudgetService
+    before = BudgetService(s.db).available(line["budget_id"])
+    r = act("post", f"/api/reservations/{charged['id']}/settle",
+            {"reviewer": "fixture", "evidence": "invoice line 12",
+             "amount": max(line["amount"] - 1, 0)})
+    assert r.status_code == 200, r.text
+    row = s.db.conn.execute(
+        "SELECT status, evidence FROM reservations WHERE id=?",
+        (charged["id"],)).fetchone()
+    assert row["status"] == "settled"
+    assert "invoice_confirmed by fixture" in row["evidence"]
+    # Settling below the hold frees exactly the difference.
+    after = BudgetService(s.db).available(line["budget_id"])
+    assert after == before + (line["amount"] - max(line["amount"] - 1, 0))
+    # Idempotent replay with the same amounts is accepted.
+    r = act("post", f"/api/reservations/{charged['id']}/settle",
+            {"reviewer": "fixture", "evidence": "invoice line 12",
+             "amount": max(line["amount"] - 1, 0)})
+    assert r.status_code == 200, r.text
+
+
+def test_generated_copy_bounded_before_and_after_tts(application):
+    """Generated copy is filtered by a word budget before any TTS spend;
+    copy that passes the budget but fails the MEASURED fit is repaired
+    once by reverting that one line to source-derived copy — with no
+    repeat charge for unchanged lines and no silent approval."""
+    script = json.loads(json.dumps(SCRIPT))
+    # 9 words: inside the 3s beat's budget (ceil(7.5*1.1)=9) but the fake
+    # voice needs 0.3+9*0.38=3.72s > 3.3s allowed at RATE_MAX.
+    script["variants"]["B"]["b0"] = \
+        "you will not believe what this dog does next"
+    # 12 words: rejected before spend.
+    script["variants"]["C"]["b1"] = \
+        "he runs so fast that you will not even see him move today"
+    s, c, act, w, root = stack(application, script_result=script)
+    seed = make_seed(act, root)
+    run = launch(act, seed)
+    drive(s, w)
+    run = autorun(s, run["id"])
+    assert run.status == "succeeded", run.pause
+    notes = "\n".join(run.notes)
+    assert "variant C beat b1" in notes and "word budget" in notes
+    assert "variant B segment b0" in notes and "reverted" in notes
+    assert run.state["experiment_revision"] >= 3     # draft, speech, repair
+    ops = json.loads((root / "tts.json").read_text())["ops"].values()
+    texts = [o["request"]["text"] for o in ops]
+    assert len(texts) == len(set(texts)), texts        # no repeat charge
+    assert "you will not believe what this dog does next" in texts
+    assert "he runs so fast that you will not even see him move today" \
+        not in texts
+    # A×3 + B long (measured, then repaired) + B fallback + C fallback + D
+    assert len(texts) == 7
+    assert "he runs fast" in texts                      # C deterministic
+    b = s.experiments._variant(run.experiment_id, "B")
+    assert next(x["copy"] for x in b.segments if x["id"] == "b0") == \
+        "watch this dog"
+
+
+def test_source_copy_that_cannot_fit_pauses_honestly(application):
+    script = json.loads(json.dumps(SCRIPT))
+    s, c, act, w, root = stack(application, script_result=script)
+    # Make the fake voice much slower so even source-derived copy cannot
+    # fit — the run must pause, not shorten words on its own.
+    impl = s.providers["elevenlabs"].impl
+    orig = impl.submit
+
+    def slow(request):
+        out = orig(request)
+        impl.doc["ops"][out["operation_id"]]["duration_s"] = 6.0
+        impl._save()
+        return out
+    impl.submit = slow
+    seed = make_seed(act, root)
+    run = launch(act, seed)
+    drive(s, w)
+    run = autorun(s, run["id"])
+    assert run.status == "paused"
+    assert run.pause["code"] == "speech_fit_failed", run.pause
+    assert "does not fit" in run.pause["detail"] or \
+        "copy_revision_required" in run.pause["detail"]
+
+
+def test_media_route_404s_on_unknown_artifact(application):
+    """GET /api/assets/{id}/media must answer 404, not a 500, when the
+    artifact id is unknown — the dashboard probes media URLs eagerly."""
+    s, c, act, w, root = application
+    r = c.get("/api/assets/art-nonexistent/media")
+    assert r.status_code == 404
+    assert r.json()["error"] == "unknown_artifact"
+
+
+def test_local_render_timeout_retries_without_pausing(application):
+    """A subprocess timeout in the local, unpaid compose step is a bounded
+    retry, not a pause the operator must click through."""
+    import subprocess
+    s, c, act, w, root = stack(application)
+    # The first local render raises the raw subprocess timeout the live
+    # run surfaced as handler_error:TimeoutExpired; the second attempt
+    # renders normally.
+    fast = s.rendering.fast
+    real = fast.render
+    state = {"tripped": 0}
+
+    def flaky(*a, **k):
+        if state["tripped"] == 0:
+            state["tripped"] += 1
+            raise subprocess.TimeoutExpired(["ffmpeg"], 600)
+        return real(*a, **k)
+    fast.render = flaky
+    seed = make_seed(act, root)
+    run = launch(act, seed)
+    drive(s, w)
+    run = autorun(s, run["id"])
+    assert state["tripped"] == 1
+    assert run.status == "succeeded", run.pause
+    assert not [p for p in run.progress if p.get("code") == "render_failed"]
+    retried = s.db.conn.execute(
+        "SELECT count(*) FROM events WHERE type='command_retry'").fetchone()[0]
+    assert retried == 1
 
 
 def test_autorun_resume_has_no_duplicate_charges(application):

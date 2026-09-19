@@ -189,8 +189,11 @@ export function AutoRunScreen({ seeds, budgets, runs, act, media,
               <p>{run.pause.detail}</p>
               <p><em>{run.pause.action}</em></p>
               {run.pause.code === "budget_exhausted" && (
-                <p className="hint">Check replacement budgets in
-                  step 2 above — Resume adds them to this run.</p>)}
+                <p className="hint">The message names the ceiling that
+                  blocks. Raise it in the Budgets tab (same id, higher
+                  amount) or settle finished holds there, then Resume.
+                  Every aggregate ceiling is held in full, so adding a
+                  second aggregate budget does not add headroom.</p>)}
               <button onClick={() => act(
                 () => api.autorunResume(run.id,
                   selectedBudgets.length
@@ -200,6 +203,16 @@ export function AutoRunScreen({ seeds, budgets, runs, act, media,
                 Resume{selectedBudgets.length
                   ? " with checked budgets" : ""}</button>
             </div>)}
+          {(run.progress || []).some(
+            (p: Row) => p.outcome === "paused" && p.detail) && (
+            <details><summary>Pause history</summary>
+              <ul>{(run.progress || [])
+                .filter((p: Row) => p.outcome === "paused" && p.detail)
+                .map((p: Row, i: number) => (
+                  <li key={i}><strong>{p.code}</strong> ({p.stage},{" "}
+                    {String(p.at).slice(0, 16)}) — {p.detail}
+                    {p.action && <em> · {p.action}</em>}</li>))}
+              </ul></details>)}
           {(run.notes || []).length > 0 && (
             <details><summary>Limitations</summary>
               <ul>{run.notes.map((n: string, i: number) => (

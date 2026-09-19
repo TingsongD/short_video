@@ -76,6 +76,8 @@ class FactoryServices:
             from ..budget import BudgetService
             ledger=BudgetService(self.db)
             return [{**dict(r),'retired':bool(self.db.conn.execute('SELECT 1 FROM meta WHERE key=?',('retired:budget:'+r['id'],)).fetchone()),'available':ledger.available(r['id'])} for r in self.db.conn.execute('SELECT * FROM budgets')]
+        if name == 'reservations':
+            return self.reservations()
         if name == 'queue':
             return self.require('scheduler').status_snapshot()
         if name == 'assets':
@@ -89,6 +91,75 @@ class FactoryServices:
         return [{**json.loads(r['body']), 'version': r['version']}
                 for r in self.db.conn.execute(
             "SELECT r.body, r.version FROM records r WHERE kind=? AND revision=(SELECT MAX(revision) FROM records x WHERE x.kind=r.kind AND x.id=r.id) ORDER BY created_at DESC", (kind,))]
+
+    def reservations(self, status=None):
+        """Every hold with the attempt it funds, so an operator can see where
+        spend authority went and settle or release it on evidence. A hold
+        without a linked attempt is shown as such; nothing is inferred."""
+        rows=self.db.conn.execute(
+            "SELECT r.id,r.authorization_id,r.request_hash,r.status,r.created_at,r.settled_at,r.evidence,"
+            " a.id AS attempt_id,a.job_id,a.status AS attempt_status,json_extract(a.body,'$.provider') AS provider,"
+            " json_extract(a.body,'$.model') AS model"
+            " FROM reservations r LEFT JOIN attempts a ON json_extract(a.body,'$.reservation_id')=r.id"
+            + (" WHERE r.status=?" if status else "") + " ORDER BY r.created_at DESC",
+            (status,) if status else ()).fetchall()
+        out=[]
+        for r in rows:
+            lines=[dict(l) for l in self.db.conn.execute(
+                "SELECT budget_id,amount,settled_amount,kind FROM reservation_lines WHERE reservation_id=?",(r['id'],))]
+            out.append({**dict(r),'lines':lines})
+        return out
+
+    def settle_reservation(self, reservation_id, body):
+        """Operator settlement of a hold with evidence (invoice, provider
+        usage page). Amounts default to the reserved amounts; the ledger
+        records a variance when an actual exceeds its hold."""
+        from ..budget import BudgetService
+        if not body.get('reviewer') or not body.get('evidence'):
+            raise ContractError('evidence_required','reviewer/evidence')
+        kind=body.get('kind') or 'invoice_confirmed'
+        if kind=='reported_usage':
+            raise ContractError('bad_settlement_kind','kind','reported_usage is provider-declared only')
+        lines={l['budget_id']:l['amount'] for l in self.db.conn.execute(
+            "SELECT budget_id,amount FROM reservation_lines WHERE reservation_id=?",(reservation_id,))}
+        if not lines:
+            raise ContractError('unknown_reservation','id',reservation_id)
+        amounts=dict(lines)
+        if 'amount' in body:
+            if type(body['amount']) is not int or body['amount']<0:
+                raise ContractError('invalid_amount','amount',repr(body.get('amount')))
+            amounts={b:body['amount'] for b in lines}
+        for b,v in (body.get('amounts') or {}).items():
+            if b not in lines or type(v) is not int or v<0:
+                raise ContractError('invalid_amount',b,repr(v))
+            amounts[b]=v
+        evidence=f"{kind} by {body['reviewer']}: {body['evidence']}"
+        BudgetService(self.db).settle(reservation_id,kind,amounts,evidence)
+        with self.db.uow() as u:
+            u.events.append('factory','reservation_settled_by_operator',
+                            {'reservation_id':reservation_id,'kind':kind,'amounts':amounts,'reviewer':body['reviewer']})
+        return {'reservation_id':reservation_id,'status':'settled','amounts':amounts}
+
+    def release_reservation(self, reservation_id, body):
+        """Free a hold only when its attempt verifiably never charged: no
+        attempt, a cancelled/prepared attempt, or a failed one backed by
+        the operator's provider-side evidence. A downloaded or succeeded
+        attempt was charged and must be settled, never released."""
+        from ..budget import BudgetService
+        if not body.get('reviewer') or not body.get('evidence'):
+            raise ContractError('evidence_required','reviewer/evidence')
+        att=self.db.conn.execute(
+            "SELECT id,status FROM attempts WHERE json_extract(body,'$.reservation_id')=?",(reservation_id,)).fetchall()
+        blocking=[a for a in att if a['status'] not in ('failed','cancelled','prepared')]
+        if blocking:
+            raise ContractError('release_refused','attempt_id',
+                                f"{blocking[0]['id']} is {blocking[0]['status']}: charged or unresolved — settle with evidence instead")
+        evidence=f"released by {body['reviewer']}: {body['evidence']}"
+        BudgetService(self.db).release(reservation_id,evidence)
+        with self.db.uow() as u:
+            u.events.append('factory','reservation_released_by_operator',
+                            {'reservation_id':reservation_id,'reviewer':body['reviewer'],'attempts':[a['id'] for a in att]})
+        return {'reservation_id':reservation_id,'status':'released'}
 
     def detail(self, kind, rid):
         row = self.db.uow().records.get(kind, rid)

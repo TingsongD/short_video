@@ -262,6 +262,18 @@ def create_app(services, session_token=None):
         status,resp=mutation(request,body,create)
         return JSONResponse(resp,status_code=status)
 
+    @app.post('/api/reservations/{reservation_id}/settle')
+    async def settle_reservation(reservation_id:str,request:Request):
+        body=await json_command(request)
+        status,resp=mutation(request,body,lambda:(200,services.settle_reservation(reservation_id,body)))
+        return JSONResponse(resp,status_code=status)
+
+    @app.post('/api/reservations/{reservation_id}/release')
+    async def release_reservation(reservation_id:str,request:Request):
+        body=await json_command(request)
+        status,resp=mutation(request,body,lambda:(200,services.release_reservation(reservation_id,body)))
+        return JSONResponse(resp,status_code=status)
+
     @app.post("/api/seeds/{seed_id}/analyze", status_code=202)
     async def analyze(seed_id: str, request: Request):
         body=await json_command(request)
@@ -632,11 +644,13 @@ def create_app(services, session_token=None):
 
     @app.get("/api/assets/{asset_id}/media")
     async def media(asset_id: str, request: Request):
+        row=services.db.uow().artifacts.get(asset_id)
+        if row is None:
+            raise ContractError("unknown_artifact","artifact_id",asset_id)
         p = await run_in_threadpool(services.media_path,asset_id)
         size=Path(p).stat().st_size; start,end=0,size-1; status=200
         headers={"accept-ranges":"bytes","content-type":"application/octet-stream"}
-        row=services.db.uow().artifacts.get(asset_id)
-        probe=json.loads(row['probe']); fmt=probe.get('format_name','')
+        probe=json.loads(row['probe'] or '{}'); fmt=probe.get('format_name','')
         codec=next((x.get('codec_name','') for x in probe.get('streams',[]) if x.get('codec_type')=='video'),'')
         if row['kind']=='video': headers['content-type']='video/webm' if 'webm' in fmt else 'video/mp4' if 'mp4' in fmt else 'video/quicktime'
         elif row['kind']=='audio': headers['content-type']='audio/wav' if 'wav' in fmt else 'audio/mpeg' if 'mp3' in fmt else 'audio/mp4'

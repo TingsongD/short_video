@@ -31,3 +31,6 @@ vendor/
 apps/factory-dashboard/node_modules/
 apps/factory-dashboard/dist/
 .run/
+
+# generated incremental-build cache
+apps/factory-dashboard/tsconfig.tsbuildinfo

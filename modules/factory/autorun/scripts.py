@@ -5,6 +5,8 @@ only the qualified LLM route may paraphrase. B/C/D each edit ONE beat
 using only words present in the source transcript: tighten, clarify or
 call back. No template here invents a fact, a number or a promise.
 """
+import math
+
 from ..domain.errors import ContractError
 
 STYLE = ("Vertical 9:16 social footage, original or authorized fictional "
@@ -23,6 +25,23 @@ FILLERS = ("so ", "and ", "but ", "actually ", "basically ", "really ",
            "just ", "well ", "now ", "okay ", "ok ", "like, ")
 FACTORS = {"B": "hook", "C": "body", "D": "ending"}
 METRICS = {"B": "retention", "C": "retention", "D": "completion"}
+# Pre-spend filter for GENERATED copy only. A conservative narration pace;
+# the real gate stays the measured waveform fit (audio/fit.py). A false
+# reject only falls back to source-derived copy; a false accept is still
+# caught by the measured fit, so uncertainty never becomes approval.
+WPS_ESTIMATE = 2.5
+
+
+def word_budget(beat, source_copy):
+    """Most words a beat can carry: whichever is larger of what the source
+    speaker actually said in it or the beat's target seconds at a
+    conservative pace, stretched by the documented max rate."""
+    from ..audio.fit import RATE_MAX
+    target_s = float(beat.get("target_s") or
+                     (beat["end_s"] - beat["start_s"]))
+    source_words = len(str(source_copy or "").split())
+    return int(math.ceil(max(source_words, target_s * WPS_ESTIMATE)
+                         * RATE_MAX))
 
 
 def beat_copy(beat, transcript):

@@ -172,7 +172,16 @@ def _collect_all(app, pubs, horizon="24h"):
                 row[-1] = views
             for row in analytics.reach_rows:
                 row[-2] = views * 30
-        snap = s.checkpoints.collect(p["id"], horizon, now=collect_at)
+        # A checkpoint job may already have collected during the publish
+        # loop (real wall clock is past the due instant); its snapshot
+        # carries the readback clock's OBS_AT. The deliberate collect
+        # must observe no earlier, or ranking prefers the stale one.
+        # Source-calendar windows tolerate a late observation — the
+        # source days it covers are fixed regardless.
+        observe_at = collect_at if p["platform"] != "youtube" else \
+            (datetime.fromisoformat(OBS_AT) +
+             timedelta(seconds=1)).isoformat()
+        snap = s.checkpoints.collect(p["id"], horizon, now=observe_at)
         assert snap.completeness == "complete", (
             p["platform"], snap.availability)
 

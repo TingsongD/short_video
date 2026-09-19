@@ -30,6 +30,10 @@ hyperframes.local), the API on :8100 and a single worker in the
 background, waits for health, and prints the status. Logs live in
 `.run/api.log` and `.run/worker.log`. Safe to re-run — already-running
 services are left alone. `./scripts/factory-down.sh` stops the stack.
+The launcher now confirms the worker is still alive a couple of seconds
+after starting it and prints the log tail if it died. The worker itself
+rides through brief `database is locked` contention (bounded backoff);
+a lock that persists for minutes still fails loudly.
 
 Manual equivalent, if you prefer two terminals:
 
@@ -81,11 +85,18 @@ render → QC. You click once and watch progress.
    code, a plain explanation, and a recovery action. **Resume**
    continues from durable state — nothing paid runs twice.
    For a `budget_exhausted` pause, check replacement budgets in step 2
-   first; Resume adds them to the run (audited).
+   first; Resume adds them to the run (audited). Past pauses stay
+   visible under **Pause history** after a resume — the code, stage,
+   explanation and recovery action are kept, not just the latest pause.
+   Local render timeouts retry on their own (bounded backoff); only
+   exhaustion pauses the run.
 5. When it finishes, open the experiment in **Compare** — four playable
    finals with scripts, captions, hypotheses, highlighted changed
-   sections, and QC results. Publishing stays a separate manual step
-   in the Publishing tab.
+   sections, and QC results. `done` means the finals exist and passed
+   the checks that ran — it is **not** verified delivery. The run's
+   Limitations note says so, and whether visual QC was skipped.
+   Upload the finals via the Deliveries flow; publishing stays a
+   separate manual step in the Publishing tab.
 
 Automatic mode performs real intermediate checks (technical validity,
 duration/resolution coverage per asset, caption alignment, optional
@@ -313,7 +324,7 @@ you explicitly authorize each destination.
 |---|---|
 | **Providers** | Readiness checklist per generation/audio route (installed → authenticated → tested → qualified). **Re-check readiness** refreshes on demand — it no longer re-runs constantly in the background. |
 | **Products** | Product snapshots pulled for claims/packaging evidence. Authorization always validates the *pinned* snapshot revision from the plan — a later refresh can't quietly change approved facts. |
-| **Budgets** | Credit/USD ceilings with reserved / used / **unknown** columns. Unknown charges are shown honestly — never silently treated as zero. |
+| **Budgets** | Credit/USD ceilings with reserved / used / **unknown** columns, plus the **Open holds** table: settle a finished hold at its actual charge (evidence required) or release one whose attempt verifiably never charged. Unknown charges are shown honestly — never silently treated as zero. |
 | **Research** | Trend discovery plans. Identical searches hit the durable cache instead of re-charging; coverage reports real provider calls. **No research provider is currently configured** — plan requests return `route_unavailable` until one is qualified and enabled. |
 | **Analysis** | The mandatory deep-analysis workspace described in Step 1b — staged evidence, understanding/timeline/treatment forms, review and recovery actions. |
 | **Audio** | Speech fitting and attach. |

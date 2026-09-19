@@ -1,10 +1,13 @@
 """Independent durable application worker. Closing the browser cannot cancel it."""
 import json
 import math
+import sqlite3
+import subprocess
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from ..domain.errors import ContractError
+from ..rendering.ffmpeg_fast import RenderTimeout
 from ..domain.records import content_hash
 from ..execution.effects import EffectService
 from ..store.uow import utcnow
@@ -77,13 +80,18 @@ class ApplicationWorker:
                 u.conn.execute('DELETE FROM meta WHERE key=?',('local_work:'+job['id'],))
             return {'job_id':job['id'],'status':'retry' if retryable and job['retry_count']<5 else 'failed','error':error.code}
         except Exception as error:
-            self.scheduler.fail(job['id'],job['fencing_token'],'handler_error:'+type(error).__name__)
+            # Local, unpaid, re-entrant render work (compose nodes) that hit
+            # a subprocess timeout is retried with the scheduler's bounded
+            # backoff; every paid or ambiguous path stays terminal here.
+            retryable=isinstance(error,(subprocess.TimeoutExpired,RenderTimeout)) and ':cmp:' in job['id']
+            self.scheduler.fail(job['id'],job['fencing_token'],'handler_error:'+type(error).__name__,retryable=retryable)
             with self.s.db.uow() as u:
                 u.conn.execute('DELETE FROM meta WHERE key=?',('local_work:'+job['id'],))
-                u.events.append('factory','command_failed',{'job_id':job['id'],'error':type(error).__name__})
-            # Keep a safe typed failure; tests may enable raising for diagnostics.
-            if self.s.config.get('raise_worker_errors'): raise
-            return {'job_id':job['id'],'status':'failed','error':type(error).__name__}
+                u.events.append('factory','command_retry' if retryable else 'command_failed',{'job_id':job['id'],'error':type(error).__name__})
+            # Keep a safe typed failure; tests may enable raising for
+            # diagnostics — but a scheduled retry is a handled outcome.
+            if self.s.config.get('raise_worker_errors') and not retryable: raise
+            return {'job_id':job['id'],'status':'retry' if retryable else 'failed','error':type(error).__name__}
 
     def execute(self,kind,body,job):
         s=self.s
@@ -491,7 +499,20 @@ class ApplicationWorker:
         return {'status':'rendered','variant_id':variant.id,'final':final,'review_required':True}
 
     def run(self,once=False):
+        # A racing writer (e.g. the API still finishing startup) can make
+        # BEGIN IMMEDIATE lose the lock. That is transient contention, not
+        # a dead worker — back off bounded instead of dying on the first
+        # tick. Persistent lock failure still surfaces after ~2 minutes.
+        locked = 0
         while True:
-            result=self.tick()
+            try:
+                result=self.tick()
+            except sqlite3.OperationalError as error:
+                if 'locked' not in str(error): raise
+                locked += 1
+                if locked > 40: raise
+                time.sleep(min(0.25 * 2 ** min(locked, 7), 30))
+                continue
+            locked = 0
             if once: return result
             if result is None: time.sleep(.25)
