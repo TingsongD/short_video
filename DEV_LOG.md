@@ -1169,3 +1169,42 @@ which succeeded but needed 16 manual resumes).
 - Full backend suite: 1085 passed, 0 failed (previously-failing
   time-bomb tests included).
 - Dashboard: 30 tests + production build green.
+
+## 2026-09-19 — Production DB cleanup after first live run
+
+Operator-level maintenance on `data/factory/factory.db` following the
+`auto-5d3717e` run; no code changes.
+
+### Holds settled
+
+- All **40 open reservations settled** at their reserved amounts with
+  `kind=usage_estimate` via the new operator settle path — every linked
+  attempt was `downloaded`/`succeeded`, so the paid work verifiably ran.
+  Audited as `reservation_settled_by_operator` events.
+- **Overspend exposed:** `syp34-vertex-approved-4590780` is over its
+  18.37M µUSD cap by ~2.54M — repeated authorization rounds each held
+  against the aggregate ceiling and settled usage exceeded it. The
+  negative `available` is intentional honest accounting; do not
+  authorize further work under that budget.
+- Remaining headroom: `syp34-vertex-approved-6886170` ~522K µUSD,
+  `lezys-tts-approved-2000` 325 credits.
+
+### Aborted delivery and smoke residue
+
+- The 4 `awaiting_review` delivery jobs for the autorun experiment's
+  plan (`plan-a8d8a661`) cancelled — operator aborted Drive delivery —
+  recorded via a `delivery_aborted` event. Twenty pending delivery jobs
+  on other experiments (`exp-dog-ball-*`, `exp-ev-ranking-01`,
+  `exp-syp34-*`) were left untouched.
+- Smoke-test residue removed: autorun `auto-d91f3120c63a4f62`, its
+  autostep command record and job, and seed `seed-youtube-5f6b0b4e201f2a7e`.
+  The append-only event ledger was retained.
+
+### Shutdown
+
+- Full stack stopped: API (:8100), worker, hypit runtime worker, and
+  the whisperx.local program (:8765). `media.local`/`hyperframes.local`
+  keep stale "ready" records in the runtime DB but hold no ports —
+  reconciled on the next `runtime up`. Logs truncated.
+- Docs note added: `factory-down.sh` stops the API and worker only;
+  hypit programs need `./scripts/hypit.sh programs down`.

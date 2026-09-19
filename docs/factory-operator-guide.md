@@ -29,7 +29,10 @@ It launches the hypit runtime (whisperx.local, media.local,
 hyperframes.local), the API on :8100 and a single worker in the
 background, waits for health, and prints the status. Logs live in
 `.run/api.log` and `.run/worker.log`. Safe to re-run — already-running
-services are left alone. `./scripts/factory-down.sh` stops the stack.
+services are left alone. `./scripts/factory-down.sh` stops the factory
+API and worker; the local hypit **programs** (whisperx.local and
+friends) are external and keep running — `./scripts/hypit.sh programs
+down` stops them and frees their ports.
 The launcher now confirms the worker is still alive a couple of seconds
 after starting it and prints the log tail if it died. The worker itself
 rides through brief `database is locked` contention (bounded backoff);
