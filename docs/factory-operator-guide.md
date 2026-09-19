@@ -28,9 +28,14 @@ cd "/Users/tingsongdai/Kimi-cursor/Short Form AI YouTube"
 It launches the hypit runtime (whisperx.local, media.local,
 hyperframes.local), the API on :8100 and a single worker in the
 background, waits for health, and prints the status. Logs live in
-`.run/api.log` and `.run/worker.log`. Safe to re-run — already-running
-services are left alone. `./scripts/factory-down.sh` stops the factory
-API and worker; the local hypit **programs** (whisperx.local and
+`.run/api.log` and `.run/worker.log`, and the launcher writes
+`.run/api.pid` / `.run/worker.pid` recording the processes it started.
+Safe to re-run — already-running services are left alone.
+`./scripts/factory-down.sh` stops the factory API and worker **for this
+checkout only**: processes are matched by this workspace's own `.venv`
+path and pidfiles, so a sibling project running the same factory code
+(or you running the manual command in another repo) can never be killed
+by accident. The local hypit **programs** (whisperx.local and
 friends) are external and keep running — `./scripts/hypit.sh programs
 down` stops them and frees their ports.
 The launcher now confirms the worker is still alive a couple of seconds
@@ -86,13 +91,24 @@ render → QC. You click once and watch progress.
    source media, missing voice, exhausted budgets, an unqualified
    provider route, or a failed automated check. Each pause shows a
    code, a plain explanation, and a recovery action. **Resume**
-   continues from durable state — nothing paid runs twice.
+   continues from durable state — nothing paid runs twice. This holds
+   even across a crash: every paid-work step records its plan,
+   authorization and job ids as it goes, and a restart reuses them
+   instead of minting new ones.
    For a `budget_exhausted` pause, check replacement budgets in step 2
-   first; Resume adds them to the run (audited). Past pauses stay
-   visible under **Pause history** after a resume — the code, stage,
-   explanation and recovery action are kept, not just the latest pause.
+   first; Resume adds them to the run (audited). Resume can also update
+   per-operation limits or an expired authorization's validity window
+   (audited parameter changes — the pause itself lists what's
+   resumable). Past pauses stay visible under **Pause history** after a
+   resume — the code, stage, explanation and recovery action are kept,
+   not just the latest pause.
    Local render timeouts retry on their own (bounded backoff); only
    exhaustion pauses the run.
+   Narration is bought per unique line, not per segment: if several
+   segments or variants speak the same words, that line is synthesized
+   once and each segment still gets its own measured fit and captions.
+   Scripts longer than 20 unique lines are bought in separate batches
+   automatically — no manual splitting needed.
 5. When it finishes, open the experiment in **Compare** — four playable
    finals with scripts, captions, hypotheses, highlighted changed
    sections, and QC results. `done` means the finals exist and passed
@@ -343,7 +359,7 @@ you explicitly authorize each destination.
 |---|---|
 | **Providers** | Readiness checklist per generation/audio route (installed → authenticated → tested → qualified). **Re-check readiness** refreshes on demand — it no longer re-runs constantly in the background. |
 | **Products** | Product snapshots pulled for claims/packaging evidence. Authorization always validates the *pinned* snapshot revision from the plan — a later refresh can't quietly change approved facts. |
-| **Budgets** | Credit/USD ceilings with reserved / used / **unknown** columns, plus the **Open holds** table: settle a finished hold at its actual charge (evidence required) or release one whose attempt verifiably never charged. Unknown charges are shown honestly — never silently treated as zero. |
+| **Budgets** | Credit/USD ceilings with reserved / used / **unknown** columns, plus the **Open holds** table: settle a finished hold at its actual charge (evidence required) or release one whose attempt verifiably never charged. A hold settled on an estimate can later be upgraded to the provider-reported or invoice-confirmed amount via `POST /api/reservations/{id}/adjust` — the original entry is preserved in the audit event, and downgrades are refused. A recorded `spend_overrun` blocks new dispatch until an operator resolves it via `POST /api/budgets/resolve-overrun` (operator + evidence + resolution required; the overrun stays in the ledger). Unknown charges are shown honestly — never silently treated as zero. |
 | **Research** | Trend discovery plans. Identical searches hit the durable cache instead of re-charging; coverage reports real provider calls. **No research provider is currently configured** — plan requests return `route_unavailable` until one is qualified and enabled. |
 | **Analysis** | The mandatory deep-analysis workspace described in Step 1b — staged evidence, understanding/timeline/treatment forms, review and recovery actions. |
 | **Audio** | Speech fitting and attach. |
@@ -382,6 +398,20 @@ you explicitly authorize each destination.
 - **Under-exposed variants can't win.** A challenger below the frozen
   minimum exposure or failing a guardrail on any required platform is
   disqualified — a tiny sample can't crown a champion.
+- **A QC verdict binds to the exact bytes it reviewed.** If a final is
+  replaced after its review was submitted, the old verdict is discarded
+  and the new bytes get one fresh review — a stale pass can never stamp
+  a different video.
+- **A scan that didn't run isn't a pass.** If the media probe is
+  missing, times out, or fails, the review comes out `uncertain` with
+  the reason noted — never a silent green.
+- **Declared uncertainty isn't upgraded on vibes.** When the analysis
+  provider marks a scene observation uncertain, it stays uncertain
+  unless independent local evidence (a detected scene cut or the media
+  head) anchors it — transcript overlap alone doesn't promote it.
+- **A crash can't double-charge.** Paid effect plans are content-keyed
+  and their plan/authorization/job ids are persisted as work is queued;
+  a restart reuses them instead of submitting a second paid job set.
 
 ## 5. When something goes wrong
 
@@ -400,8 +430,13 @@ you explicitly authorize each destination.
 | Selection stuck on `waiting` | Required checkpoint data hasn't arrived — check the checkpoint labels on the Publishing tab; a `retrying`/`late`/`missed` label says why. |
 | Worker crashes with `database is locked` on startup | Another worker (or a long job transaction) holds the write lock — **only one worker may run**. Stop the other one, or just use `./scripts/factory-up.sh` which never double-starts. |
 | Analysis blocked with `transcript_failed` / `fetch failed` | The local WhisperX service was unreachable at that moment. Restart it (`./scripts/hypit.sh runtime up` or `./scripts/factory-up.sh`), confirm `whisperx.local` shows ready, then re-run the analysis evidence — the retry is free and local. |
+| Auto run paused `final_qc_flagged` | A final's automated review came back uncertain or failed. Watch it yourself, then either *Accept after human review* (records a named human verdict) or *Recheck once* (one fresh paid review — never an unbounded loop). Plain Resume just re-reads the recorded verdicts. |
+| Auto run paused `capability_unavailable` | You asked for something with no configured route (generated music, automated visual QC). Either qualify the route on the Providers tab, or Resume with the declared fallback the pause block offers (e.g. finish without music, technical checks only) — the run never silently weakens a requested capability. |
+| Auto run paused `limit_too_low` or an expired authorization | Resume can update the values it needs: raise the per-operation limits or extend the authorization validity window in the pause block — changes are audited on the run. |
+| New dispatch blocked by `spend_overrun` | A settled charge pushed a budget over its ceiling. Review the account, then call `POST /api/budgets/resolve-overrun` with operator, evidence and resolution (raise the ceiling or accept it as absorbed) — the block lifts and the event stays in the ledger. |
+| Manual post registration fails `platform_verifier_unavailable` | No platform verifier is configured for that destination. YouTube registrations verify against the Data API automatically when `youtube_analytics` is connected; other platforms stay honestly unverified until a verifier exists. |
 
-## 6. Honest limitations (as of 2026-09-18)
+## 6. Honest limitations (as of 2026-09-19)
 
 - Two spots still involve JSON-ish input: the observations box (Step 1,
   preliminary only) and the experiment plan draft (Step 2). The deep
@@ -431,6 +466,14 @@ you explicitly authorize each destination.
   credits at a measured 30 credits/second), and **audiovisual_analysis**
   (`gemini-2.5-flash` reference-video understanding). Each still needs a
   quoted plan + your authorization before it spends anything.
+- Holds settled before the provider invoice lands are recorded as
+  *usage estimates* — honest placeholders, not final accounting. They
+  can be upgraded one-way (estimate → provider-reported →
+  invoice-confirmed) via the reservation `adjust` API with evidence;
+  the estimate itself is never overwritten.
+- Manual-post verification exists for **YouTube only** (checked against
+  the Data API when `youtube_analytics` is connected). Manual
+  declarations on other platforms remain unverified by design.
 
 ---
 

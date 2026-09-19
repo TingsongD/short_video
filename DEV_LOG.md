@@ -87,7 +87,20 @@ coverage. Offline only — no paid calls in tests.
 
 - Operator guide documents the declared copy provenance (control A is
   verbatim source-derived close adaptation; fit fallback reverts to
-  source copy, never invented words) and the new resume resolutions.
+  source copy, never invented words), the resume resolutions
+  (`resolve_qc` accept/recheck, `set_params` for limits/validity/
+  visual QC/music), capability-fallback pauses, per-unique-line TTS
+  billing, the checkout-scoped pidfile lifecycle, and the settlement
+  upgrade + overrun-resolution routes; the safety-rules and
+  troubleshooting sections list the new enforcement points
+  (QC-binds-to-bytes, scan-can't-pass, preserved uncertainty,
+  crash-can't-double-charge) and recovery rows for
+  `final_qc_flagged`, `capability_unavailable`, `spend_overrun` and
+  `platform_verifier_unavailable`.
+- `docs/factory-operations.md` updated to match: pidfile +
+  absolute-path process scoping, the YouTube Data API manual-post
+  verifier (`platform_verifier_unavailable` when absent), and the
+  `adjust` / `resolve-overrun` accounting routes.
 - DEV_LOG order restored to newest-on-top; PROGRESS header is now a
   current-status index pointing here. W01/W03–W05 and L01–L04 remain
   recorded follow-ups.

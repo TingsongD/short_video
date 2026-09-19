@@ -27,7 +27,12 @@ never printed).
 ## Services
 
 API and worker are **separately owned** processes (F26 identity
-registration — pid + start-time + command).
+registration — pid + start-time + command). The managed launcher
+(`scripts/factory-up.sh` / `factory-down.sh`) starts them through this
+checkout's absolute `.venv` path and records `.run/api.pid` /
+`.run/worker.pid`; stop/status match only that path, so workers from a
+sibling checkout of the same repository are never matched, signaled or
+stopped here.
 
 Build the dashboard once, then start the API and worker in separate terminals:
 
@@ -166,6 +171,11 @@ its final hash, destination, action and expiry. `/run` queues a durable publicat
 `/observe` reconciles its existing provider identity. An uncertain reply never
 becomes a new upload. Manual declarations remain unverified until a platform
 verifier confirms post identity, destination and actual publication time.
+YouTube declarations verify against the Data API (`videos.list` on the
+configured `youtube_analytics` transport); when no verifier exists for a
+destination, registration is rejected as `platform_verifier_unavailable`
+and `readiness()` reports the gap — it never fails mid-flow as a
+transport error.
 
 The adapter sends actual file bytes, a client request ID and async parameters,
 then reads the documented per-platform results. Completed aggregates can contain
@@ -270,6 +280,16 @@ configuration; a key alone does not establish the configured OAuth account.
 Offline startup constructs none of these live transports. Unknown actual USD
 charges retain reservations until accounting evidence arrives. An overrun is
 recorded and blocks new dispatch; it never silently raises authority.
+
+Accounting corrections are first-class routes, both evidence-gated:
+`POST /api/reservations/{id}/adjust` upgrades a settlement up the
+confirmation ladder (`usage_estimate` → `reported_usage` →
+`invoice_confirmed`) — the prior entry is preserved in a
+`settlement_adjusted` event and downgrades are refused, so an
+estimate-era hold can always be reconciled to the real invoice later.
+`POST /api/budgets/resolve-overrun` lifts the `spend_overrun` dispatch
+block with operator, evidence and resolution recorded; the overrun
+event stays in the ledger.
 
 ### Restored activation and rollback
 
