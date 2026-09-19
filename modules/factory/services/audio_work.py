@@ -70,7 +70,10 @@ class AudioWork:
             attached=0
             for key,items in segments.items():
                 for seg in items:
-                    if seg['id']==binding['segment_id'] and self.speech.normalize(seg.get('copy') or '')==self.speech.normalize(speech.get('source_text') or '') and seg['target']==speech['target']:
+                    copy_text = str(seg.get('copy') or '').strip()
+                    if not copy_text:
+                        continue
+                    if seg['id']==binding['segment_id'] and self.speech.normalize(copy_text)==self.speech.normalize(speech.get('source_text') or '') and seg['target']==speech['target']:
                         # Bind the canonical identity, not the surface
                         # form: copy text may carry contractions/numerals
                         # the synthesizer spelled differently.

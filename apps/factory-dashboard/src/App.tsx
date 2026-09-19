@@ -10,12 +10,14 @@ import { AnalysisScreen } from "./features/analysis/AnalysisScreen";
 import { QueueScreen, JobView } from "./features/queue/QueueScreen";
 import { PublishingScreen } from "./features/publishing/PublishingScreen";
 import { LearningScreen } from "./features/learning/LearningScreen";
+import { buildCaptionAndFootageVariants } from "./features/experiments/variation";
+import { AutoRunScreen } from "./features/autorun/AutoRunScreen";
 
 // The server owns these JSON domain records. The editor round-trips unknown
 // optional fields; IDs, revision and hashes always come from the selected row.
 type Row = Record<string, any>;
-const TABS = ["Seeds", "Plan", "Queue", "Compare", "Reviews", "Delivery", "Studio", "Providers", "Products", "Budgets", "Research", "Analysis", "Audio", "Publishing", "Learning"] as const;
-const names = ["seeds","blueprints","templates","experiments","plans","assets","reviews","deliveries","products","budgets","research","effect_plans","publications","metrics","policies","decisions","metadatapackages","checkpoints","selections","lineages","loops"];
+const TABS = ["Seeds", "Auto", "Plan", "Queue", "Compare", "Reviews", "Delivery", "Studio", "Providers", "Products", "Budgets", "Research", "Analysis", "Audio", "Publishing", "Learning"] as const;
+const names = ["seeds","blueprints","templates","experiments","plans","assets","reviews","deliveries","products","budgets","research","effect_plans","publications","metrics","policies","decisions","metadatapackages","checkpoints","selections","lineages","loops","autoruns"];
 
 export default function App() {
   const [tab,setTab]=useState<(typeof TABS)[number]>("Seeds");
@@ -60,17 +62,18 @@ export default function App() {
   const selectedSeed=(data.seeds||[]).find(x=>x.id===selected?.experiment?.seed_id);
   const clock=selected?.experiment?.output_clock;const fps=clock?clock.num/clock.den:30;
   const compare=[...(selectedSeed?.source_asset_id?[{key:'source',label:'Reference',media_url:media(selectedSeed.source_asset_id),media_sha:''}]:[]),
-    ...finals.map(v=>({key:v.variant_key,label:`${v.variant_key} · revision ${v.experiment_revision}`,media_url:media(v.final.artifact_id),media_sha:v.final.sha256,
-      duration_s:v.target_frames/fps,regions:v.allowed_regions.map((r:Row)=>({start_s:r.start/fps,end_s:r.end/fps,label:v.changed_factor}))}))];
+    ...variants.map(v=>v.final?{key:v.variant_key,label:`${v.variant_key} · revision ${v.experiment_revision}`,media_url:media(v.final.artifact_id),media_sha:v.final.sha256,
+      duration_s:v.target_frames/fps,regions:(v.allowed_regions||[]).map((r:Row)=>({start_s:(r.start_frame??r.start)/fps,end_s:(r.end_frame??r.end)/fps,label:v.changed_factor})),
+      details:{changes:v.changes,checks:v.checks,captions:(v.segments||[]).flatMap((s:Row)=>(s.captions||[]).map((c:Row)=>c.text)),script:(v.segments||[]).map((s:Row)=>s.copy).filter(Boolean)}}
+      :{key:v.variant_key,label:`${v.variant_key} · pending`,pending:true,
+        details:{changes:v.changes,checks:[],captions:[],script:(v.segments||[]).map((s:Row)=>s.copy).filter(Boolean)}})];
   async function makeDraft(){
     if(!blueprint||blueprint.status!=='accepted'||!seed?.source_asset_id)throw new Error('Accept a source blueprint first.');
     let template=(data.templates||[]).find(t=>t.derived_from_blueprint===blueprint.content_hash);
     if(!template)template=(await call<{template:Row}>('POST','/api/templates',{body:{blueprint_id:blueprint.id}})).template;
     const segments=blueprint.beats.map((b:Row)=>({id:b.id,slot_id:b.id,role:b.role,target:b.target,copy:'',speech:{},
       picture:{artifact_id:seed.source_asset_id,source_in_s:b.target.start_frame/(blueprint.clock.num/blueprint.clock.den)},captions:[],transition:'cut',claims:[]}));
-    const variations=['B','C','D'].map((key,i)=>{const pos=[0,Math.floor(segments.length/2),segments.length-1][i];const changed=structuredClone(segments);
-      changed[pos].captions=[{text:`Write your ${['hook','body','ending'][i]} caption`,...changed[pos].target}];
-      return{key,factor:['hook','body','ending'][i],regions:[segments[pos].target],segments:changed,hypothesis:'Write the specific hypothesis',primary_metric:'retention',allowed_fields:['captions']};});
+    const variations=buildCaptionAndFootageVariants(segments,blueprint.beats);
     setDraft(JSON.stringify({id:crypto.randomUUID(),blueprint_id:blueprint.id,template_id:template.id,segments,variants:variations,music:{artifact_id:'SELECT_IMPORTED_AUDIO',gain:1,provenance:'Describe permission or license'}},null,2));
     setTab('Plan');
   }
@@ -89,7 +92,7 @@ export default function App() {
       {seed.source_asset_id&&<video controls src={media(seed.source_asset_id)} style={{maxHeight:320}}/>}
       <h3>Observed timing and transcript</h3><p>Import your observations, then review the extracted source evidence.</p>
       <textarea aria-label="Source observations" rows={10} value={observations} onChange={e=>setObservations(e.target.value)}/><button onClick={()=>act(()=>call('POST',`/api/seeds/${seedId}/analyze`,{body:{reviewer:requireReviewer(),observations:JSON.parse(observations)}}),'Analysis queued')}>Analyze imported observations</button>
-      {blueprint&&<><pre>{JSON.stringify(blueprint.beats,null,2)}</pre><p>Acceptance requires a completed deep analysis — see the Analysis tab. Manual observations here are preliminary evidence only.</p><button disabled={blueprint.status==='accepted'} onClick={()=>act(()=>call('POST',`/api/blueprints/${blueprint.id}/review`,{body:{content_hash:blueprint.content_hash,reviewer:requireReviewer()}}))}>Accept source timing</button><button onClick={()=>act(makeDraft,'Draft prepared — replace source footage with your own approved assets')}>Prepare four variants</button></>}</>}
+      {blueprint&&<><pre>{JSON.stringify(blueprint.beats,null,2)}</pre><p>Acceptance requires a completed deep analysis — see the Analysis tab. Manual observations here are preliminary evidence only.</p><button disabled={blueprint.status==='accepted'} onClick={()=>act(()=>call('POST',`/api/blueprints/${blueprint.id}/review`,{body:{content_hash:blueprint.content_hash,reviewer:requireReviewer()}}))}>Accept source timing</button><button onClick={()=>act(makeDraft,'Draft prepared — B/C/D each vary one footage region and its caption')}>Prepare four variants</button></>}</>}
       <details><summary>Imported asset identities</summary><pre>{JSON.stringify(data.assets,null,2)}</pre></details>
     </section>}
     {tab==='Plan'&&<section><h2>Four-variant plan</h2><p>Edit the planned assets, copy and declared changes before requesting a quote. Reuse only source footage you have permission to use.</p>
@@ -102,6 +105,7 @@ export default function App() {
     </section>}
     {tab==='Queue'&&<QueueScreen jobs={jobs.filter(j=>!experimentId||j.experiment_id===experimentId).map(j=>({id:j.id,variant:j.variant_key||'',stage:j.phase,state:(j.status==='succeeded'?'done':['failed','blocked'].includes(j.status)?j.status:j.status==='awaiting_review'?'blocked':['ready','waiting_dependencies'].includes(j.status)?'queued':'running') as JobView['state']}))}
       onRetry={id=>act(()=>call("POST",`/api/jobs/${id}/retry-local`,{body:{reviewer:requireReviewer()}}),"Local retry queued")} onRelease={id=>act(()=>call("POST",`/api/jobs/${id}/release-local`,{body:{reviewer:requireReviewer()}}),"Owned cleanup queued")} onPause={()=>act(()=>api.pause(experimentId))} onResume={()=>act(()=>api.resume(experimentId))} onReconcile={id=>act(()=>call('POST',`/api/jobs/${id}/reconcile`,{body:{}}))}/>}
+    {tab==='Auto'&&<AutoRunScreen seeds={seeds} budgets={data.budgets||[]} runs={data.autoruns||[]} act={act} media={media} onSelectExperiment={id=>{setExperiment(id);setTab('Compare');}}/>}
     {tab==='Compare'&&<CompareScreen entries={compare}/>}
     {tab==='Reviews'&&<section><h2>Review assets and finals</h2>{plan&&<><p>Inspect the imported or generated picture assets before approving their use.</p>{videoAssets.map(a=><details key={a.id}><summary>{a.id}</summary><video controls src={media(a.id)} style={{maxHeight:300}}/><button onClick={()=>act(()=>call('POST',`/api/experiments/${experimentId}/assets/review`,{rev:selected?.revision,body:{plan_hash:plan.plan_hash,reviewer:requireReviewer(),artifact_ids:[a.id],verdict:'pass'}}))}>Accept this asset for this plan</button></details>)}</>}
       {finals.map(v=><ReviewsScreen key={v.id} target={{variant:v.variant_key,sha256:v.final.sha256,revision:v.experiment_revision,stale:!!v.stale_reason,failures:reviews.filter(r=>v.final.check_ids.includes(r.id)&&r.verdict!=='pass').map(r=>({check:r.check_type,detail:(r.limitations||[]).join(', ')}))}}

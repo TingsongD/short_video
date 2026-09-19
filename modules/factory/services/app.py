@@ -19,7 +19,7 @@ COLLECTIONS = {"seeds":"seed", "blueprints":"referenceblueprint", "templates":"f
     "products":"productsnapshot", "experiments":"experimentrevision", "variants":"variantplan",
     "plans":"productionplan", "compositions":"composition", "reviews":"review", "deliveries":"delivery",
     "publications":"publication", "decisions":"decision",'research':'discoveryrun','effect_plans':'effectplan','metrics':'metricsnapshot','policies':'decisionpolicy','analyses':'referenceanalysis',
-    'metadatapackages':'metadatapackage','checkpoints':'checkpointschedule','selections':'seedselection','lineages':'roundlineage','loops':'looppolicy'}
+    'metadatapackages':'metadatapackage','checkpoints':'checkpointschedule','selections':'seedselection','lineages':'roundlineage','loops':'looppolicy','autoruns':'autorun'}
 
 
 class FactoryServices:
@@ -425,15 +425,69 @@ class FactoryServices:
 
     def experiment_results(self,eid):
         exp=self._current(eid); variants=[]
+        try: plan=self.plan_for(eid)
+        except ContractError: plan=None
         for key in 'ABCD':
             try:
                 v=self.experiments._variant(eid,key).to_dict()
                 row=self.db.conn.execute("SELECT value FROM meta WHERE key=?",('final:'+v['id'],)).fetchone()
-                if row: v['final']=json.loads(row[0])
+                if row:
+                    final=json.loads(row[0])
+                    # Revision scope: a final belongs to the plan that
+                    # rendered it. An older revision's output must never
+                    # relabel itself as the current one.
+                    if plan and final.get('plan_id')==plan['id']:
+                        v['final']=final
+                        v['checks']=self._final_checks(final)
+                v['changes']=self._variant_changes(exp,v)
                 variants.append(v)
             except ContractError: pass
         return {'id':eid,'experiment_id':eid,'revision':exp.revision,'status':exp.status,
             'experiment':exp.to_dict(),'variants':variants,'results':[], 'coverage':'unavailable'}
+
+    def _final_checks(self,final):
+        checks=[]
+        for cid in final.get('check_ids') or []:
+            row=self.db.uow().records.get('review',cid)
+            if row: checks.append(json.loads(row['body']))
+        for r in self.db.conn.execute(
+            "SELECT body FROM records WHERE kind='review' AND "
+            "json_extract(body,'$.check_type')='automated_visual' AND "
+            "json_extract(body,'$.target_hash')=? "
+            "ORDER BY created_at DESC",(final.get('sha256'),)).fetchall():
+            checks.append(json.loads(r['body']))
+        return checks
+
+    def _variant_changes(self,exp,v):
+        key=v.get('variant_key','')
+        if key=='A':
+            return {'summary':'Control — closest adaptation of the '
+                    'reference structure and narration','factor':'control',
+                    'regions':[],'changed_segments':[]}
+        fps=exp.output_clock['num']/exp.output_clock['den']
+        regions=[{'start_s':r['start_frame']/fps if 'start_frame' in r else r.get('start',0)/fps,
+                  'end_s':r['end_frame']/fps if 'end_frame' in r else r.get('end',0)/fps}
+                 for r in v.get('allowed_regions') or []]
+        changed=[]
+        try:
+            a=self.experiments._variant(exp.experiment_id,'A')
+            a_segs={s['id']:s for s in a.segments}
+            for seg in v.get('segments') or []:
+                old=a_segs.get(seg['id'])
+                if old is None: continue
+                diffs=[]
+                if seg.get('copy')!=old.get('copy'): diffs.append('copy')
+                if (seg.get('picture') or {})!=(old.get('picture') or {}): diffs.append('picture')
+                if diffs: changed.append({'segment':seg['id'],'fields':diffs,
+                                          'a_copy':old.get('copy',''),'b_copy':seg.get('copy','')})
+        except ContractError: pass
+        factor=v.get('changed_factor') or ''
+        labels={'hook':'stronger opening hook','body':'clearer body section',
+                'ending':'stronger payoff and loop'}
+        return {'summary':v.get('hypothesis') or labels.get(factor,factor),
+                'factor':factor,'metric':v.get('primary_metric',''),
+                'label':labels.get(factor,factor),
+                'regions':regions,'changed_segments':changed}
 
     def media_path(self,asset_id):
         return self.require('artifacts').verified_path(asset_id)

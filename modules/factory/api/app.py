@@ -316,6 +316,22 @@ def create_app(services, session_token=None):
         status,resp=mutation(request,body,lambda:(200,{"seed":services.attach_media(seed_id,body['artifact_id'])}))
         return JSONResponse(resp,status_code=status)
 
+    @app.post("/api/autoruns", status_code=201)
+    async def autorun_create(request: Request):
+        body = await json_command(request)
+        status,resp=mutation(request,body,lambda:(201,{"run":services.autorun.create(body)}))
+        return JSONResponse(resp,status_code=status)
+
+    @app.get("/api/autoruns/{run_id}")
+    async def autorun_detail(run_id: str):
+        return {"run":services.autorun.detail(run_id)}
+
+    @app.post("/api/autoruns/{run_id}/resume")
+    async def autorun_resume(run_id: str,request: Request):
+        body=await json_command(request)
+        status,resp=mutation(request,body,lambda:(200,{"run":services.autorun.resume(run_id,body)}))
+        return JSONResponse(resp,status_code=status)
+
     @app.post("/api/blueprints/{blueprint_id}/review")
     async def review_blueprint(blueprint_id: str,request: Request):
         body=await json_command(request)

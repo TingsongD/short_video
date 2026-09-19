@@ -7,6 +7,28 @@ decisions) is my direct work.
 
 ---
 
+## 2026-09-18 — One-command stack launch
+
+User asked to collapse the multi-terminal startup. Added
+`scripts/factory-up.sh` / `scripts/factory-down.sh`: up runs
+`hypit runtime up` (whisperx.local, media.local, hyperframes.local),
+then nohup's one API (:8100) + one worker to `.run/*.log`, waits for
+`/api/health`, prints status. Idempotent — running services are left
+alone. Down stops worker+api, then `programs down` + `runtime down`
+(scoped to this project's profile; the other repo's hypit worker is
+untouched). `.run/` added to .gitignore. Operator guide §1 rewritten:
+one worker only, the launcher, and the manual equivalent.
+
+Also this session: EV analysis `ra-seed-youtube-fc05ef1e33f92865`
+recovered to `evidence_ready` (whisperx `fetch failed` was a transient
+service outage; rerun cleared it). Explained the recurring
+`database is locked` — busy_timeout is 5 s and stage work holds write
+transactions for seconds, so a second worker dies at first tick;
+`zsh: terminated` was external SIGTERM (cleanup kills), never a code
+path. Committed all accumulated work as `ce73c30` (63 files).
+
+---
+
 ## 2026-09-18 — Remaining providers qualified (user approved pilots)
 
 User approved the billable qualification pilots for all three remaining
@@ -1035,3 +1057,59 @@ This completion record was appended after the implementation checkpoint. It
 records the existing verification results; no code or tests were changed or
 rerun for this documentation update. The repair summary's stale S8 “verification
 in progress” label was also corrected to match the completed evidence.
+
+## 2026-09-19 — Automatic seed → A–D pipeline ("Auto" tab)
+
+### What was built
+
+- `modules/factory/autorun/` — durable orchestrator: an `autorun` record
+  plus one self-deferring `auto_step` worker job drives intake → evidence →
+  video_analysis → sections → analysis_review → blueprint → template →
+  script → music → draft → tts → quote → authorize → run → footage →
+  compose → final_qc → done. Waits defer through the scheduler (survives
+  worker restarts, no busy loop); failures pause with code/detail/action.
+- `autorun/scripts.py` — deterministic adaptation: A close control, B hook,
+  C body, D ending; each declares changed factor, hypothesis, primary
+  metric and changed region. Optional qualified `adapt_script` LLM route;
+  failure pauses (`script_llm_failed`) and resume falls back to
+  deterministic scripts instead of re-dispatching a dead job.
+- `autorun/review.py` — automated asset/final inspection (streams, duration,
+  resolution, black/frozen frames) written as `reviewer_type="automated"`
+  Review records bound to artifact id+sha and plan hash; the production
+  selector resolves awaiting_review nodes from these records.
+- Vertex adapter gained `adapt_script` and `review_final` tasks;
+  `generated_music` added to the Authorization provider whitelist;
+  `QualityService.record_verdict` accepts `reviewer_type`.
+- Finals stamped with `plan_id`/`experiment_revision`; `experiment_results`
+  exposes only current-plan finals — older renders can never be relabelled
+  as a new revision.
+- Budget semantics fixed: authority caps cover unit totals; exhausted
+  budgets pause as `budget_exhausted`; resume accepts `budget_ids`
+  (replace) / `add_budget_ids` (add), validated and audited.
+- Dashboard: Auto tab (seed link + media attach, voice, budget checks,
+  per-operation limits, music/visual-QC toggles, stage bar, pause card
+  with resume-including-budgets); Compare shows pending states and
+  per-variant hypotheses, changed sections and QC checks.
+- API: `POST /api/autoruns`, `GET /api/autoruns/{id}`,
+  `POST /api/autoruns/{id}/resume`; `autoruns` collection.
+
+### Verification
+
+- `tests/test_factory_autorun.py`: 8 passed (offline, fully mocked) —
+  seed→4 renders, rollback, revision scoping, receipt backup/restore,
+  caller-process loss, malformed command rejection, render capacity after
+  expired worker, OAuth redaction, fractional frame-rate caption clocks.
+- Full backend suite: 1075 passed; the pre-existing
+  `test_full_publish_learn_next_round_journey` failure at HEAD
+  (expected `provisional_winner`, got `no_improvement`) deselected —
+  unrelated, reproduced on a clean stash.
+- Dashboard: 30 tests + production build green.
+- Live smoke: `POST /api/autoruns` over the real API created a durable run;
+  the worker advanced it to an honest `missing_source_media` pause with a
+  resume action — zero paid calls.
+
+### Honest boundaries
+
+- Real paid end-to-end (live Vertex/Jimeng/TTS) not yet run — needs an
+  authorized budget covering the exact run plus Drive-delivery completion.
+- No paid fallback was inferred; every pause is explicit.

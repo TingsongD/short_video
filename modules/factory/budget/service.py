@@ -47,7 +47,12 @@ class BudgetService:
     # ------------------------------------------------------------ budgets
 
     def create_budget(self, bid, unit, scope, scope_key="", cap=None):
-        """cap=None means unset → zero authority. cap=0 blocks all spend."""
+        """Create a ceiling, or raise an existing ceiling with the same id.
+
+        ``cap=None`` means unset → zero authority. ``cap=0`` blocks all
+        spend.  Reusing an id is the audited top-up path: identity fields must
+        stay fixed and a recorded ceiling may only increase.
+        """
         if unit not in UNITS:
             raise ContractError("unknown_unit", "unit", unit)
         if scope not in ("aggregate", "provider", "category", "experiment"):
@@ -55,6 +60,22 @@ class BudgetService:
         if cap is not None and (type(cap) is not int or cap < 0):
             raise ContractError("invalid_cap", "cap_amount", repr(cap))
         with self.db.uow() as u:
+            existing = u.conn.execute(
+                "SELECT unit,scope,scope_key,cap_amount FROM budgets WHERE id=?",
+                (bid,)).fetchone()
+            if existing is not None:
+                identity = (existing["unit"], existing["scope"],
+                            existing["scope_key"])
+                if identity != (unit, scope, scope_key):
+                    raise ContractError("budget_identity_conflict",
+                                        "budget_id", bid)
+                old_cap = existing["cap_amount"]
+                if old_cap is not None and (cap is None or cap < old_cap):
+                    raise ContractError("budget_ceiling_decrease",
+                                        "cap_amount", repr(cap))
+                u.conn.execute("UPDATE budgets SET cap_amount=? WHERE id=?",
+                               (cap, bid))
+                return bid
             u.conn.execute(
                 "INSERT INTO budgets(id,unit,scope,scope_key,cap_amount,"
                 "created_at) VALUES(?,?,?,?,?,?)",

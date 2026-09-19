@@ -79,14 +79,19 @@ class FastPathRenderer:
         """Normalize the exact selected interval; cache every rendering decision."""
         if frames <= 0 or fps <= 0 or source_in_s < 0 or set(effects)-{"cut","caption","static_image","text_overlay","audio_bed"}:
             raise RuntimeError("unsupported_or_invalid_section")
-        info = next(x for x in probe_path(self.runner,src)["streams"] if x["codec_type"] == "video")
+        probe = probe_path(self.runner, src)
+        info = next(x for x in probe["streams"] if x["codec_type"] == "video")
         width,height = width or info["width"],height or info["height"]
         if kind != "image":
-            duration = float(info.get("duration",0))
+            # Matroska/WebM commonly omits duration on the individual
+            # video stream while still reporting it on the container.
+            # Use the format duration as the authoritative fallback.
+            duration = float(info.get("duration") or
+                             (probe.get("format") or {}).get("duration") or 0)
             if duration+1e-5 < source_in_s+frames/fps:
                 raise RuntimeError("short_footage: source range exceeds duration")
         settings={"source_sha256":_digest(src),"frames":frames,"fps":fps,"source_in_s":source_in_s,
-                  "width":width,"height":height,"kind":kind,"effects":list(effects),"renderer":"normalize.v2",
+                  "width":width,"height":height,"kind":kind,"effects":list(effects),"renderer":"normalize.v3",
                   "codec":"libx264","crf":18,"pix_fmt":"yuv420p"}
         identity=hashlib.sha256(json.dumps(settings,sort_keys=True).encode()).hexdigest()
         out=Path(cache_dir)/f"{identity}.mp4"; receipt=out.with_suffix(".json")
@@ -96,9 +101,16 @@ class FastPathRenderer:
                 return out,None
         tmp=out.with_suffix(".pending.mp4")
         args=["-loop","1","-framerate",str(fps)] if kind=="image" else []
-        vf=(f"trim=start={source_in_s},setpts=PTS-STARTPTS,fps={fps},trim=end_frame={frames},"
+        # A container duration can extend a fraction past its final decoded
+        # frame (notably WebM).  The coverage check above still rejects real
+        # shortages; pad one frame so a sub-frame timestamp discrepancy does
+        # not make an otherwise valid tail selection render one frame short.
+        vf=(f"trim=start={source_in_s},setpts=PTS-STARTPTS,"
+            f"tpad=stop_mode=clone:stop_duration={1/fps},"
+            f"fps={fps},trim=end_frame={frames},"
             f"setpts=N/({fps}*TB),scale={width}:{height}:force_original_aspect_ratio=increase,"
-            f"crop={width}:{height},setsar=1")
+            f"crop={width}:{height},setsar=1,"
+            "setparams=range=tv:color_primaries=bt709:color_trc=bt709:colorspace=bt709")
         r=self.runner(["ffmpeg","-v","error","-y",*args,"-i",str(src),"-an","-vf",vf,
                        "-frames:v",str(frames),"-c:v","libx264","-preset","veryfast","-crf","18",
                        "-threads","2","-pix_fmt","yuv420p",str(tmp)],timeout=self.timeout)

@@ -13,17 +13,30 @@ needed for the normal workflow.
 
 ## 1. Starting the system
 
-Two things run on your computer: the **brain** (API, which also serves
-the dashboard) and the **worker** (does the actual jobs).
+Three things run on your computer: the **brain** (API, which also serves
+the dashboard), the **worker** (does the actual jobs — exactly **one**;
+a second worker races the database lock), and the local **hypit
+programs** (WhisperX transcription, media tools).
+
+One command starts all of it:
 
 ```bash
-# Terminal 1 — the API + dashboard (leave running)
 cd "/Users/tingsongdai/Kimi-cursor/Short Form AI YouTube"
-.venv/bin/python -m modules.factory.cli serve --port 8100
+./scripts/factory-up.sh
+```
 
-# Terminal 2 — the worker (leave running)
-cd "/Users/tingsongdai/Kimi-cursor/Short Form AI YouTube"
-.venv/bin/python -m modules.factory.cli worker
+It launches the hypit runtime (whisperx.local, media.local,
+hyperframes.local), the API on :8100 and a single worker in the
+background, waits for health, and prints the status. Logs live in
+`.run/api.log` and `.run/worker.log`. Safe to re-run — already-running
+services are left alone. `./scripts/factory-down.sh` stops the stack.
+
+Manual equivalent, if you prefer two terminals:
+
+```bash
+./scripts/hypit.sh runtime up                       # local programs
+.venv/bin/python -m modules.factory.cli serve --port 8100
+.venv/bin/python -m modules.factory.cli worker      # one worker only
 ```
 
 Then open **http://127.0.0.1:8100** in your browser. The API serves the
@@ -46,7 +59,41 @@ routes are currently qualified.
 
 ## 2. The golden path (a complete production run)
 
-Work left to right through the tabs.
+### Fast lane — the Auto tab (seed → four finished variants)
+
+The **Auto** tab runs the whole pipeline itself: evidence → analysis →
+blueprint → A–D scripts → music → TTS → quote → authorize → footage →
+render → QC. You click once and watch progress.
+
+1. **Source video.** Paste a link → **Add source**, then attach the
+   media file (the file picker appears when the seed has no media), or
+   pick an existing seed that already has media.
+2. **Voice and spend authority.** Enter the TTS voice id, check the
+   budgets this run may draw from, and optionally set per-operation
+   limits, a provider account, a music bed, or automated visual QC.
+3. **Generate A–D automatically.** The run record shows a stage bar and
+   updates live. **A** is a close adaptation; **B** varies the hook,
+   **C** a body section, **D** the ending — each declares its changed
+   factor, hypothesis and intended metric.
+4. It **pauses only** when something genuinely needs you: missing
+   source media, missing voice, exhausted budgets, an unqualified
+   provider route, or a failed automated check. Each pause shows a
+   code, a plain explanation, and a recovery action. **Resume**
+   continues from durable state — nothing paid runs twice.
+   For a `budget_exhausted` pause, check replacement budgets in step 2
+   first; Resume adds them to the run (audited).
+5. When it finishes, open the experiment in **Compare** — four playable
+   finals with scripts, captions, hypotheses, highlighted changed
+   sections, and QC results. Publishing stays a separate manual step
+   in the Publishing tab.
+
+Automatic mode performs real intermediate checks (technical validity,
+duration/resolution coverage per asset, caption alignment, optional
+visual QC). Automated verdicts are labelled `automated` — never shown
+as human approval. A flagged final pauses the run with the issue and
+a resume path instead of passing silently.
+
+### Manual lane — work left to right through the tabs
 
 ### Step 1 — Seeds: give it a reference and your media
 
@@ -119,8 +166,10 @@ source timing** → **Prepare four variants**.
 
 1. On the **Plan** tab, pick your experiment in the **Experiment**
    dropdown at the very top of the page.
-2. The draft plan is editable JSON — the four variants' copy, regions
-   and declared changes. Edit it, or **Load current draft** → tweak →
+2. The draft plan is editable JSON — the four variants' copy, footage,
+   regions and declared changes. The default B/C/D treatments each vary
+   one picture request and its caption (hook, body and ending respectively),
+   while every unchanged shot is shared with A. Edit it, or **Load current draft** → tweak →
    **Save revised draft** (makes a new revision; quotes are per-revision).
 3. **Prepare current quote** — the system prices every operation and
    shows the totals (credits and/or cost). Nothing has been spent yet.
@@ -265,7 +314,7 @@ you explicitly authorize each destination.
 | **Providers** | Readiness checklist per generation/audio route (installed → authenticated → tested → qualified). **Re-check readiness** refreshes on demand — it no longer re-runs constantly in the background. |
 | **Products** | Product snapshots pulled for claims/packaging evidence. Authorization always validates the *pinned* snapshot revision from the plan — a later refresh can't quietly change approved facts. |
 | **Budgets** | Credit/USD ceilings with reserved / used / **unknown** columns. Unknown charges are shown honestly — never silently treated as zero. |
-| **Research** | Trend discovery plans. Identical searches hit the durable cache instead of re-charging; coverage reports real provider calls. |
+| **Research** | Trend discovery plans. Identical searches hit the durable cache instead of re-charging; coverage reports real provider calls. **No research provider is currently configured** — plan requests return `route_unavailable` until one is qualified and enabled. |
 | **Analysis** | The mandatory deep-analysis workspace described in Step 1b — staged evidence, understanding/timeline/treatment forms, review and recovery actions. |
 | **Audio** | Speech fitting and attach. |
 | **Publishing** | Destination matrix, metadata packages, per-slot authorize/run/cancel-remote, checkpoint readbacks — the Step-7 workflow. |
@@ -319,6 +368,8 @@ you explicitly authorize each destination.
 | `cancel_failed` / `unknown` after cancel | The provider refused or didn't confirm — the post may still go live. Check the remote job on the provider's side before assuming it's stopped. |
 | Proposal says `no_winner_artifact` | The champion has no accepted local master file — import or attach the reviewed final, then re-propose (it's idempotent). |
 | Selection stuck on `waiting` | Required checkpoint data hasn't arrived — check the checkpoint labels on the Publishing tab; a `retrying`/`late`/`missed` label says why. |
+| Worker crashes with `database is locked` on startup | Another worker (or a long job transaction) holds the write lock — **only one worker may run**. Stop the other one, or just use `./scripts/factory-up.sh` which never double-starts. |
+| Analysis blocked with `transcript_failed` / `fetch failed` | The local WhisperX service was unreachable at that moment. Restart it (`./scripts/hypit.sh runtime up` or `./scripts/factory-up.sh`), confirm `whisperx.local` shows ready, then re-run the analysis evidence — the retry is free and local. |
 
 ## 6. Honest limitations (as of 2026-09-18)
 
@@ -342,8 +393,14 @@ you explicitly authorize each destination.
   live provider qualification and real analytics readback are still
   gated off until separately authorized and tested against live
   accounts.
-- Generated music and some reference modes are optional routes that may
-  show "unavailable" — that's intentional, not a bug.
+- The qualified routes as of today: **jimeng_canvas** (clip generation),
+  **google_vertex** (`gemini-omni-1.1-flash-preview`, text prompt →
+  video only — reference-image/video input modes stay intentionally
+  unqualified), **elevenlabs** (`eleven_v3` narration), **generated_music**
+  (ElevenLabs `music_v1` instrumental beds, charged in shared ElevenLabs
+  credits at a measured 30 credits/second), and **audiovisual_analysis**
+  (`gemini-2.5-flash` reference-video understanding). Each still needs a
+  quoted plan + your authorization before it spends anything.
 
 ---
 

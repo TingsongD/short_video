@@ -53,6 +53,8 @@ def bootstrap(root, *, providers=None, drive=None, settings=None,publisher=None,
     services.studio.launcher=LocalStudioLauncher(registry,data/'studio')
     from .services.effect_work import EffectWork
     services.effect_work=EffectWork(services)
+    from .autorun.service import AutoRunService
+    services.autorun=AutoRunService(services)
     from .services.audio_work import AudioWork
     services.audio_work=AudioWork(services)
     from .services.analysis_work import AnalysisWork

@@ -47,11 +47,12 @@ class QualityService:
                 "target_hash": final_hash}
 
     def record_verdict(self, check_id, target_hash, check_type,
-                       verdict, evidence=(), limitations=(), now="", binding=None, reviewer=""):
+                       verdict, evidence=(), limitations=(), now="", binding=None, reviewer="",
+                       reviewer_type="human"):
         now = now or datetime.now(timezone.utc).isoformat()
         rev = Review(schema_version="review.v1", id=check_id,
                      created_at=now, target_hash=target_hash,
-                     check_type=check_type, reviewer_type="human", binding=binding or {}, reviewer=reviewer,
+                     check_type=check_type, reviewer_type=reviewer_type, binding=binding or {}, reviewer=reviewer,
                      verdict=verdict, evidence_ids=list(evidence),
                      limitations=list(limitations))
         rev.validate_or_raise()

@@ -105,6 +105,12 @@ export const api = {
 
   createSeed: (url: string) =>
     call("POST", "/api/seeds", { body: { url } }),
+  autorunCreate: (body: Record<string, unknown>) =>
+    call("POST", "/api/autoruns", { body }),
+  autorunDetail: (id: string) =>
+    call<Record<string, unknown>>("GET", `/api/autoruns/${id}`),
+  autorunResume: (id: string, body: Record<string, unknown> = {}) =>
+    call("POST", `/api/autoruns/${id}/resume`, { body }),
   importFile: async (file: File) => {
     if (!csrfToken) await session();
     const digest = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",await file.arrayBuffer()))).map(x=>x.toString(16).padStart(2,"0")).join("");

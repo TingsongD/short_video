@@ -499,7 +499,7 @@ class Authorization(Record):
                 if cap is not None and (type(cap) is not int or cap < 0):
                     e.append(ContractError("invalid_cap", f"caps.{unit}"))
         for p in self.allowed_providers:
-            if p not in PROVIDERS | {"elevenlabs", "google_tts", "google_music", "viral_outliers", "drive", "upload_post", "analysis", "audiovisual_analysis", "youtube_reporting", "shopify"}:
+            if p not in PROVIDERS | {"elevenlabs", "google_tts", "google_music", "generated_music", "viral_outliers", "drive", "upload_post", "analysis", "audiovisual_analysis", "youtube_reporting", "shopify"}:
                 e.append(ContractError("unknown_provider",
                                        "allowed_providers", p))
         return e

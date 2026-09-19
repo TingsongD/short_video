@@ -94,6 +94,20 @@ class TestReservationRace:
 
 
 class TestUsdCaps:
+    def test_same_id_can_raise_but_not_change_or_lower_ceiling(self, svc):
+        svc.create_budget("b:agg", "usd_micros", "aggregate", cap=100)
+        svc.reserve("r-existing", [("b:agg", 100)])
+
+        assert svc.create_budget("b:agg", "usd_micros", "aggregate",
+                                 cap=350) == "b:agg"
+        assert svc.available("b:agg") == 250
+
+        with pytest.raises(ContractError, match="budget_ceiling_decrease"):
+            svc.create_budget("b:agg", "usd_micros", "aggregate", cap=349)
+        with pytest.raises(ContractError, match="budget_identity_conflict"):
+            svc.create_budget("b:agg", "usd_micros", "provider",
+                              "google_vertex", cap=400)
+
     def test_aggregate_blocks_despite_sublimit(self, svc):
         sc = BOUNDARIES["usd_scenario"]
         svc.create_budget("b:agg", "usd_micros", "aggregate",

@@ -138,6 +138,7 @@ class ApplicationWorker:
         if kind=='decision':return {'decision':s.learning.decide(body['experiment_id'],body['revision'],body.get('horizon',''),body.get('platform',''),account=body.get('account',''))}
         if kind=='select_seed':return {'selection':s.learning.select_seed(body['experiment_id'],body['revision'],body.get('horizon',''),account=body.get('account',''),accounts=body.get('accounts'))}
         if kind=='effect':return s.effect_work.execute(body,job)
+        if kind=='auto_step':return s.autorun.step(body,job)
         if kind=='research_evaluate':
             from ..discovery.service import DiscoveryService
             pool=[];histories={};planned=[];received=[];per_query={};actual_calls=0;page_size=20
@@ -454,7 +455,8 @@ class ApplicationWorker:
             if result['status'] not in ('succeeded','collected'): return result
         build=s.rendering._build(bid)
         final={'artifact_id':build['output_artifact_id'],'sha256':build['output_sha256']} if build['status']=='collected' else s.rendering.collect(bid,now=utcnow())
-        final.update(composition_id=cid,build_id=bid,
+        final.update(composition_id=cid,build_id=bid,plan_id=plan['id'],
+            experiment_revision=plan['experiment_revision'],
             mix={'profile_id':profile_id,'profile_hash':mixed['profile_hash'],
                  'measured':mixed['measured'],'artifact_id':mixed['artifact_id'],
                  'clipped':mixed['clipped']})
