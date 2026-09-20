@@ -80,8 +80,10 @@ instruction to reactivate it or buy credits.
 - Saved diagnostic probes: **14 scenarios reproduce remaining defects**, using
   mocks, temporary files and two tiny locally generated MP4s. No provider calls.
 - Dashboard: **30 tests passed**, and TypeScript/Vite production build passed.
-- Full backend suite: result pending the current offline run; this line will be
-  replaced before the review is delivered.
+- Full backend suite: **1,128 passed**, two dependency deprecation warnings,
+  **751.01 seconds**. Run offline with local process-inspection permissions;
+  provider calls remained mocked. These existing regressions do not cover the
+  separately reproduced defects above.
 - Review changes are limited to this report and its diagnostic probe file.
   Frozen contracts, production source and runtime records were left unchanged.
 
