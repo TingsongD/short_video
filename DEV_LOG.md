@@ -1473,3 +1473,92 @@ Operator-level maintenance on `data/factory/factory.db` following the
 - Docs note added: `factory-down.sh` stops the API and worker only;
   hypit programs need `./scripts/hypit.sh programs down`.
 
+
+## 2026-09-19 — Last-run investigation patches (commit b2118b4)
+
+Code changes from `docs/factory-reports/INVESTIGATION-auto-cd98a5cf5308471b.md`
+(seed `V3OAMVA8ULo`, run `auto-cd98a5cf5308471b`). All ten defect areas
+patched; 31 files, ~2.5k LOC delta including the new regression file.
+The historical run's artifacts are unchanged — corrected output needs a
+separately approved rerun.
+
+### False completion closed
+
+- `final_qc` gates on `final_problems()` — every mandatory
+  technical/changed-region check must pass against the *current* bytes,
+  composition, plan and experiment revision before any finish path.
+  Missing, stale, failed or unbound check records block.
+- Stale-only problems (superseded plan, foreign bytes) trigger a bounded
+  rewind (`final_qc_rewinds` < 3) that re-arms the plan's compose nodes
+  so the run re-renders its own checked output instead of looping on a
+  tampered meta record. Unresolvable problems pause `final_qc_blocked`.
+- `run.detail()` exposes per-variant `finals_state`
+  (missing / rendered / validation_blocked / ready_for_review /
+  validated / delivered / done) and `experiment_results` carries
+  `validation.state` + `problems` per variant; Compare renders both.
+- Disabled visual review notes "technical checks only" and still passes
+  the mandatory gate; flagged-final acceptance binds artifact+sha256
+  and a replaced final discards the old verdict.
+
+### Evidence validation before spend
+
+- `validate_temporal()` (analysis/analyzer) rejects non-finite bounds,
+  ordering violations, overlaps, material gaps, sub-100 ms beats and
+  coverage < 50 % of verified media duration — the incident's 0.4 s
+  analysis for a 37.6 s source can no longer reach the blueprint.
+  Wired into analysis service (provider + manual), `build_sections`,
+  `vertex.analyze_media` and autorun `video_analysis` (`analysis_invalid`
+  pause; settled holds clear the stale references on Resume).
+- Transcript stage resolves the *source* language (seed metadata → CJK
+  heuristic → configured default) — never the requested TTS language —
+  and `transcript_problems()` rejects empty/looped/mistimed/mismatched
+  output before script or TTS can consume it. Transcript reuse is
+  settings-bound: changed source bytes or resolved language invalidate it.
+- `assign_passages` gives each transcript passage exactly one beat;
+  unplaced passages are reported, not silently dropped.
+- `validate_variations` enforces one declared changed beat per B/C/D
+  with copy that differs from A under case/punctuation-insensitive
+  normalization; word-budget trimming preserves a bounded variation
+  instead of reverting to control copy, and repair pauses
+  `variation_lost` rather than shipping identical variants.
+
+### Paid-work reliability
+
+- TTS plans chunk at 20 ops (`tts`, `tts_1`, …); synthesis reuses only on
+  exact identity match (text, voice, model, language, settings); speech
+  repair patches only the failing line on a new revision and pauses
+  `speech_fit_failed` when even source-derived copy cannot fit.
+- `_rebind_current_revision` covers every post-draft stage and refuses
+  to replace paid references while attempts are non-terminal or holds
+  unreleased; resume clears stale refs only after terminal jobs +
+  released/settled reservations.
+- `_cover` names the blocking budget with cap / committed / available /
+  needed per unit instead of a bare `budget_exhausted`.
+- `attach_media(role='analysis')` records a proxy that never satisfies
+  media readiness and is dropped on re-mastering; `output_profile`
+  freezes at draft creation and every variant renders to it; upscaled
+  inputs are recorded as limitations.
+- Frame-clock: missing stream duration falls back to `nb_frames`/fps;
+  one-frame tail tolerated, larger shortages fail.
+- Vertex failures distinguish invalid JSON / missing fields / blocked /
+  incomplete finish with bounded (300-char) redacted detail in the
+  attempt event; post-dispatch `ContractError` records the real cause as
+  `ack_lost`; 4xx and credential-boundary rejections classify
+  `pre_acceptance` and release their hold.
+- Worker takes a per-database `flock` on `worker.lock` (pid, worker_id,
+  db, version written into the file); a second worker on the same DB
+  exits 2 with a clean refusal — different DBs lock independently.
+  Heartbeat meta carries pid/db/version.
+- Credential boundary hardened: the Google identity oracle reads the
+  `id_token` email claim → ADC file identity → fail closed. The
+  `config_default` fallback that falsely attested `david.dai` while the
+  ADC token belonged to another principal is removed.
+
+### Verification
+
+- `tests/test_factory_incident_fixes.py`: 21 new offline regressions.
+- `tests/test_factory_autorun.py`: 26 pass, including the rewritten
+  stale-final swap test (foreign bytes can never earn verdicts; the
+  rewind restores the pipeline's own checked output).
+- Full suite: **1107 passed**, 0 failed, all offline (fakes + local
+  ffmpeg). Dashboard `tsc --noEmit` clean.

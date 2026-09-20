@@ -9,7 +9,14 @@ holds and honest pauses; one real four-variant run completed locally
 The 2026-09-19 review's 16 code findings (C01–C16) are patched with
 regression coverage — see
 [REVIEW-2026-09-19](docs/factory-reports/REVIEW-2026-09-19.md); the
-2026-09-18 review's Q01–Q15 remain patched. The dated entries below are
+2026-09-18 review's Q01–Q15 remain patched. The second live run's
+defects (false completion over a failed region check, a 0.4 s analysis
+accepted for a 37.6 s source, transcript-language and variation
+integrity, frozen output profile, worker flock) are patched in
+`b2118b4` with 21 incident regressions — see
+[INVESTIGATION-auto-cd98a5cf5308471b](docs/factory-reports/INVESTIGATION-auto-cd98a5cf5308471b.md);
+that run's historical artifacts are unchanged and would need a
+separately approved rerun. The dated entries below are
 historical evidence — the authoritative newest-first narrative is
 [DEV_LOG.md](DEV_LOG.md).
 

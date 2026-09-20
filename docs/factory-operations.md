@@ -34,6 +34,18 @@ checkout's absolute `.venv` path and records `.run/api.pid` /
 sibling checkout of the same repository are never matched, signaled or
 stopped here.
 
+Worker ownership of a database is additionally enforced by a real
+process lock, not just pidfile matching: on start the worker takes an
+exclusive `flock` on `worker.lock` next to the database file and writes
+its pid, worker id, db path and version into it. A second worker on the
+**same** database (however it was launched — relative or absolute path)
+exits with `worker_already_running` instead of racing job claims;
+workers on **different** databases lock different files and coexist.
+The lock is held for the worker's lifetime and released by the OS on
+exit; a live worker is never killed automatically. SQLite `database is
+locked` contention at startup is separately absorbed by bounded backoff
+(~2 min ceiling) — only persistent lock failure surfaces.
+
 Build the dashboard once, then start the API and worker in separate terminals:
 
 ```bash

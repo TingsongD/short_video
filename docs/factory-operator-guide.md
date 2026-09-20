@@ -95,7 +95,10 @@ render → QC. You click once and watch progress.
    even across a crash: every paid-work step records its plan,
    authorization and job ids as it goes, and a restart reuses them
    instead of minting new ones.
-   For a `budget_exhausted` pause, check replacement budgets in step 2
+   For a `budget_exhausted` pause, the message names the blocking budget
+   with its cap, committed reservations, remaining headroom and the
+   amount needed — including aggregate/provider ceilings that apply even
+   when you didn't pick them. Check replacement budgets in step 2
    first; Resume adds them to the run (audited). Resume can also update
    per-operation limits or an expired authorization's validity window
    (audited parameter changes — the pause itself lists what's
@@ -111,9 +114,15 @@ render → QC. You click once and watch progress.
    automatically — no manual splitting needed.
 5. When it finishes, open the experiment in **Compare** — four playable
    finals with scripts, captions, hypotheses, highlighted changed
-   sections, and QC results. `done` means the finals exist and passed
-   the checks that ran — it is **not** verified delivery. The run's
-   Limitations note says so, and whether visual QC was skipped.
+   sections, and QC results. Each variant carries a validation chip —
+   `rendered` (file exists, checks pending), `ready for review`,
+   `validation blocked` (with the specific failing checks listed),
+   `validated`, `delivered`, or `done` — a final on disk is never
+   reported as validated on its own, and a previous revision's output
+   is shown `stale`, never as the current answer. `done` means the
+   finals exist and passed the checks that ran — it is **not** verified
+   delivery. The run's Limitations note says so, and whether visual QC
+   was skipped.
    Upload the finals via the Deliveries flow; publishing stays a
    separate manual step in the Publishing tab.
 
@@ -412,6 +421,30 @@ you explicitly authorize each destination.
 - **A crash can't double-charge.** Paid effect plans are content-keyed
   and their plan/authorization/job ids are persisted as work is queued;
   a restart reuses them instead of submitting a second paid job set.
+- **A file on disk is not validation.** Before a run can finish, every
+  mandatory technical and unchanged-region check must pass against the
+  current bytes, composition, plan and revision — finals rendered under
+  a superseded plan or carrying foreign bytes are re-rendered, not
+  rubber-stamped.
+- **Analysis timing is validated before it can drive spend.** Beat maps
+  with non-finite bounds, overlaps, material gaps or coverage far short
+  of the verified media duration are rejected (`analysis_invalid`)
+  before frames or blueprints are built — a partial analysis can never
+  stretch its last beat across the missing duration.
+- **Transcription speaks the source's language.** The WhisperX pass uses
+  the declared/detected source language — never the requested narration
+  language — and its output is checked for empty text, repetition loops,
+  bad timing and language mismatch before script adaptation or TTS can
+  consume it.
+- **Declared variations stay declared.** B/C/D each keep one meaningful
+  changed beat: wording that only differs in case or punctuation does
+  not count, and budget bounds or speech-fit repairs never silently
+  revert a variant to the control copy — they pause instead.
+- **One output profile, frozen at draft.** All four variants render to
+  the same declared dimensions/fps, validated against that profile —
+  not against whichever input frame happened to be first. A cheaper
+  analysis proxy (when attached) never replaces the production master,
+  and upscaled inputs are labelled as limitations, not native detail.
 
 ## 5. When something goes wrong
 
@@ -428,9 +461,15 @@ you explicitly authorize each destination.
 | `cancel_failed` / `unknown` after cancel | The provider refused or didn't confirm — the post may still go live. Check the remote job on the provider's side before assuming it's stopped. |
 | Proposal says `no_winner_artifact` | The champion has no accepted local master file — import or attach the reviewed final, then re-propose (it's idempotent). |
 | Selection stuck on `waiting` | Required checkpoint data hasn't arrived — check the checkpoint labels on the Publishing tab; a `retrying`/`late`/`missed` label says why. |
-| Worker crashes with `database is locked` on startup | Another worker (or a long job transaction) holds the write lock — **only one worker may run**. Stop the other one, or just use `./scripts/factory-up.sh` which never double-starts. |
+| Worker exits `worker refused to start … worker_already_running` | A live worker already holds this database's `worker.lock` (an OS-level lock next to `factory.db` — the file lists the holder's pid, worker id and start time). It is never killed automatically: stop the recorded worker yourself, or point the new one at a different database — workers on different DBs lock independently. Brief `database is locked` contention at startup is ridden through with bounded backoff and does not need action. |
 | Analysis blocked with `transcript_failed` / `fetch failed` | The local WhisperX service was unreachable at that moment. Restart it (`./scripts/hypit.sh runtime up` or `./scripts/factory-up.sh`), confirm `whisperx.local` shows ready, then re-run the analysis evidence — the retry is free and local. |
 | Auto run paused `final_qc_flagged` | A final's automated review came back uncertain or failed. Watch it yourself, then either *Accept after human review* (records a named human verdict) or *Recheck once* (one fresh paid review — never an unbounded loop). Plain Resume just re-reads the recorded verdicts. |
+| Auto run paused `final_qc_blocked` | A mandatory technical or changed-region check did not pass on the *current* finals — missing, stale, failed or unbound evidence. A final existing on disk is not validation; Compare shows each variant's validation state and the actionable problems. Fix the cause and Resume — finals rendered under a superseded plan are re-rendered automatically (bounded), never rubber-stamped. |
+| Auto run paused `analysis_invalid` | The provider's analysis failed structural timing validation (non-finite/overlapping beats, material gaps, or coverage far short of the verified media duration). It was never stored or built on. The paid attempt may still have billed — settle its hold, then Resume for a fresh analysis, or attach corrected observations. |
+| Auto run paused `blueprint_flags` | The automated beat review left unresolved or uncertain flags. Review the flagged beats in the Analysis tab and accept the blueprint yourself — auto-pipeline can never override flags — then Resume. |
+| Auto run paused `variation_lost` / `variation_missing` | A repair or budget bound would have erased a declared B/C/D variation (the changed copy ended up identical to A). The run refuses to ship identical variants silently — edit the segment copy or the variation declaration, then Resume. |
+| Auto run paused `speech_fit_failed` | Even the source-derived fallback line cannot fit its beat at the selected voice's pace. Shorten the copy, pick another beat boundary or a different voice, then Resume — fitting limits are never loosened to force success. |
+| Auto run paused `draft_failed` | The draft could not be created — e.g. the generation route's aspect/resolution has no known output dimensions, so no output profile could be frozen. Fix the route/settings, then Resume. |
 | Auto run paused `capability_unavailable` | You asked for something with no configured route (generated music, automated visual QC). Either qualify the route on the Providers tab, or Resume with the declared fallback the pause block offers (e.g. finish without music, technical checks only) — the run never silently weakens a requested capability. |
 | Auto run paused `limit_too_low` or an expired authorization | Resume can update the values it needs: raise the per-operation limits or extend the authorization validity window in the pause block — changes are audited on the run. |
 | New dispatch blocked by `spend_overrun` | A settled charge pushed a budget over its ceiling. Review the account, then call `POST /api/budgets/resolve-overrun` with operator, evidence and resolution (raise the ceiling or accept it as absorbed) — the block lifts and the event stays in the ledger. |
