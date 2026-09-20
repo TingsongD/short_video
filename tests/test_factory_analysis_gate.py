@@ -226,6 +226,35 @@ def test_transcribe_available_reads_programs_status():
     assert h2.transcribe_available() is False
 
 
+def test_transcript_retry_replaces_stale_destination(env):
+    """A fresh analysis revision must be able to replace a prior
+    transcript.json.  The pinned Hypit CLI refuses an existing destination,
+    so leaving the old file in place makes a normal rerun look like a failed
+    analysis even though the source and provider are healthy."""
+    class StrictHypit(FakeHypit):
+        def transcribe(self, src, language, dest):
+            if Path(dest).exists():
+                return type("R", (), {
+                    "returncode": 1,
+                    "stdout": json.dumps({"error": {"message":
+                        f"Destination {dest} already exists"}}),
+                    "stderr": ""})()
+            return super().transcribe(src, language, dest)
+
+    seed, _ = _seed(env)
+    svc = env["s"].ref_analysis
+    svc.hypit = StrictHypit()
+    svc.start(seed.id, "qa")
+    stale = svc._project(svc.get(seed.id)) / "references" / seed.id / "transcript.json"
+    stale.parent.mkdir(parents=True, exist_ok=True)
+    stale.write_text("stale transcript")
+
+    a = svc.run_machine_stages(seed.id)
+    assert a.status == "evidence_ready"
+    assert a.transcript["status"] == "aligned"
+    assert json.loads(stale.read_text())["format"] == "hypit.transcript@1"
+
+
 def test_imported_transcript_file_is_hypit_readable(env):
     """The written transcript.json must satisfy the real
     `hypit media tiles --transcript` contract — format

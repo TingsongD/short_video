@@ -453,7 +453,10 @@ def test_autorun_crash_after_paid_dispatch_reuses_work(application):
 
 class HypitMany(Hypit9):
     """Boundary evidence for a dense beat map: a detected cut at every
-    beat start so the machine-review gate has local corroboration."""
+    beat start so the machine-review gate has local corroboration. The
+    aligned transcript carries one passage per beat — it is the
+    authoritative copy source, preferred over the coarser provider
+    transcript."""
 
     def __init__(self, n, seconds):
         self._n, self._seconds = n, seconds
@@ -462,6 +465,31 @@ class HypitMany(Hypit9):
         return {"boundaries": [
             {"t": i * self._seconds / self._n, "score": 0.8}
             for i in range(1, self._n)]}
+
+    def transcribe(self, src, language, dest):
+        Path(dest).parent.mkdir(parents=True, exist_ok=True)
+        span = self._seconds / self._n
+        passages = []
+        for i in range(self._n):
+            # Inset inside beat i's nominal interval: blueprint beats are
+            # quantized to the frame grid, so a passage exactly on the
+            # nominal boundary can quantize into a neighbor's ownership.
+            start, end = (i + 0.15) * span, (i + 0.85) * span
+            text = f"source line {i}"
+            step = (end - start) / len(text.split())
+            passages.append({
+                "text": text, "start_seconds": start,
+                "end_seconds": end,
+                "words": [{"text": w,
+                           "start_seconds": start + j * step,
+                           "end_seconds": start + (j + 1) * step - 0.02}
+                          for j, w in enumerate(text.split())]})
+        Path(dest).write_text(json.dumps({
+            "format": "hypit.transcript@1", "source": str(src),
+            "language": language, "audio_seconds": self._seconds,
+            "passages": passages}))
+        return type("R", (), {"returncode": 0, "stdout": "",
+                              "stderr": ""})()
 
 
 def test_autorun_chunks_tts_plans_over_twenty_lines(application):
@@ -882,8 +910,11 @@ def test_generated_copy_bounded_before_and_after_tts(application):
     assert "you will not believe what this dog does next" in texts
     assert "he runs so fast that you will not even see him move today" \
         not in texts
-    # A×3 + B long (measured, then repaired) + B fallback + C fallback + D
-    assert len(texts) == 7
+    # A×3 + B long (measured, then repaired) + B fallback +
+    # C trimmed-to-budget (the variation is preserved, then the
+    # measured fit still rejects it) + C fallback + D
+    assert len(texts) == 8
+    assert "he runs so fast that you will not even" in texts
     assert "he runs fast" in texts                      # C deterministic
     b = s.experiments._variant(run.experiment_id, "B")
     assert next(x["copy"] for x in b.segments if x["id"] == "b0") == \
@@ -1056,13 +1087,19 @@ def test_final_qc_never_stamps_stale_artifact(application):
     drive(s, w)
     st = autorun(s, run["id"])
     assert st.status == "succeeded", st.pause
-    assert "A" in (st.state.get("qc_resubmitted") or [])
+    # Foreign bytes can never be validated: the mandatory gate caught the
+    # divergence, the compose node re-rendered, and the recorded final is
+    # the pipeline's own checked output again — not the injected swap.
+    fin = json.loads(s.db.conn.execute(
+        "SELECT value FROM meta WHERE key=?", (key,)).fetchone()[0])
+    assert fin["artifact_id"] == old_final, \
+        "the pipeline's build output was not restored over foreign bytes"
     reviews = s.collection("reviews")
     stamped = [r for r in reviews if r["check_type"] == "automated_visual"]
     bound = {r["binding"]["artifact_id"] for r in stamped}
-    assert art.id in bound, "the replacement final was never reviewed"
-    assert old_final not in bound, \
-        "a verdict was stamped onto bytes that are no longer the final"
+    assert old_final in bound, "the restored final lost its verdict"
+    assert art.id not in bound, \
+        "a verdict was stamped onto bytes that never passed the checks"
 
 
 def test_compare_hides_previous_revision_finals(application):

@@ -58,7 +58,8 @@ class ExperimentService:
 
     def create(self, experiment_id, seed_id, blueprint, template,
                products, segments, voice=None, music=None,
-               provider_policy=None, presenter="fictional_or_authorized"):
+               provider_policy=None, presenter="fictional_or_authorized",
+               output_profile=None):
         """products: [ProductSnapshot]. segments: per-beat plan entries
         {id, slot_id, role, target, copy, speech, captions, picture,
         transition, claims}. Control A is implicit variant_key 'A'."""
@@ -81,6 +82,10 @@ class ExperimentService:
             "template_ref": {"id": template.id,
                              "revision": template.revision},
             "target_frames": blueprint.target_frames,
+            # Frozen canvas for every variant's render; empty means a
+            # pre-profile draft (legacy) and the worker must not invent
+            # one — it derives then pins, once.
+            "output_profile": dict(output_profile or {}),
         }
         rev = ExperimentRevision(
             schema_version="experiment.v1", id=f"exp:{experiment_id}",

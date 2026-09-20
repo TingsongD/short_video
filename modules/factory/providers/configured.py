@@ -4,11 +4,66 @@ No credentials are read at import/startup in offline mode. Connection settings
 are non-secret IDs; OAuth and Canvas native stores stay at transport boundaries.
 """
 import json
+import os
 from datetime import datetime,timezone
 from pathlib import Path
 from ..domain.errors import ContractError
 from ..execution.policy import ExecutionPolicy
 from .state import DurableState
+
+
+def _observed_google_identity(creds):
+    """Return the token principal's account identity without exposing secrets.
+
+    ``google.oauth2.credentials.Credentials`` does not always retain the
+    ``account`` field from an ``authorized_user`` ADC file (this gcloud
+    writes ``account: ''`` even on a completed login).  The factory still
+    needs the *token's own* identity to enforce the configured-account
+    boundary, so recover it in order:
+
+    1. credential attributes (``account`` / ``service_account_email``);
+    2. the ``email`` claim of the ``id_token`` minted by the refresh —
+       a signed statement by Google about this credential's principal
+       (present when the grant includes the ``openid`` scope; decoded
+       locally, no signature check needed since it arrived over the
+       authenticated refresh channel moments ago);
+    3. the ADC file's own declared identity (``account`` /
+       ``client_email``).
+
+    There is deliberately **no** fallback to the local gcloud
+    configuration: ``config_default``'s account is the ``gcloud auth
+    login`` identity — a different credential store than the ADC token's
+    principal.  Borrowing it would report an account as verified while
+    the token actually belongs to someone else (observed live: an ADC
+    replaced by an interrupted login for another project's OAuth client
+    passed the check, then every Vertex call returned IAM
+    PERMISSION_DENIED).  When the credential's own identity cannot be
+    observed, the check must fail closed — the operator re-authenticates
+    ADC with an identity-bearing grant.
+    """
+    observed = (getattr(creds, 'account', None)
+                or getattr(creds, 'service_account_email', None))
+    if observed:
+        return observed
+    try:
+        id_token = getattr(creds, 'id_token', None)
+        if id_token:
+            import base64
+            body = id_token.split('.')[1]
+            body += '=' * (-len(body) % 4)
+            observed = json.loads(base64.urlsafe_b64decode(body)).get('email')
+            if observed:
+                return observed
+    except Exception:
+        pass
+    try:
+        from google.auth import _cloud_sdk
+        path = (os.environ.get('GOOGLE_APPLICATION_CREDENTIALS')
+                or _cloud_sdk.get_application_default_credentials_path())
+        payload = json.loads(Path(path).read_text())
+        return payload.get('account') or payload.get('client_email') or None
+    except Exception:
+        return None
 
 
 def configured_adapters(db,data,mode,artifacts):
@@ -49,7 +104,7 @@ def configured_adapters(db,data,mode,artifacts):
                 from google.auth.transport.requests import Request
                 creds,default_project=google.auth.default(scopes=['https://www.googleapis.com/auth/cloud-platform'])
                 creds.refresh(Request())
-                observed=getattr(creds,'account',None) or getattr(creds,'service_account_email',None)
+                observed=_observed_google_identity(creds)
                 if not observed or observed!=identity:raise AuthError('account_mismatch_or_unavailable')
                 return {'kind':'oauth','access_token':creds.token,'identity':observed,'project':project,
                         'scopes':['cloud-platform'],'expiry':creds.expiry.replace(tzinfo=timezone.utc).isoformat() if creds.expiry else None}
@@ -87,7 +142,7 @@ def configured_auxiliary(root,data,mode,artifacts=None):
             import google.auth
             from google.auth.transport.requests import Request
             creds,_=google.auth.default(scopes=['https://www.googleapis.com/auth/cloud-platform']);creds.refresh(Request())
-            observed=getattr(creds,'account',None) or getattr(creds,'service_account_email',None)
+            observed=_observed_google_identity(creds)
             if observed!=identity:raise AuthError('account_mismatch_or_unavailable')
             return {'kind':'oauth','identity':observed,'project':project,'scopes':['cloud-platform'],'access_token':creds.token}
         providers['audiovisual_analysis']=VertexAnalyzer(Path(data)/'providers/analysis',artifacts,VertexAuth(credentials,project),identity,project,conn['model'],conn['pricing'],location=conn.get('location','global'),policy=policy,max_bytes=conn.get('max_bytes',20*1024*1024))
@@ -128,7 +183,7 @@ def configured_auxiliary(root,data,mode,artifacts=None):
             from google.auth.transport.requests import Request
             creds,_=google.auth.default(scopes=['https://www.googleapis.com/auth/yt-analytics.readonly','https://www.googleapis.com/auth/youtube.readonly'])
             creds.refresh(Request())
-            observed=getattr(creds,'account',None) or getattr(creds,'service_account_email',None)
+            observed=_observed_google_identity(creds)
             if observed!=identity:raise ContractError('analytics_account_mismatch','account')
             query=dict(parse_qsl(parts.query,keep_blank_values=True))
             if 'key' in query:

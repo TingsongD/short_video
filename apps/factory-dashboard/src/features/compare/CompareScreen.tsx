@@ -20,6 +20,8 @@ export interface CompareEntry {
   media_url?: string;
   media_sha?: string;        // exact identity label
   pending?: boolean;
+  state?: string;            // ready_for_review|validation_blocked|stale|…
+  problems?: string[];       // actionable validation failures
   regions?: { start_s: number; end_s: number; label: string }[];
   duration_s?: number;
   details?: CompareDetails;
@@ -62,7 +64,16 @@ export function CompareScreen({ entries }: { entries: CompareEntry[] }) {
               {e.media_sha ? (
                 <span className="identity"> sha {e.media_sha.slice(0, 8)}
                 </span>) : null}
+              {e.state ? (
+                <span className={`final-state ${e.state}`}
+                      aria-label={`${e.key} validation state`}>
+                  {" "}{e.state.replace(/_/g, " ")}
+                </span>) : null}
             </figcaption>
+            {(e.problems || []).length > 0 && (
+              <ul className="validation-problems" role="alert">
+                {e.problems!.map((p, i) => <li key={i}>{p}</li>)}
+              </ul>)}
             {e.regions && e.duration_s ? (
               <div className="regions" aria-label={`${e.key} changes`}>
                 {e.regions.map((r, i) => (

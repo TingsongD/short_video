@@ -118,9 +118,15 @@ class SeedRegistry:
                          {"reason": reason})
             return seed
 
-    def attach_media(self, seed_id, artifact_id, via="seed_source"):
-        """Attach a verified artifact as the seed's source media, then
-        satisfy the seed_media job and promote blocked dependents."""
+    def attach_media(self, seed_id, artifact_id, via="seed_source",
+                     role="master"):
+        """Attach a verified artifact to the seed. role='master' sets the
+        canonical production source; role='analysis' records a cheaper
+        derivative a consumer may explicitly select — it never replaces
+        the master, never satisfies media readiness, and is dropped when
+        the master it was derived from is replaced."""
+        if role not in ("master", "analysis"):
+            raise ContractError("invalid_media_role", "role", role)
         with self.db.uow() as u:
             row, seed = self._load(u, seed_id)
             art = u.artifacts.get(artifact_id)
@@ -130,6 +136,17 @@ class SeedRegistry:
             if art["kind"] != "video":
                 raise ContractError("not_video", "artifact_id",
                                     f"probed kind={art['kind']}")
+            if role == "analysis":
+                if seed.analysis_asset_id != artifact_id:
+                    seed.analysis_asset_id = artifact_id
+                    self._revise(u, row, seed, "analysis_media_attached",
+                                 {"artifact_id": artifact_id,
+                                  "via": via})
+                return seed, []
+            if seed.source_asset_id != artifact_id:
+                # Re-mastering invalidates any derivative made from the
+                # previous bytes — a stale proxy must not survive it.
+                seed.analysis_asset_id = ""
             seed.source_asset_id = artifact_id
             seed.evidence_status = "media_ready"
             self._revise(u, row, seed, "media_attached",

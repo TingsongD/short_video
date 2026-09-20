@@ -22,7 +22,7 @@ from ..media.probe import probe
 from ..media.scenes import detect_scenes
 from ..store.uow import utcnow
 from ..testing.fakes import ProviderError
-from .analyzer import parse_analysis
+from .analyzer import assign_passages, parse_analysis, validate_temporal
 
 
 def blueprint_id_for(seed_id):
@@ -70,8 +70,7 @@ class AnalysisService:
         src = self.artifacts.verified_path(seed.source_asset_id)
         info = probe(src)
         analysis = parse_analysis(observations)
-        if any(b["end_s"] > info.duration_s + .05 for b in analysis["beats"]):
-            raise ContractError("beat_outside_source", "beats")
+        validate_temporal(analysis, info.duration_s)
         sha = self.db.uow().artifacts.get(seed.source_asset_id)["sha256"]
         bp = self._build(seed, seed.source_asset_id, sha, info,
                          audio_characteristics(src), detect_scenes(src), analysis,
@@ -145,6 +144,11 @@ class AnalysisService:
 
     def _build(self, seed, artifact_id, src_sha, info, audio, scenes,
                analysis, rate, now, src_path):
+        # Structural validation runs before any evidence frame is cut:
+        # non-finite bounds, overlaps, material gaps and beats that cover
+        # only a fraction of the probed duration are rejected, not
+        # absorbed by stretching.
+        validate_temporal(analysis, info.duration_s)
         v = info.video
         src_fps = v.avg_frame_rate or v.r_frame_rate or rate.fps
         src_clock = RationalRate(src_fps.numerator, src_fps.denominator)
@@ -154,6 +158,8 @@ class AnalysisService:
         # the source itself is never written to
         beats = []
         n = len(analysis["beats"])
+        owners = assign_passages(analysis["beats"],
+                                 analysis["transcript"])["by_beat"]
         for i, b in enumerate(analysis["beats"]):
             mid = (b["start_s"] + b["end_s"]) / 2
             frame = extract_frame(src_path, mid,
@@ -166,7 +172,12 @@ class AnalysisService:
                 requested_kind="image")
             frame.unlink(missing_ok=True)
             evidence.append(art.id)
+            # The tail snap is a bounded rounding correction only —
+            # validate_temporal already proved the last beat ends within
+            # tol of the verified duration, so this never stretches a
+            # beat across unaccounted media.
             end_s = (b["end_s"] if i < n - 1 else info.duration_s)
+            owned = owners.get(b["id"]) or []
             beats.append(Beat(
                 id=b["id"], role=b["role"],
                 source=FrameInterval(
@@ -176,8 +187,7 @@ class AnalysisService:
                     rate.seconds_to_frames(b["start_s"]),
                     rate.seconds_to_frames(end_s)
                     if i < n - 1 else target_frames),
-                speech_segment_id=self._segment_for(
-                    analysis["transcript"], b["start_s"], end_s),
+                speech_segment_id=owned[0]["id"] if owned else "",
                 visual_event=b["visual_event"],
                 evidence_ids=[art.id] + [
                     f"scene:{j}" for j, s in enumerate(scenes)
@@ -223,13 +233,6 @@ class AnalysisService:
         return load_blueprint(row)
 
     # ------------------------------------------------------- helpers
-
-    @staticmethod
-    def _segment_for(transcript, start_s, end_s):
-        for t in transcript:
-            if t["start_s"] < end_s and t["end_s"] > start_s:
-                return t["id"]
-        return ""
 
     @staticmethod
     def _pace(transcript):

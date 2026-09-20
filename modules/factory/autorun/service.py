@@ -19,6 +19,7 @@ import traceback
 import uuid
 from dataclasses import dataclass, field
 
+from ..analysis.analyzer import validate_temporal
 from ..budget.service import BudgetService
 from ..domain.errors import ContractError
 from ..domain.records import Record, content_hash
@@ -142,7 +143,69 @@ class AutoRunService:
                     run.state["experiment_id"])
             except ContractError:
                 pass
+            out["finals_state"] = self._finals_state(run)
         return out
+
+    def _finals_state(self, run):
+        """Per-variant final state for the dashboard: missing → rendered
+        (awaiting mandatory checks) → ready_for_review (mandatory checks
+        pass, visual review pending/disabled) → validation_blocked
+        (checks failed, stale or missing) → done (run finished). A file
+        existing is never reported as validated on its own."""
+        finals = self._finals(run)
+        state = {}
+        problems = []
+        no_plan = ""
+        if finals and run.state.get("experiment_id"):
+            try:
+                plan = self.s.plan_for(run.state["experiment_id"])
+                if len(finals) == 4:
+                    problems = self._mandatory_qc(run, plan, finals)
+                else:
+                    problems = [(f"{k}: final was rendered under "
+                                 "superseded plan "
+                                 f"{finals[k].get('plan_id')}", True)
+                                for k in finals
+                                if finals[k].get("plan_id") != plan["id"]]
+            except ContractError as e:
+                no_plan = f"no current production plan ({e.code})"
+        by_key = {}
+        for msg, _sup in problems:
+            key = msg.split(":", 1)[0]
+            by_key.setdefault(key, []).append(msg)
+        delivered = {r[0] for r in self.s.db.conn.execute(
+            "SELECT DISTINCT json_extract(body,'$.file_sha256') "
+            "FROM records WHERE kind='delivery' AND "
+            "json_extract(body,'$.status')='verified'").fetchall()}
+        passed = {r[0] for r in self.s.db.conn.execute(
+            "SELECT DISTINCT json_extract(body,'$.target_hash') "
+            "FROM records WHERE kind='review' AND "
+            "json_extract(body,'$.verdict') IN ('pass','accepted') AND "
+            "json_extract(body,'$.invalidated_by') IS NULL").fetchall()}
+        for key in "ABCD":
+            f = finals.get(key)
+            if not f:
+                state[key] = {"state": "missing", "problems": []}
+                continue
+            entry = {"state": "ready_for_review",
+                     "artifact_id": f["artifact_id"],
+                     "problems": by_key.get(key, [])}
+            if no_plan:
+                entry["problems"].append(f"{key}: {no_plan}")
+            if entry["problems"]:
+                entry["state"] = "validation_blocked"
+            elif not (f.get("check_ids") or []):
+                # Rendered bytes with no recorded checks are not yet
+                # validated — the mandatory gate has not evaluated them.
+                entry["state"] = "rendered"
+            elif f.get("sha256") in delivered:
+                entry["state"] = "delivered"
+            elif run.status == "succeeded":
+                entry["state"] = "done"
+            elif f.get("sha256") in passed:
+                entry["state"] = "validated"
+            state[key] = entry
+        return state
 
     def resume(self, run_id, body=None):
         run = self.get(run_id)
@@ -199,6 +262,7 @@ class AutoRunService:
                 run.params[key] = value
             run.notes.append(
                 f"operator updated {key} at resume")
+        self._rebind_current_revision(run)
         self._reset_budget_blocked_effect(run)
         run.status = "running"
         run.pause = {}
@@ -209,31 +273,133 @@ class AutoRunService:
         self._enqueue_step(run)
         return run.to_dict()
 
+    def _rebind_current_revision(self, run):
+        """A draft edit during ANY pause invalidates downstream work that
+        was quoted, authorized, rendered or reviewed against the old
+        revision. Rebind the run to the current revision and rewind so a
+        Resume re-quotes current content instead of reusing stale paid
+        state. Old verdicts and finals never authorize new bytes."""
+        eid = run.state.get("experiment_id")
+        if not eid:
+            return
+        current = self.s._current(eid)
+        prior = run.state.get("experiment_revision")
+        if not prior or current.revision == prior:
+            return
+        stage = run.stage
+        # Reconcile before replace: a job or attempt that may still be
+        # dispatching must reach a terminal state (or be reconciled)
+        # before a fresh paid scope can be created — otherwise the old
+        # plan keeps billing in parallel.
+        job_refs = list(run.state.get("production_jobs") or [])
+        for tag in run.state.get("tts_batch_tags") or ["tts"]:
+            job_refs += run.state.get(f"{tag}_jobs") or []
+        pending = [jid for jid in job_refs
+                   if (self.s.db.uow().jobs.get(jid) or {})
+                   .get("status") not in
+                   ("succeeded", "failed", "blocked", "cancelled")]
+        for jid in job_refs:
+            pending += [str(a["id"]) for a in self.s.db.conn.execute(
+                "SELECT id,status FROM attempts WHERE job_id=?",
+                (jid,)).fetchall()
+                if a["status"] in ("prepared", "dispatching",
+                                   "unknown", "accepted", "running",
+                                   "cancel_requested")]
+        if stage in ("tts", "quote", "authorize", "run", "footage",
+                     "compose", "final_qc") and pending:
+            run.notes.append(
+                f"draft revision changed {prior}→{current.revision} but "
+                f"the prior revision still has in-flight work "
+                f"({len(pending)} job/attempt refs); it must reach a "
+                "terminal state or be reconciled before the run can "
+                "re-quote — the stage was left in place")
+            return
+        run.state["experiment_revision"] = current.revision
+        if stage == "tts":
+            for tag in run.state.get("tts_batch_tags") or ["tts"]:
+                for suffix in ("_jobs", "_plan", "_auth"):
+                    run.state.pop(f"{tag}{suffix}", None)
+            for key in ("tts_synth_jobs", "tts_fits", "tts_done",
+                        "tts_batch_tags"):
+                run.state.pop(key, None)
+            run.state["tts_plan_seq"] = \
+                run.state.get("tts_plan_seq", 0) + 1
+            run.notes.append(
+                f"copy revised from experiment revision {prior} to "
+                f"{current.revision}; narration will be regenerated")
+        elif stage in ("quote", "authorize", "run", "footage",
+                       "compose", "final_qc"):
+            for key in ("quote_job", "plan_id", "authorize_job",
+                        "production_jobs", "qc_submitted",
+                        "qc_resubmitted", "qc_rechecks", "qc_flagged",
+                        "qc_human_accepted"):
+                run.state.pop(key, None)
+            for key in list(run.state):
+                if key.startswith("qc_verdict_") or (
+                        key.startswith("qc_") and key.endswith(
+                            ("_jobs", "_plan", "_auth"))):
+                    run.state.pop(key, None)
+            run.stage = "quote"
+            run.notes.append(
+                f"production state invalidated after draft revision "
+                f"{prior}→{current.revision}; a fresh quote, render and "
+                "review will be created on Resume")
+
     def _reset_budget_blocked_effect(self, run):
-        """Let Resume create a fresh paid plan after reservation failure.
+        """Let Resume create a fresh paid plan after a recoverable failure.
 
         Effect plans and authorizations are immutable, and paid jobs cannot be
         locally retried.  Once a worker has terminally failed while reserving
         funds, keeping the stage's job ids makes every Resume immediately see
-        the same dead job.  Remove only the current paid-stage references; the
-        next step will quote and authorize a new plan against the operator's
-        current budget selection.
+        the same dead job.  Remove only the current paid-stage references
+        after every attempt is terminal and its reservation is released or
+        settled; the next step will quote and authorize a new plan against
+        the operator's current budget selection.
         """
-        if run.pause.get("code") != "budget_exhausted":
-            self._reset_revised_speech(run)
+        if run.pause.get("code") not in (
+                "budget_exhausted", "analysis_failed", "analysis_invalid",
+                "analysis_unavailable"):
             return
         tags = {
             "video_analysis": ["analysis"],
+            "sections": ["analysis"],
+            "blueprint": ["analysis"],
             "script": ["script"],
             "music": ["music"],
             "tts": run.state.get("tts_batch_tags") or ["tts"],
             "final_qc": [f"qc_{k}" for k in "ABCD"],
         }
+        cleared = set()
         for tag in tags.get(run.stage, []):
             jobs = run.state.get(f"{tag}_jobs") or []
+            attempts = []
+            for jid in jobs:
+                attempts.extend(self.s.db.conn.execute(
+                    "SELECT status,json_extract(body,'$.reservation_id') "
+                    "AS reservation_id FROM attempts WHERE job_id=?",
+                    (jid,)).fetchall())
+            # An unknown or still-dispatching attempt may have reached the
+            # provider.  It must be reconciled by identity before any fresh
+            # paid plan can be created.
+            if any(a["status"] in ("prepared", "dispatching", "unknown",
+                                   "accepted", "running", "cancel_requested")
+                   for a in attempts):
+                continue
+            if any(a["reservation_id"] and
+                   (self.s.db.conn.execute(
+                       "SELECT status FROM reservations WHERE id=?",
+                       (a["reservation_id"],)).fetchone() or {"status": "held"})["status"]
+                   not in ("released", "settled") for a in attempts):
+                continue
+            # Terminal jobs justify a reset outright; an *invalid result*
+            # pause is different — the attempt succeeded and was billed,
+            # so the operator must have settled its hold first (the
+            # reservation guard above), then the dead reference clears.
             if not any((self.s.db.uow().jobs.get(jid) or {}).get("status")
                        in ("failed", "blocked", "cancelled")
-                       for jid in jobs):
+                       for jid in jobs) and \
+                    run.pause.get("code") not in (
+                        "analysis_invalid", "analysis_unavailable"):
                 continue
             run.state.pop(f"{tag}_jobs", None)
             run.state.pop(f"{tag}_plan", None)
@@ -242,16 +408,28 @@ class AutoRunService:
             # queue identities are bound to the old plan and stay dead.
             run.state[f"{tag}_plan_seq"] = \
                 run.state.get(f"{tag}_plan_seq", 0) + 1
+            cleared.add(tag)
             submitted = run.state.get("qc_submitted") or {}
             for key, sub in list(submitted.items()):
                 if sub.get("job_id") in jobs:
                     submitted.pop(key)
+        if "analysis" in cleared:
+            run.state.pop("analysis", None)
+            run.state.pop("blueprint_id", None)
+            run.state["analysis_reset"] = True
+            if run.stage in ("sections", "blueprint"):
+                run.stage = "video_analysis"
+            run.notes.append(
+                "invalid analysis discarded after settlement; a fresh "
+                "analysis attempt will be planned on Resume")
         if run.stage == "tts":
             run.state.pop("tts_synth_jobs", None)
             run.state.pop("tts_batch_tags", None)
-            run.notes.append(
-                f"discarded terminal {tag} plan after budget recovery; "
-                "a fresh quote and authorization will be created")
+            if cleared:
+                run.notes.append(
+                    f"discarded terminal {tag} plan after budget "
+                    "recovery; a fresh quote and authorization will be "
+                    "created")
 
     def _resolve_qc(self, run, resolved, body):
         """Explicit operator decision on flagged final QC.
@@ -308,32 +486,6 @@ class AutoRunService:
                 "review at the operator's request")
         else:
             raise ContractError("invalid_resolve_qc", "resolve_qc")
-
-    def _reset_revised_speech(self, run):
-        """Continue TTS on the new draft revision after copy was edited."""
-        if run.stage != "tts" or run.pause.get("code") != \
-                "speech_fit_failed":
-            return
-        eid = run.state.get("experiment_id")
-        if not eid:
-            return
-        current = self.s._current(eid)
-        prior = run.state.get("experiment_revision")
-        if current.revision == prior:
-            return
-        run.state["experiment_revision"] = current.revision
-        for tag in run.state.get("tts_batch_tags") or ["tts"]:
-            for suffix in ("_jobs", "_plan", "_auth"):
-                run.state.pop(f"{tag}{suffix}", None)
-        for key in ("tts_synth_jobs", "tts_fits", "tts_done",
-                    "tts_batch_tags"):
-            run.state.pop(key, None)
-        run.state["tts_plan_seq"] = \
-            run.state.get("tts_plan_seq", 0) + 1
-        run.experiment_id = eid
-        run.notes.append(
-            f"copy revised from experiment revision {prior} to "
-            f"{current.revision}; narration will be regenerated")
 
     # ------------------------------------------------------ step loop
 
@@ -479,13 +631,21 @@ class AutoRunService:
                 return (f"{unit}: none of the selected budgets funds this "
                         "unit")
             for bid in applicable:
-                have = self.budgets.available(bid)
+                cap_row = self.s.db.conn.execute(
+                    "SELECT cap_amount FROM budgets WHERE id=?",
+                    (bid,)).fetchone()
+                cap = cap_row["cap_amount"] if cap_row else None
+                committed = self.budgets._committed(self.s.db.conn, bid)
+                have = 0 if cap is None else cap - committed
                 if have < amount:
                     kind = ("selected" if bid in selected
                             else "aggregate ceiling")
+                    cap_txt = "uncapped" if cap is None else str(cap)
                     return (f"{unit}: need {amount}, budget {bid} "
-                            f"({kind}) has {have} — every applicable "
-                            "ceiling must cover the full amount")
+                            f"({kind}): cap {cap_txt}, committed "
+                            f"{committed}, available {have} — every "
+                            "applicable ceiling must cover the full "
+                            "amount")
         return ""
 
     def _ceilings(self, run, operations):
@@ -664,10 +824,27 @@ class AutoRunService:
             run.state["analysis"] = {}
             self._advance(run, "sections")
             return "next"
-        art = self.s.db.uow().artifacts.get(seed.source_asset_id)
+        # Analysis runs on the production master unless the operator
+        # explicitly selected a registered analysis derivative — a proxy
+        # is consumed by choice, never by silently becoming the master.
+        asset_id = seed.source_asset_id
+        if run.params.get("analysis_asset_id"):
+            wanted = run.params["analysis_asset_id"]
+            if wanted != seed.analysis_asset_id:
+                return ("pause", "analysis_scope_mismatch",
+                        f"requested analysis asset {wanted} is not the "
+                        "seed's registered analysis derivative",
+                        "Attach it with role=analysis on the seed, then "
+                        "Resume")
+            asset_id = wanted
+            run.notes.append(
+                f"analysis input is the registered derivative {asset_id}"
+                f" — the production master remains "
+                f"{seed.source_asset_id}")
+        art = self.s.db.uow().artifacts.get(asset_id)
         out = self._run_effect(
             run, "analysis", "audiovisual_analysis", adapter.model,
-            [{"task": "analyze", "artifact_id": seed.source_asset_id,
+            [{"task": "analyze", "artifact_id": asset_id,
               "artifact_sha256": art["sha256"], "model": adapter.model}],
             "analysis")
         if out != "wait":
@@ -676,32 +853,61 @@ class AutoRunService:
         if res != "next":
             return res
         cmd = self.s.commands.get(run.state["analysis_jobs"][0])
-        run.state["analysis"] = cmd["command"]["result"]["result"]
+        payload = cmd["command"]["result"]["result"]
+        a = self.s.ref_analysis.get(run.seed_id)
+        try:
+            validate_temporal(payload, a.acquisition.get("duration_s") or 0)
+        except ContractError as e:
+            run.state.pop("analysis", None)
+            run.notes.append("analysis rejected: structurally invalid "
+                             "timing — never stored or built on")
+            return ("pause", "analysis_invalid",
+                    f"the analysis result failed timing validation: "
+                    f"{e.code} {e.detail}",
+                    "Settle the completed analysis hold (the provider "
+                    "billed the call), then Resume to buy a fresh "
+                    "analysis — or attach corrected observations")
+        run.state["analysis"] = payload
         self._advance(run, "sections")
         return "next"
 
     def _transcript(self, run):
-        """Best available word-timed transcript: WhisperX file first
-        (ground truth the safety gate already approved), then the
-        provider payload."""
+        """Best available word-timed transcript: the approved aligned
+        file first (ground truth the safety gate already approved), then
+        the provider payload. A file on disk that no longer belongs to
+        an *aligned* transcript of the current source is not evidence —
+        it is never silently substituted for one."""
         a = self.s.ref_analysis.get(run.seed_id)
-        path = self.s.ref_analysis._doc_paths(a)["transcript_json"]
-        if path.exists():
-            data = json.loads(path.read_text())
-            passages = data.get("passages") or data.get("segments") or []
-            out = []
-            for p in passages:
-                text = str(p.get("text") or "").strip()
-                if text:
-                    out.append({"start_s": float(
-                        p.get("start_s", p.get("start_seconds",
-                                               p.get("start", 0)))),
-                        "end_s": float(
-                            p.get("end_s", p.get("end_seconds",
-                                                 p.get("end", 0)))),
-                        "text": text})
-            if out:
-                return out
+        if a.transcript.get("status") == "aligned" and \
+                a.transcript.get("source_sha256") in (None, "",
+                                                      a.source_sha256):
+            path = self.s.ref_analysis._doc_paths(a)["transcript_json"]
+            if path.exists():
+                data = json.loads(path.read_text())
+                passages = data.get("passages") or data.get("segments") \
+                    or []
+                out = []
+                for p in passages:
+                    text = str(p.get("text") or "").strip()
+                    if text:
+                        out.append({"start_s": float(
+                            p.get("start_s", p.get("start_seconds",
+                                                   p.get("start", 0)))),
+                            "end_s": float(
+                                p.get("end_s", p.get("end_seconds",
+                                                     p.get("end", 0)))),
+                            "text": text})
+                if out:
+                    # Source language provenance travels with the words —
+                    # script adaptation decides whether translation is an
+                    # explicit paid stage before any copy is written.
+                    run.state["source_language"] = \
+                        a.transcript.get("language") or \
+                        data.get("language") or \
+                        self.s.ref_analysis.source_language(a)
+                    return out
+        run.state["source_language"] = \
+            self.s.ref_analysis.source_language(a)
         return list((run.state.get("analysis") or {}).get("transcript")
                     or [])
 
@@ -725,7 +931,15 @@ class AutoRunService:
                     "Review the analysis in the Analysis tab, then Resume")
         a = self.s.ref_analysis.get(run.seed_id)
         bp_hint = self._blueprint_target_frames(run, dur)
-        sections = checks.build_sections(payload, dur, bp_hint)
+        try:
+            sections = checks.build_sections(payload, dur, bp_hint)
+        except ContractError as e:
+            return ("pause", "analysis_invalid",
+                    f"observations failed timing validation: "
+                    f"{e.code} {e.detail}",
+                    "Correct the beats/observations in the Analysis "
+                    "tab, then Resume — or settle the analysis hold and "
+                    "Resume to buy a fresh analysis")
         self.s.ref_analysis.save_understanding(
             run.seed_id, sections["understanding"], AUTO_REVIEWER)
         self.s.ref_analysis.save_timeline(
@@ -761,7 +975,8 @@ class AutoRunService:
         bp_id = blueprint_id_for(run.seed_id)
         try:
             bp = self.s.analysis.get(bp_id)
-            if bp.status == "accepted":
+            if bp.status == "accepted" and \
+                    not run.state.get("analysis_reset"):
                 run.state["blueprint_id"] = bp_id
                 self._advance(run, "template")
                 return "next"
@@ -771,11 +986,20 @@ class AutoRunService:
         a = self.s.ref_analysis.get(run.seed_id)
         payload = checks.auto_review_beats(
             payload, evidence=a.evidence or {})
-        bp = self.s.analysis.import_observations(
-            run.seed_id, payload, AUTO_REVIEWER)
+        try:
+            bp = self.s.analysis.import_observations(
+                run.seed_id, payload, AUTO_REVIEWER)
+        except ContractError as e:
+            return ("pause", "analysis_invalid",
+                    f"blueprint construction refused the analysis: "
+                    f"{e.code} {e.detail}",
+                    "Correct the beats/observations in the Analysis "
+                    "tab, then Resume — or settle the analysis hold and "
+                    "Resume to buy a fresh analysis")
         try:
             self.s.blueprints.accept(bp.id, bp.content_hash,
                                      AUTO_REVIEWER)
+            run.state.pop("analysis_reset", None)
         except ContractError as e:
             if e.code == "unresolved_flags":
                 return ("pause", "blueprint_flags",
@@ -813,7 +1037,66 @@ class AutoRunService:
                   "visual_event": b.visual_event}
                  for b in bp.beats]
         transcript = self._transcript(run)
+        src_lang = (run.state.get("source_language") or
+                    "").split("-")[0].lower()
+        out_lang = (run.params.get("language") or "en") \
+            .split("-")[0].lower()
+        if transcript and src_lang and src_lang != out_lang:
+            # Source and output languages differ: translation is an
+            # explicit, receipted stage — never an English re-transcript
+            # or invented copy.
+            adapter = self.s.providers.get("audiovisual_analysis")
+            if adapter is None or not getattr(adapter, "account", ""):
+                return ("pause", "capability_unavailable",
+                        f"source language is {src_lang} but narration is "
+                        f"{out_lang} — translation needs the analysis "
+                        "route",
+                        "Configure the provider, or Resume with "
+                        f"set_params language={src_lang} to keep "
+                        "source-language narration")
+            if not run.state.get("translation"):
+                out = self._run_effect(
+                    run, "analysis", "audiovisual_analysis",
+                    adapter.model, [{
+                        "task": "translate", "model": adapter.model,
+                        "translation_input": {
+                            "source_language": src_lang,
+                            "target_language": out_lang,
+                            "passages": [
+                                {"index": i, "text": t["text"]}
+                                for i, t in enumerate(transcript)]}}],
+                    "translate")
+                if out != "wait":
+                    return out
+                res = self._jobs(run, run.state["translate_jobs"],
+                                 "translation_failed")
+                if res != "next":
+                    return res
+                cmd = self.s.commands.get(run.state["translate_jobs"][0])
+                texts = (cmd["command"]["result"]["result"]
+                         .get("translation") or {}).get("texts") or {}
+                if any(str(i) not in texts
+                       or not str(texts[str(i)]).strip()
+                       for i in range(len(transcript))):
+                    return ("pause", "translation_incomplete",
+                            "the translation response did not cover "
+                            "every source passage",
+                            "Resume to retry once, or supply an aligned "
+                            "transcript in the output language")
+                run.state["translation"] = texts
+                run.notes.append(
+                    f"translated {len(texts)} transcript passages "
+                    f"{src_lang}→{out_lang} (paid analysis route)")
+                self._put(run)
+            transcript = [{**t,
+                           "text": run.state["translation"][str(i)]}
+                          for i, t in enumerate(transcript)]
         base = scripts.adapt(beats, transcript)
+        if base.get("unplaced"):
+            run.notes.append(
+                f"{len(base['unplaced'])} transcript passage(s) could "
+                "not be assigned to any beat — excluded from copy, "
+                "visible here for audit")
         # The source-derived adaptation is the bounded repair target when
         # generated copy later fails its measured speech fit.
         run.state["scripts_base"] = base
@@ -843,22 +1126,20 @@ class AutoRunService:
             cmd = self.s.commands.get(run.state["script_jobs"][0])
             llm = cmd["command"]["result"]["result"].get("script")
             merged, over = self._merge_llm_scripts(base, llm, beats)
-            for key, beat_id, words, budget in over:
+            for key, beat_id, words, budget, action in over:
                 run.notes.append(
                     f"variant {key} beat {beat_id}: generated copy "
                     f"({words} words) exceeds the beat's word budget "
-                    f"({budget}); source-derived copy used instead")
+                    f"({budget}); {action}")
             if merged is None:
                 run.state["script_llm_failed"] = True
                 self._put(run)
                 return ("pause", "script_failed",
                         "script adaptation returned unusable output",
                         "Resume to use the deterministic adaptation")
-            run.state["scripts"] = merged
-            run.state["script_mode"] = "llm"
+            chosen, chosen_mode = merged, "llm"
         else:
-            run.state["scripts"] = base
-            run.state["script_mode"] = "template"
+            chosen, chosen_mode = base, "template"
             if run.state.get("script_llm_failed"):
                 run.notes.append(
                     "script adaptation fell back to deterministic "
@@ -867,6 +1148,20 @@ class AutoRunService:
                 run.notes.append(
                     "script adaptation fell back to deterministic "
                     "templates — no analysis provider configured")
+        # The experiment contract is enforced before anything is stored:
+        # a variant whose changed copy is normalization-equivalent to the
+        # control is not a variation — that limitation is reported, never
+        # silently shipped as an identical variant.
+        problems = scripts.validate_variations(chosen, beats)
+        if problems:
+            self._put(run)
+            return ("pause", "variation_missing",
+                    "; ".join(problems),
+                    "Fix the adaptation (edit observations or provide "
+                    "LLM output that actually differs) — the run does "
+                    "not produce identical variants silently")
+        run.state["scripts"] = chosen
+        run.state["script_mode"] = chosen_mode
         self._put(run)
         self._advance(run, "music" if run.params["generate_music"]
                       or run.params.get("music_artifact_id")
@@ -891,11 +1186,30 @@ class AutoRunService:
         def bounded(key, beat_id, text, fallback):
             budget = scripts.word_budget(by_id[beat_id],
                                          base["A"].get(beat_id, ""))
-            words = len(str(text).split())
-            if words > budget:
-                over.append((key, beat_id, words, budget))
+            words = str(text).split()
+            if len(words) <= budget:
+                return str(text)
+            # A with real source copy reverts to it — the closest
+            # adaptation. Everywhere else, deleting the line would
+            # silently collapse a declared variation (B/C/D) or leave a
+            # beat speechless (A with no source words): trim the
+            # generated copy to the budget instead. A trim that ends up
+            # normalization-equivalent to A is still caught by
+            # validate_variations — the limitation is reported, never
+            # shipped as an identical variant.
+            if key == "A" and str(fallback).strip():
+                over.append((key, beat_id, len(words), budget,
+                             "source-derived copy used instead"))
                 return fallback
-            return str(text)
+            trimmed = " ".join(words[:budget])
+            if trimmed.strip():
+                over.append((key, beat_id, len(words), budget,
+                             f"trimmed to {budget} words to keep the "
+                             "line inside its beat"))
+                return trimmed
+            over.append((key, beat_id, len(words), budget,
+                         "no in-budget copy could be derived"))
+            return fallback
         out = {"A": {b["id"]: bounded("A", b["id"], a.get(b["id"], ""),
                                       base["A"].get(b["id"], ""))
                      for b in beats},
@@ -1013,10 +1327,27 @@ class AutoRunService:
                 "allowed_fields": ["copy", "speech", "captions",
                                    "picture"]})
         eid = f"exp-{run.id}"
+        # One output profile is frozen at draft creation — every variant
+        # renders to the same canvas, and technical QC validates exports
+        # against this declaration, never against whichever input frame
+        # happened to be first.
+        try:
+            ow, oh = scripts.output_dims(gen_settings["aspect"],
+                                         gen_settings["resolution"])
+        except ContractError as e:
+            return ("pause", "draft_failed",
+                    f"cannot declare an output profile: {e.code} "
+                    f"{e.detail}",
+                    "Choose a generation route with a known aspect/"
+                    "resolution, then Resume")
         body = {
             "blueprint_id": run.state["blueprint_id"],
             "template_id": run.state["template_id"],
             "segments": segments, "variants": variants,
+            "output_profile": {"width": ow, "height": oh,
+                               "fps": bp.clock.num / bp.clock.den,
+                               "aspect": gen_settings["aspect"],
+                               "resolution": gen_settings["resolution"]},
             "voice": {"id": run.params["voice_id"], "model": "eleven_v3",
                       "settings": {"language":
                                    run.params["language"]}},
@@ -1072,10 +1403,14 @@ class AutoRunService:
             return "next"
         eid = run.state["experiment_id"]
         rev = run.state["experiment_revision"]
+        base = run.state.get("scripts_base") or {}
+        bp = self.s.analysis.get(run.state["blueprint_id"])
+        fps = bp.clock.num / bp.clock.den
         # Synthesis is bought once per normalized text, but fitting and
         # attachment are per occurrence — every segment that speaks the
         # line gets its own speech record, target interval and captions.
         needed = {}
+        over_budget = []
         for key in "ABCD":
             variant = self.s.experiments._variant(eid, key)
             for seg in variant.segments:
@@ -1085,6 +1420,30 @@ class AutoRunService:
                 norm = self.s.audio_work.speech.normalize(text)
                 needed.setdefault(norm, []).append(
                     (key, seg["id"], text))
+                # Pre-spend feasibility: a line provably over its beat's
+                # word budget is never synthesized — the measured fit
+                # stays authoritative for everything inside the bound.
+                target = seg.get("target") or {}
+                target_s = (target.get("end_frame", 0) -
+                            target.get("start_frame", 0)) / fps
+                budget = scripts.word_budget(
+                    {"target_s": target_s},
+                    (base.get("A") or {}).get(seg["id"], ""))
+                if len(text.split()) > budget:
+                    over_budget.append((key, seg["id"], text, budget))
+        if over_budget:
+            repaired = self._repair_overlong(
+                run, needed, over_budget, base)
+            if repaired == "next":
+                return "next"
+            if repaired:
+                return repaired
+            return ("pause", "speech_fit_failed",
+                    "; ".join(f"{k}:{s} copy is {len(t.split())} words, "
+                              f"beat allows ~{b}" for k, s, t, b
+                              in over_budget),
+                    "Edit the draft copy so it fits its beat, then "
+                    "Resume — the run continues on the new revision")
         if not needed:
             run.notes.append("silent scripts — no narration required")
             run.state["tts_done"] = True
@@ -1093,11 +1452,15 @@ class AutoRunService:
         if not run.state.get("tts_synth_jobs"):
             # Speech already synthesized for this voice under an earlier
             # revision is reused by normalized text — a copy edit to one
-            # beat must not re-buy every other line.
+            # beat must not re-buy every other line. Reuse requires the
+            # stored attempt's request to be identical in every identity
+            # input — text, voice, model, language — not just the same
+            # normalized key.
             history = run.state.setdefault("tts_synth_history", {})
             reuse = {n: j for n, j in history.items() if n in needed and
                      (self.s.db.uow().jobs.get(j) or {}).get("status")
-                     == "succeeded"}
+                     == "succeeded" and
+                     self._synth_job_matches(j, needed[n][0][2], run)}
             fresh = [n for n in needed if n not in reuse]
             synth = {}
             # Effect plans cap at 20 operations — dispatch batches, each
@@ -1193,6 +1556,124 @@ class AutoRunService:
         self._advance(run, "quote")
         return "next"
 
+    def _synth_job_matches(self, jid, text, run):
+        """Reuse is safe only when the paid request was identical in
+        every identity input — text, voice, model, language — not merely
+        the same normalized key."""
+        from ..execution.effects import wire_hash
+        want = wire_hash({"text": text,
+                          "voice_id": run.params["voice_id"],
+                          "model": "eleven_v3",
+                          "language": run.params["language"],
+                          "settings": {}})
+        rows = self.s.db.conn.execute(
+            "SELECT request_hash FROM attempts WHERE job_id=?",
+            (jid,)).fetchall()
+        return any(r["request_hash"] == want for r in rows)
+
+    def _repair_overlong(self, run, needed, over_budget, base):
+        """Pre-spend repair: a line over its beat's word budget reverts
+        to that segment's source-derived copy — on a new draft revision,
+        before any synthesis is bought. Returns 'next' after a patch, a
+        pause tuple when the fallback cannot help, or None to let the
+        caller pause."""
+        targets = []
+        changed = base.get("changed") or {}
+        for key, seg_id, text, budget in over_budget:
+            fallback = (base.get(key) or {}).get(seg_id) \
+                if key != "A" and changed.get(key) == seg_id \
+                else (base.get("A") or {}).get(seg_id, "")
+            if not fallback:
+                return None
+            if scripts._norm_words(fallback) == \
+                    scripts._norm_words(text):
+                return ("pause", "speech_fit_failed",
+                        f"variant {key} segment {seg_id}: the source-"
+                        "derived narration itself exceeds the beat's "
+                        "word budget",
+                        "Edit the draft copy or lengthen the beat, "
+                        "then Resume")
+            targets.append((key, seg_id, fallback))
+        return self._patch_speech(run, targets, base)
+
+    def _patch_speech(self, run, targets, base):
+        """Swap copy on targeted segments to their fallback text on a new
+        revision bound to the LATEST draft, then rewind the TTS stage so
+        only the changed lines resynthesize. A repair that would erase a
+        declared variation pauses instead."""
+        eid = run.state["experiment_id"]
+        exp = self.s._current(eid)
+        control = copy.deepcopy(exp.packaging["segments"])
+        a_copy = {s["id"]: s.get("copy", "") for s in control}
+        for key, seg_id, fallback in targets:
+            if key != "A" and \
+                    scripts._norm_words(fallback) == \
+                    scripts._norm_words(a_copy.get(seg_id, "")):
+                return ("pause", "variation_lost",
+                        f"variant {key} segment {seg_id}: the only "
+                        "fitting fallback is identical to the control — "
+                        "the declared variation cannot be preserved",
+                        "Edit the draft copy, then Resume")
+        branches = []
+        for vkey in ("B", "C", "D"):
+            v = self.s.experiments._variant(eid, vkey)
+            branches.append({
+                "key": vkey, "factor": v.changed_factor,
+                "regions": [r if isinstance(r, dict) else r.to_dict()
+                            for r in v.allowed_regions],
+                "segments": copy.deepcopy(v.segments),
+                "hypothesis": v.hypothesis,
+                "primary_metric": v.primary_metric,
+                "allowed_fields": list(v.allowed_fields),
+                "dependent_fields": list(v.dependent_fields)})
+        repairs = run.state.setdefault("tts_repairs", [])
+        for key, seg_id, fallback in targets:
+            if f"{key}:{seg_id}" in repairs:
+                return ("pause", "speech_fit_failed",
+                        f"variant {key} segment {seg_id}: copy still "
+                        "does not fit after one automatic repair",
+                        "Edit the draft copy, then Resume")
+            if key == "A":
+                for seg in control:
+                    if seg["id"] == seg_id:
+                        seg["copy"] = fallback
+                for br in branches:
+                    if base["changed"].get(br["key"]) != seg_id:
+                        for seg in br["segments"]:
+                            if seg["id"] == seg_id:
+                                seg["copy"] = fallback
+            else:
+                for br in branches:
+                    if br["key"] == key:
+                        for seg in br["segments"]:
+                            if seg["id"] == seg_id:
+                                seg["copy"] = fallback
+            repairs.append(f"{key}:{seg_id}")
+            run.notes.append(
+                f"variant {key} segment {seg_id}: generated copy did "
+                "not fit its beat; reverted to source-derived copy and "
+                "resynthesized that line only")
+        try:
+            result = self.s.patch_experiment_draft(
+                eid, {"segments": control, "variants": branches,
+                      "reason": "autorun speech-fit repair"},
+                exp.revision)
+        except ContractError as e:
+            return ("pause", "speech_fit_failed",
+                    f"repair rejected: {e.code}: {e.detail}",
+                    "Edit the draft copy, then Resume")
+        run.state["experiment_revision"] = result["revision"]
+        for tag in run.state.get("tts_batch_tags") or ["tts"]:
+            for suffix in ("_jobs", "_plan", "_auth"):
+                run.state.pop(f"{tag}{suffix}", None)
+        for k in ("tts_synth_jobs", "tts_fits", "tts_done",
+                  "tts_batch_tags"):
+            run.state.pop(k, None)
+        run.state["tts_plan_seq"] = \
+            run.state.get("tts_plan_seq", 0) + 1
+        self._put(run)
+        return "next"
+
     def _repair_speech_fit(self, run, needed, fits):
         """Bounded, meaning-preserving repair when generated copy will not
         fit its beat at the documented rate limits: swap that one segment
@@ -1205,9 +1686,6 @@ class AutoRunService:
         base = run.state.get("scripts_base")
         if not base:
             return None
-        eid = run.state["experiment_id"]
-        rev = run.state["experiment_revision"]
-        repairs = run.state.setdefault("tts_repairs", [])
         targets = []
         for fkey, fit_jid in fits.items():
             j = self.s.db.uow().jobs.get(fit_jid)
@@ -1227,68 +1705,10 @@ class AutoRunService:
                         "at this voice's pace",
                         "Edit the draft copy or lengthen the beat, then "
                         "Resume")
-            if f"{key}:{seg_id}" in repairs:
-                return ("pause", "speech_fit_failed",
-                        f"variant {key} segment {seg_id}: copy still does "
-                        "not fit after one automatic repair",
-                        "Edit the draft copy, then Resume")
             targets.append((key, seg_id, fallback))
         if not targets:
             return None
-        exp = self.s._current(eid)
-        control = copy.deepcopy(exp.packaging["segments"])
-        branches = []
-        for vkey in ("B", "C", "D"):
-            v = self.s.experiments._variant(eid, vkey)
-            branches.append({
-                "key": vkey, "factor": v.changed_factor,
-                "regions": [r if isinstance(r, dict) else r.to_dict()
-                            for r in v.allowed_regions],
-                "segments": copy.deepcopy(v.segments),
-                "hypothesis": v.hypothesis,
-                "primary_metric": v.primary_metric,
-                "allowed_fields": list(v.allowed_fields),
-                "dependent_fields": list(v.dependent_fields)})
-        for key, seg_id, fallback in targets:
-            if key == "A":
-                for seg in control:
-                    if seg["id"] == seg_id:
-                        seg["copy"] = fallback
-                for br in branches:
-                    if base["changed"].get(br["key"]) != seg_id:
-                        for seg in br["segments"]:
-                            if seg["id"] == seg_id:
-                                seg["copy"] = fallback
-            else:
-                for br in branches:
-                    if br["key"] == key:
-                        for seg in br["segments"]:
-                            if seg["id"] == seg_id:
-                                seg["copy"] = fallback
-            repairs.append(f"{key}:{seg_id}")
-            run.notes.append(
-                f"variant {key} segment {seg_id}: generated copy did not "
-                "fit its beat; reverted to source-derived copy and "
-                "resynthesized that line only")
-        try:
-            result = self.s.patch_experiment_draft(
-                eid, {"segments": control, "variants": branches,
-                      "reason": "autorun speech-fit repair"}, rev)
-        except ContractError as e:
-            return ("pause", "speech_fit_failed",
-                    f"repair rejected: {e.code}: {e.detail}",
-                    "Edit the draft copy, then Resume")
-        run.state["experiment_revision"] = result["revision"]
-        for tag in run.state.get("tts_batch_tags") or ["tts"]:
-            for suffix in ("_jobs", "_plan", "_auth"):
-                run.state.pop(f"{tag}{suffix}", None)
-        for k in ("tts_synth_jobs", "tts_fits", "tts_done",
-                  "tts_batch_tags"):
-            run.state.pop(k, None)
-        run.state["tts_plan_seq"] = \
-            run.state.get("tts_plan_seq", 0) + 1
-        self._put(run)
-        return "next"
+        return self._patch_speech(run, targets, base)
 
     def _stage_quote(self, run):
         eid = run.state["experiment_id"]
@@ -1539,11 +1959,96 @@ class AutoRunService:
             "Drive delivery")
         self._advance(run, "done")
 
+    def _mandatory_qc(self, run, plan, finals):
+        """Every check recorded against a final must pass against the
+        CURRENT bytes, composition and plan. Missing, stale, failed or
+        unbound checks are actionable problems — a file existing is not
+        validation. → list of (message, superseded) where superseded
+        marks problems that disappear when the final is re-rendered
+        under the current plan."""
+        problems = []
+        for key in "ABCD":
+            f = finals.get(key)
+            if not f:
+                problems.append((f"{key}: no final export", False))
+                continue
+            problems += self.s.final_problems(key, f, plan["id"])
+        return problems
+
+    def _rewind_for_current_draft(self, run, plan, keys):
+        """Discard plan-bound production state AND re-arm the compose
+        nodes so the run re-renders the current revision. Without the
+        job reset the completed DAG is reused verbatim — the recorded
+        final would keep its unchecked bytes and the gate would rewind
+        forever. Finals rendered under the old plan stay in the ledger;
+        they simply stop being the run's answer."""
+        for key in ("quote_job", "plan_id", "authorize_job", "run_job",
+                    "production_jobs", "qc_submitted", "qc_resubmitted",
+                    "qc_rechecks", "qc_flagged", "qc_human_accepted"):
+            run.state.pop(key, None)
+        for key in list(run.state):
+            if key.startswith("qc_verdict_") or (
+                    key.startswith("qc_") and key.endswith(
+                        ("_jobs", "_plan", "_auth"))):
+                run.state.pop(key, None)
+        nodes = self.s.production._nodes(plan["id"])
+        with self.s.db.uow() as u:
+            for nkey, n in nodes.items():
+                if n["kind"] != "compose":
+                    continue
+                if keys and n.get("consumers") and \
+                        n["consumers"][0] not in keys:
+                    continue
+                u.conn.execute(
+                    "UPDATE jobs SET status='ready',lease_owner=NULL,"
+                    "lease_expires=NULL,next_attempt_at=NULL,"
+                    "blocked_reason=NULL WHERE id=? AND "
+                    "status='succeeded'",
+                    (f"{plan['id']}:{nkey}",))
+        run.state["final_qc_rewinds"] = \
+            run.state.get("final_qc_rewinds", 0) + 1
+        run.stage = "quote"
+        run.notes.append(
+            "finals invalidated — re-rendering the current revision "
+            "from the pipeline's own build output (foreign or stale "
+            "bytes can never carry the run's checks)")
+        self._put(run)
+
     def _stage_final_qc(self, run):
+        eid = run.state["experiment_id"]
+        finals = self._finals(run)
+        if len(finals) < 4:
+            return "wait"
+        try:
+            plan = self.s.plan_for(eid)
+        except ContractError as e:
+            return ("pause", "final_qc_blocked",
+                    f"no current production plan: {e.code}",
+                    "Resume to re-quote the current draft")
+        problems = self._mandatory_qc(run, plan, finals)
+        if problems:
+            current = [m for m, sup in problems if not sup]
+            stale_keys = {m.split(":", 1)[0] for m, sup in problems
+                          if sup}
+            if not current and \
+                    run.state.get("final_qc_rewinds", 0) < 3:
+                # Every problem is staleness a fresh render resolves —
+                # superseded plan or bytes that diverge from what the
+                # checks bound. Bounded: a final that still cannot be
+                # validated after re-rendering pauses for the operator.
+                self._rewind_for_current_draft(run, plan, stale_keys)
+                return "next"
+            return ("pause", "final_qc_blocked",
+                    "mandatory checks did not all pass on the current "
+                    "finals: " + " | ".join(m for m, _ in problems[:8]),
+                    "Inspect the failing checks in Compare, fix the "
+                    "cause, then Resume — a final existing on disk is "
+                    "not validation")
         if not run.params.get("visual_reviews", True):
             run.notes.append(
                 "automated visual QC was disabled for this run — finals "
-                "passed technical checks only")
+                "passed technical checks only (mandatory technical and "
+                "unchanged-region checks, no creative review)")
             self._finish(run)
             return "next"
         if run.state.get("qc_human_accepted"):

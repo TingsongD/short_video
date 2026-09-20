@@ -1,6 +1,7 @@
 """Independent durable application worker. Closing the browser cannot cancel it."""
 import json
 import math
+import os
 import sqlite3
 import subprocess
 import time
@@ -32,7 +33,7 @@ class ApplicationWorker:
 
     def tick(self):
         with self.s.db.uow() as u:
-            u.conn.execute("INSERT OR REPLACE INTO meta(key,value) VALUES('worker_heartbeat',?)",(json.dumps({'at':utcnow(),'worker':self.scheduler.worker_id}),))
+            u.conn.execute("INSERT OR REPLACE INTO meta(key,value) VALUES('worker_heartbeat',?)",(json.dumps({'at':utcnow(),'worker':self.scheduler.worker_id,'pid':os.getpid(),'db':str(self.s.db.path),'version':self.WORKER_VERSION}),))
         self.scheduler.reclaim_expired()
         job = self.scheduler.claim('collect') or self.scheduler.claim('observe') or self.scheduler.claim()
         if not job: return None
@@ -442,9 +443,28 @@ class ApplicationWorker:
         audio=[{'id':'mixed','kind':'audio','artifact_id':mixed['artifact_id'],'sha256':mixed['sha256'],
                 'src':str(s.artifacts.verified_path(mixed['artifact_id'])),'in_frame':0,'out_frame':variant.target_frames,
                 'source_in_s':0,'source_out_s':variant.target_frames/fps,'gain':1}]
-        source_art=s.db.uow().artifacts.get(pictures[0]['artifact_id']); probe=json.loads(source_art['probe'])
-        video=next(x for x in probe['streams'] if x['codec_type']=='video')
-        clock={'fps':fps,'width':video['width'],'height':video['height'],'total_frames':variant.target_frames}
+        # The canvas is the draft's frozen output profile — identical for
+        # all four variants, so cross-variant comparison never spans
+        # dimensions. Legacy drafts without a profile pin the first
+        # picture's geometry once, for this plan only.
+        profile=exp.packaging.get('output_profile') or {}
+        if profile.get('width') and profile.get('height'):
+            clock={'fps':fps,'width':profile['width'],'height':profile['height'],'total_frames':variant.target_frames}
+        else:
+            source_art=s.db.uow().artifacts.get(pictures[0]['artifact_id']); probe=json.loads(source_art['probe'])
+            video=next(x for x in probe['streams'] if x['codec_type']=='video')
+            clock={'fps':fps,'width':video['width'],'height':video['height'],'total_frames':variant.target_frames}
+        # Native-quality evidence: an input smaller than the canvas is
+        # upscaled by the renderer — scaling never restores detail, so
+        # each upscaled input is recorded as a check limitation.
+        upscaled=[]
+        for p in pictures:
+            part=s.db.uow().artifacts.get(p['artifact_id'])
+            if not part or not part['probe']:
+                continue
+            pv=next((x for x in json.loads(part['probe'])['streams'] if x['codec_type']=='video'),None)
+            if pv and (pv['width']<clock['width'] or pv['height']<clock['height']):
+                upscaled.append(f"{p['id']}: {pv['width']}x{pv['height']} → {clock['width']}x{clock['height']}")
         renderer='hypit' if any(x.get('transition_out') not in ('cut','none','') or 'kenburns' in x.get('effects',[]) for x in pictures) else 'ffmpeg_fast'
         cid='comp-'+content_hash([plan['id'],key])[:24]
         result=s.composition.compile(cid,exp.experiment_id,key,plan['id'],segments,captions,clock,renderer,plan_hash=plan['plan_hash'],now=utcnow())
@@ -480,7 +500,7 @@ class ApplicationWorker:
                 stills[-1]['end_s']=end
             else:
                 stills.append({'start_s':start,'end_s':end,'approved':True,'artifact_id':p['artifact_id']})
-        expected={**clock,'frames':variant.target_frames,'has_audio':True,'narration':narration,'narration_required':any(seg.get('copy') for seg in variant.segments),'intentional_stills':stills}
+        expected={**clock,'frames':variant.target_frames,'has_audio':True,'narration':narration,'narration_required':any(seg.get('copy') for seg in variant.segments),'intentional_stills':stills,'upscaled_inputs':upscaled}
         tech='technical-'+bid
         if not s.quality._get(tech): s.quality.inspect(tech,path,expected,binding=binding)
         checks=[tech]
@@ -491,14 +511,61 @@ class ApplicationWorker:
                 cursor=max(cursor,region.end)
             if cursor<variant.target_frames: regions.append({'start_frame':cursor,'end_frame':variant.target_frames})
             check='regions-'+bid
-            if not s.quality._get(check): s.quality.check_regions(check,apath,path,regions,fps,binding=binding)
+            if not s.quality._get(check):
+                # Audio evidence comes from the deterministic mix WAVs —
+                # a final's AAC transcode legitimately differs
+                # sample-for-sample on identical PCM, so decoded finals
+                # can never satisfy a sample-exact region compare.
+                a_audio=s.artifacts.verified_path(
+                    (a.get('mix') or {}).get('artifact_id')) \
+                    if (a.get('mix') or {}).get('artifact_id') else None
+                s.quality.check_regions(check,apath,path,regions,fps,
+                    binding=binding,a_audio=a_audio,
+                    b_audio=s.artifacts.verified_path(mixed['artifact_id']))
             checks.append(check)
         final.update(check_ids=checks,binding=binding)
         with s.db.uow() as u:
             u.conn.execute('INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)',('final:'+variant.id,json.dumps(final)))
         return {'status':'rendered','variant_id':variant.id,'final':final,'review_required':True}
 
+    # --------------------------------------------------- ownership --
+
+    LOCK_NAME = "worker.lock"
+    WORKER_VERSION = "1"
+
+    def _acquire_process_lock(self):
+        """Exclusive process lock bound to THIS database file — a second
+        worker for the same DB exits cleanly instead of racing job
+        claims, while a worker for a different DB (different lockfile)
+        is untouched. Command-line matching is only for operators; this
+        is the ownership mechanism."""
+        try:
+            import fcntl
+        except ImportError:               # non-POSIX: no flock support
+            return None
+        db_path = Path(str(self.s.db.path))
+        lock_path = db_path.parent / self.LOCK_NAME
+        fh = open(lock_path, "a+")
+        try:
+            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            fh.seek(0)
+            holder = fh.read().strip() or "unknown"
+            fh.close()
+            raise ContractError(
+                "worker_already_running", "lock",
+                f"{lock_path} held by {holder}")
+        fh.seek(0)
+        fh.truncate()
+        fh.write(json.dumps({
+            "pid": os.getpid(), "worker_id": self.scheduler.worker_id,
+            "db": str(db_path), "version": self.WORKER_VERSION,
+            "acquired_at": utcnow()}))
+        fh.flush()
+        return fh                        # keep the fd open for life
+
     def run(self,once=False):
+        lock = self._acquire_process_lock()
         # A racing writer (e.g. the API still finishing startup) can make
         # BEGIN IMMEDIATE lose the lock. That is transient contention, not
         # a dead worker — back off bounded instead of dying on the first

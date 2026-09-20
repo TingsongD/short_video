@@ -22,9 +22,11 @@ bound to the same source_sha256 and revision.
 """
 import hashlib
 import json
+import math
 import re
 import shutil
 import subprocess
+from collections import Counter
 from pathlib import Path
 
 from ..domain.errors import ContractError
@@ -266,6 +268,28 @@ class ReferenceAnalysisService:
 
     # --------------------------------------------- machine stages
 
+    def source_language(self, a):
+        """The *source's* spoken language — declared seed metadata first,
+        then a CJK heuristic on the platform captions, then the configured
+        default. The requested output (TTS) language never feeds this."""
+        meta = self.registry.get(a.seed_id).metadata or {}
+        lang = str(meta.get("language") or meta.get("source_language")
+                   or "").strip().lower()
+        if lang:
+            return lang
+        captions = str(meta.get("captions") or "")
+        if re.search(r"[一-鿿㐀-䶿]", captions):
+            return "zh"
+        return self.language
+
+    def _transcript_settings(self, a):
+        """The provenance a generated transcript is valid under — source
+        bytes plus the resolved source language. Any change invalidates
+        reuse."""
+        return {"provider": "whisperx",
+                "language": self.source_language(a),
+                "source_sha256": a.source_sha256}
+
     def run_machine_stages(self, seed_id):
         """Durable stage runner — each stage checkpoints into the
         record, so an interrupted run resumes after the last completed
@@ -278,6 +302,16 @@ class ReferenceAnalysisService:
             # fresh reason; a stage that succeeds clears it
             a.status = "in_progress"
             a.blocking = []
+        if a.stages.get("transcript", {}).get("done") and \
+                a.transcript.get("provider") == "whisperx" and \
+                a.transcript.get("settings") != self._transcript_settings(a):
+            # Source bytes or the resolved source language changed since
+            # this transcript was generated — it is stale, and so is every
+            # transcript-linked evidence grid derived from it.
+            a.stages.pop("transcript", None)
+            a.stages.pop("evidence", None)
+            a.stages.pop("documents", None)
+            a.transcript = {}
         for stage in MACHINE_STAGES:
             if a.stages.get(stage, {}).get("done"):
                 continue
@@ -326,14 +360,48 @@ class ReferenceAnalysisService:
         a.capabilities = caps
         if caps.get("whisperx") and self.hypit.available():
             dest.parent.mkdir(parents=True, exist_ok=True)
+            # Hypit's transcribe command deliberately refuses to overwrite
+            # an existing destination.  A new analysis revision reuses the
+            # same project path, so a transcript left by an earlier run must
+            # be replaced before retrying the stage; otherwise a clean rerun
+            # is incorrectly reported as a provider/CLI failure.
+            dest.unlink(missing_ok=True)
+            # The SOURCE's language drives transcription — never the
+            # requested output language. A Chinese seed transcribed as
+            # English yields phonetic gibberish that alignment accepts.
+            language = self.source_language(a)
             r = self.hypit.transcribe(src=self.artifacts.verified_path(
-                a.source_asset_id), language=self.language, dest=dest)
+                a.source_asset_id), language=language, dest=dest)
             if getattr(r, "returncode", 1) == 0 and dest.exists():
+                dur = a.acquisition.get("duration_s") or 0
+                try:
+                    doc = json.loads(dest.read_text())
+                except (json.JSONDecodeError, OSError):
+                    doc = {}
+                problems = transcript_problems(doc, dur, language)
+                if problems:
+                    # A clean exit code is not proof of usable text —
+                    # repetition loops, empty passages, bad timing and a
+                    # language mismatch block before script adaptation
+                    # or TTS ever see the words.
+                    a.blocking = [{"code": "transcript_suspect",
+                                   "detail": "; ".join(problems[:4]),
+                                   "recovery": [
+                                       "retry with the correct source "
+                                       "language",
+                                       "import an aligned transcript "
+                                       "with declared provenance",
+                                       "declare non-verbal or music-only"]}]
+                    return self._save(a, status="blocked",
+                                      stage="transcript")
                 words = self._transcript_words(dest)
                 a.transcript = {
                     "status": "aligned", "provider": "whisperx",
                     "confidence": "word-level",
-                    "provenance": f"hypit transcribe ({self.language})",
+                    "language": language,
+                    "provenance": f"hypit transcribe ({language})",
+                    "settings": self._transcript_settings(a),
+                    "source_sha256": a.source_sha256,
                     "word_count": len(words), "file": str(dest),
                     "preliminary": False}
                 a.stages["transcript"] = {"done": True, "at": utcnow()}
@@ -558,15 +626,26 @@ class ReferenceAnalysisService:
         project = self._project(a)
         dest = project / "references" / a.seed_id / "transcript.json"
         dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text(json.dumps(
-            _hypit_transcript(words, source=self.artifacts.verified_path(
-                a.source_asset_id), language=payload.get(
-                "language", self.language), audio_seconds=dur,
-                provider=provider), indent=1))
+        language = str(payload.get("language") or
+                       self.source_language(a))
+        doc = _hypit_transcript(
+            words, source=self.artifacts.verified_path(
+                a.source_asset_id), language=language,
+            audio_seconds=dur, provider=provider)
+        problems = transcript_problems(doc, dur, language)
+        if problems:
+            raise ContractError("transcript_suspect", "words",
+                                "; ".join(problems[:4]))
+        dest.write_text(json.dumps(doc, indent=1))
         a.transcript = {"status": "aligned", "provider": provider,
                         "confidence": payload.get("confidence",
                                                   "imported"),
+                        "language": language,
                         "provenance": provenance,
+                        "settings": {"provider": provider,
+                                     "language": language,
+                                     "source_sha256": a.source_sha256},
+                        "source_sha256": a.source_sha256,
                         "word_count": len(words), "file": str(dest),
                         "preliminary": False}
         a.blocking = [b for b in a.blocking
@@ -830,6 +909,75 @@ class ReferenceAnalysisService:
                         for w in (p.get("words") or [])]
             return doc.get("words") or doc.get("segments") or []
         return doc if isinstance(doc, list) else []
+
+
+_CJK = r"[一-鿿㐀-䶿]"
+
+
+def transcript_problems(doc, duration_s, language):
+    """Structural + semantic validation of a hypit.transcript@1 doc.
+    A successful transcribe exit code and word alignment are not proof of
+    usable text — this catches empty output, bad timing, gross decoder
+    repetition and language mismatches before script adaptation or TTS
+    can build on them. → [problem strings]; empty means usable."""
+    problems = []
+    passages = doc.get("passages") if isinstance(doc, dict) else None
+    if not passages:
+        return ["empty transcript — no passages"]
+    texts = []
+    prev_end = None
+    for i, p in enumerate(passages):
+        text = str(p.get("text") or "").strip()
+        if text:
+            texts.append(re.sub(r"\s+", " ", text.lower()))
+        s, e = p.get("start_seconds"), p.get("end_seconds")
+        try:
+            s, e = float(s), float(e)
+        except (TypeError, ValueError):
+            problems.append(f"passage {i}: non-numeric bounds")
+            continue
+        if not (math.isfinite(s) and math.isfinite(e)) or e <= s \
+                or s < -0.05:
+            problems.append(f"passage {i}: invalid bounds {s}–{e}")
+        elif prev_end is not None and s < prev_end - 0.05:
+            problems.append(f"passage {i}: overlaps the previous "
+                            "passage")
+        if duration_s and math.isfinite(e) and e > duration_s + 0.5:
+            problems.append(f"passage {i}: ends {e - duration_s:.1f}s "
+                            "beyond the media duration")
+        prev_end = e if prev_end is None else max(prev_end, e)
+        if not (p.get("words") or []):
+            problems.append(f"passage {i}: no word-level timing")
+    if not texts:
+        problems.append("empty transcript — passages carry no text")
+        return problems
+    # Gross repetition: a decoder stuck in a loop emits the same words
+    # over and over — 5+ identical passages in a row, or one phrase
+    # dominating the whole transcript.
+    run = 1
+    for i in range(1, len(texts)):
+        run = run + 1 if texts[i] == texts[i - 1] else 1
+        if run >= 5:
+            problems.append(f"{run} consecutive identical passages — "
+                            "the decoder likely looped")
+            break
+    if len(texts) >= 5:
+        top, n = Counter(texts).most_common(1)[0]
+        if n >= 5 and n / len(texts) >= 0.6:
+            problems.append(f"one phrase accounts for {n}/"
+                            f"{len(texts)} passages — likely a decode "
+                            "loop")
+    joined = " ".join(texts)
+    cjk = len(re.findall(_CJK, joined))
+    primary = str(language or "").split("-")[0].lower()
+    if primary == "zh" and not cjk:
+        problems.append("declared zh but the transcript contains no "
+                        "CJK text")
+    elif primary in ("en", "es") and cjk >= 4 \
+            and cjk / max(len(joined), 1) > 0.5:
+        problems.append(f"declared {language} but the transcript is "
+                        "mostly CJK — wrong source language?")
+    return problems
 
 
 def _hypit_transcript(words, source, language, audio_seconds,

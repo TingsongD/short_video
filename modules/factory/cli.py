@@ -54,8 +54,17 @@ def main(argv=None):
             import uvicorn
             uvicorn.run(create_app(services),host="127.0.0.1",port=args.port,timeout_graceful_shutdown=5)
         else:
+            from .domain.errors import ContractError
             from .services.worker import ApplicationWorker
-            ApplicationWorker(services).run(once=args.once)
+            try:
+                ApplicationWorker(services).run(once=args.once)
+            except ContractError as e:
+                if e.code == "worker_already_running":
+                    print(f"worker refused to start: {e.detail} — "
+                          "an existing worker owns this database; it is "
+                          "never killed automatically", file=sys.stderr)
+                    return 2
+                raise
         return 0
     if args.cmd == "doctor":
         out = doctor(root)

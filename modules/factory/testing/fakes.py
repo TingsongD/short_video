@@ -18,9 +18,12 @@ from ..integrations.drive import DriveAdapter
 
 class ProviderError(RuntimeError):
     """Typed provider failure. `code` is stable; `transient` marks reads/
-    transfers that may retry without implying a new paid effect."""
-    def __init__(self, code, transient=False, http_status=None):
+    transfers that may retry without implying a new paid effect. `detail`
+    carries a bounded, non-secret provider diagnostic (e.g. an HTTP error
+    excerpt) for the audit trail."""
+    def __init__(self, code, transient=False, http_status=None, detail=None):
         self.code, self.transient, self.http_status = code, transient, http_status
+        self.detail = (detail or "")[:300] or None
         super().__init__(f"{code}")
 
 

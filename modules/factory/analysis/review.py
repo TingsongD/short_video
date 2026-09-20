@@ -43,14 +43,21 @@ class BlueprintReview:
                               "detail": f"beat {b.id}: no speech link"})
         return flags
 
-    def accept(self, blueprint_id, expected_hash, reviewer=""):
+    def accept(self, blueprint_id, expected_hash, reviewer="",
+               allow_flags=False, notes=""):
         bp = self._load(blueprint_id)
         if bp.content_hash != expected_hash:
             raise ContractError("revision_mismatch", "content_hash",
                                 "blueprint changed since review")
-        if self.flags(blueprint_id):
+        flags = self.flags(blueprint_id)
+        if flags and not allow_flags:
             raise ContractError("unresolved_flags", "flags",
                                 "review flags must be resolved first")
+        if flags and (not str(reviewer or "").strip() or
+                      str(reviewer).strip() == "auto-pipeline"):
+            raise ContractError("human_review_required", "reviewer",
+                                "flag overrides require an explicit human "
+                                "reviewer")
         from .deep import analysis_gate
         analysis = analysis_gate(self.db, bp.seed_id,
                                  (bp.provenance or {})
@@ -61,7 +68,9 @@ class BlueprintReview:
         self._event(blueprint_id, "accepted",
                     {"hash": expected_hash, "reviewer": reviewer,
                      "analysis": analysis.id,
-                     "analysis_revision": analysis.revision})
+                     "analysis_revision": analysis.revision,
+                     "flags_overridden": flags if allow_flags else [],
+                     "notes": str(notes or "")})
         return self._load(blueprint_id)
 
     def reject(self, blueprint_id, reason):

@@ -208,9 +208,10 @@ class FactoryServices:
         seed, created = self.require('seeds').submit_url(url, via=via)
         return {'seed':seed.to_dict(),'created':created}
 
-    def attach_media(self, seed_id, artifact_id):
+    def attach_media(self, seed_id, artifact_id, role="master"):
         self.require('artifacts').verified_path(artifact_id)
-        return self.require('seeds').attach_media(seed_id, artifact_id)[0].to_dict()
+        return self.require('seeds').attach_media(
+            seed_id, artifact_id, role=role)[0].to_dict()
 
     def import_file(self, filename, data=None, path=None):
         ext = filename.rsplit('.',1)[-1].lower() if '.' in filename else ''
@@ -235,7 +236,10 @@ class FactoryServices:
     def review_blueprint(self, blueprint_id, body):
         if not body.get('reviewer'):
             raise ContractError('reviewer_required','reviewer')
-        bp = self.require('blueprints').accept(blueprint_id,body['content_hash'],body['reviewer'])
+        bp = self.require('blueprints').accept(
+            blueprint_id, body['content_hash'], body['reviewer'],
+            allow_flags=bool(body.get('allow_flags', False)),
+            notes=body.get('notes', ''))
         return bp.to_dict()
 
     # --------------------------------------------- deep analysis gate
@@ -320,7 +324,8 @@ class FactoryServices:
             raise ContractError('four_variants_required','variants','A is implicit; supply B, C and D')
         with self.db.uow():
             self.require('experiments').create(experiment_id,bp.seed_id,bp,template,products,body['segments'],
-                voice=body.get('voice'),music=body.get('music'), provider_policy=ProviderPolicy(**body.get('provider_policy',{})))
+                voice=body.get('voice'),music=body.get('music'), provider_policy=ProviderPolicy(**body.get('provider_policy',{})),
+                output_profile=body.get('output_profile'))
             for branch in branches:
                 self._branch(experiment_id,branch)
         return self.experiment_results(experiment_id)
@@ -544,6 +549,18 @@ class FactoryServices:
                     if plan and final.get('plan_id')==plan['id']:
                         v['final']=final
                         v['checks']=self._final_checks(final)
+                        problems=self.final_problems(key,final,plan['id'])
+                        v['validation']={
+                            'state':'validation_blocked' if any(
+                                not sup for _,sup in problems)
+                                else ('stale' if problems else
+                                      'ready_for_review'),
+                            'problems':[m for m,_ in problems]}
+                    elif final.get('plan_id')!= (plan or {}).get('id'):
+                        v['validation']={
+                            'state':'stale',
+                            'problems':['rendered under a superseded '
+                                        'plan — not the current answer']}
                 v['changes']=self._variant_changes(exp,v)
                 variants.append(v)
             except ContractError: pass
@@ -562,6 +579,60 @@ class FactoryServices:
             "ORDER BY created_at DESC",(final.get('sha256'),)).fetchall():
             checks.append(json.loads(r['body']))
         return checks
+
+    def final_problems(self, variant_key, final, plan_id):
+        """Mandatory-check gate for one final: every recorded check must
+        pass against the CURRENT bytes, composition and plan. Missing,
+        stale, failed or unbound checks are actionable problems — a file
+        existing is not validation. → [(message, superseded)] where
+        superseded marks problems that disappear on a re-render under
+        the current plan."""
+        stale_codes=("stale_composition","stale_plan","stale_experiment",
+                     "unbound_composition","unregistered_final")
+        problems=[]
+        key=variant_key
+        if final.get('plan_id')!=plan_id:
+            return [(f"{key}: final was rendered under superseded plan "
+                     f"{final.get('plan_id')}",True)]
+        try:
+            path=self.artifacts.verified_path(final['artifact_id'])
+            binding=self.quality.binding(path,final['composition_id'],
+                                         final['artifact_id'])
+        except ContractError as e:
+            return [(f"{key}: {e.code}",e.code in stale_codes)]
+        ids=final.get('check_ids') or []
+        if not ids:
+            problems.append((f"{key}: no QC checks recorded",False))
+            return problems
+        kinds=set()
+        for cid in ids:
+            rec=self.quality._get(cid)
+            if rec is None:
+                problems.append((f"{key}: check {cid} missing",False))
+                continue
+            kinds.add(rec['check_type'])
+            if rec.get('invalidated_by') or \
+                    rec['target_hash']!=binding['artifact_sha256']:
+                problems.append((f"{key}: {rec['check_type']} check {cid}"
+                                 " is stale — it was recorded against "
+                                 "different bytes",True))
+                continue
+            if rec.get('binding')!=binding:
+                problems.append((f"{key}: check {cid} is bound to a "
+                                 "different composition or plan",False))
+                continue
+            if rec['verdict']!='pass':
+                detail='; '.join(rec.get('limitations') or []) \
+                    or rec['verdict']
+                problems.append((f"{key}: {rec['check_type']} check "
+                                 f"{cid}: {rec['verdict']} — {detail}",
+                                 False))
+        if 'technical' not in kinds:
+            problems.append((f"{key}: no technical check",False))
+        if key!='A' and 'changed_region' not in kinds:
+            problems.append((f"{key}: no unchanged-region comparison",
+                             False))
+        return problems
 
     def _variant_changes(self,exp,v):
         key=v.get('variant_key','')

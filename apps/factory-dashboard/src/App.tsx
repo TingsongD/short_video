@@ -64,8 +64,10 @@ export default function App() {
   const compare=[...(selectedSeed?.source_asset_id?[{key:'source',label:'Reference',media_url:media(selectedSeed.source_asset_id),media_sha:''}]:[]),
     ...variants.map(v=>v.final?{key:v.variant_key,label:`${v.variant_key} · revision ${v.experiment_revision}`,media_url:media(v.final.artifact_id),media_sha:v.final.sha256,
       duration_s:v.target_frames/fps,regions:(v.allowed_regions||[]).map((r:Row)=>({start_s:(r.start_frame??r.start)/fps,end_s:(r.end_frame??r.end)/fps,label:v.changed_factor})),
+      state:v.validation?.state,problems:v.validation?.problems||[],
       details:{changes:v.changes,checks:v.checks,captions:(v.segments||[]).flatMap((s:Row)=>(s.captions||[]).map((c:Row)=>c.text)),script:(v.segments||[]).map((s:Row)=>s.copy).filter(Boolean)}}
       :{key:v.variant_key,label:`${v.variant_key} · pending`,pending:true,
+        state:v.validation?.state,problems:v.validation?.problems||[],
         details:{changes:v.changes,checks:[],captions:[],script:(v.segments||[]).map((s:Row)=>s.copy).filter(Boolean)}})];
   async function makeDraft(){
     if(!blueprint||blueprint.status!=='accepted'||!seed?.source_asset_id)throw new Error('Accept a source blueprint first.');

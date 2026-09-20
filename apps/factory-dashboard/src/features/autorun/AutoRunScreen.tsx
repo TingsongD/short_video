@@ -195,6 +195,11 @@ export function AutoRunScreen({ seeds, budgets, runs, act, media,
                   amount) or settle finished holds there, then Resume.
                   Every aggregate ceiling is held in full, so adding a
                   second aggregate budget does not add headroom.</p>)}
+              {run.pause.code === "final_qc_blocked" && (
+                <p className="hint">A final on disk is not validation —
+                  every mandatory check must pass on the current bytes.
+                  The failing checks are named above; inspect them in
+                  Compare, fix the cause, then Resume.</p>)}
               {run.pause.code === "final_qc_flagged" && (
                 <p>
                   <label>Reviewer

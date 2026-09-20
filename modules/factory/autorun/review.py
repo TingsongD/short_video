@@ -49,15 +49,37 @@ def auto_review_beats(payload, evidence=None):
 
 def transcript_observations(transcript, duration_s):
     """Fallback beats from a word-timed transcript alone — honest
-    'unresolved' visuals so the blueprint gate still flags for a human."""
+    'unresolved' visuals so the blueprint gate still flags for a human.
+
+    The beat map must still cover the verified media duration: silent or
+    unspoken intervals become their own unresolved beats rather than being
+    stretched into a neighbouring spoken beat."""
+    from ..analysis.analyzer import TIMING_TOL_S
     beats = []
-    n = len(transcript)
-    for i, t in enumerate(transcript):
-        role = "hook" if i == 0 else ("cta" if i == n - 1 else "body")
-        beats.append({"id": f"b{i}", "role": role,
-                      "start_s": round(t["start_s"], 3),
+    cursor = 0.0
+    for t in transcript:
+        if t["start_s"] - cursor > TIMING_TOL_S:
+            beats.append({"id": f"gap{len(beats)}",
+                          "start_s": round(cursor, 3),
+                          "end_s": round(t["start_s"], 3),
+                          "visual_event": "",
+                          "confidence": "unresolved"})
+        beats.append({"start_s": round(t["start_s"], 3),
                       "end_s": round(t["end_s"], 3),
-                      "visual_event": "", "confidence": "unresolved"})
+                      "visual_event": "",
+                      "confidence": "unresolved"})
+        cursor = max(cursor, t["end_s"])
+    if duration_s - cursor > TIMING_TOL_S:
+        beats.append({"id": f"gap{len(beats)}",
+                      "start_s": round(cursor, 3),
+                      "end_s": round(duration_s, 3),
+                      "visual_event": "",
+                      "confidence": "unresolved"})
+    n = len(beats)
+    for i, b in enumerate(beats):
+        b.setdefault("id", f"b{i}")
+        b["role"] = "hook" if i == 0 else ("cta" if i == n - 1
+                                           else "body")
     return {"beats": beats, "transcript": transcript,
             "evidence_ids": [],
             "uncertainty": ["Beats derived from the transcript only; "
@@ -66,8 +88,15 @@ def transcript_observations(transcript, duration_s):
 
 def build_sections(payload, duration_s, target_frames):
     """Understanding/timeline/treatment from the (possibly auto-reviewed)
-    observations — machine-drafted, recorded as automated evidence."""
-    beats = payload.get("beats") or []
+    observations — machine-drafted, recorded as automated evidence.
+    Timing is validated against the verified media duration first: a
+    structurally invalid beat map raises invalid_analysis_timing rather
+    than producing a stretched or partial timeline."""
+    from ..analysis.analyzer import validate_temporal
+    beats = sorted(payload.get("beats") or [],
+                   key=lambda b: float(b.get("start_s", 0)))
+    payload = {**payload, "beats": beats}
+    validate_temporal(payload, duration_s)
     transcript = payload.get("transcript") or []
     texts = [t.get("text", "").strip() for t in transcript if t.get("text")]
     first = texts[0] if texts else (beats[0].get("visual_event", "") if beats else "")

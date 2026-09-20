@@ -40,7 +40,9 @@ class QualityService:
                      reviewer_type="automated", verdict=verdict,
                      evidence_ids=[],
                      limitations=[f["code"] + "@" + f["at"]
-                                  for f in rep["findings"]])
+                                  for f in rep["findings"]] +
+                                 [f"upscaled_input:{u}" for u in
+                                  expected.get("upscaled_inputs", [])])
         rev.validate_or_raise()
         self._put(rev)
         return {"verdict": verdict, "report": rep,
@@ -62,7 +64,16 @@ class QualityService:
     # ---------------------------------------------- changed regions --
 
     def check_regions(self, check_id, a_path, b_path, unchanged_regions,
-                      fps, now="", binding=None, audio_rate=48000):
+                      fps, now="", binding=None, audio_rate=48000,
+                      a_audio=None, b_audio=None):
+        """a_path/b_path are the FINALS for picture comparison. Audio
+        evidence defaults to the finals too, but callers should pass the
+        variants' deterministic mix artifacts (a_audio/b_audio) when they
+        exist: a final's audio is a lossy transcode, so two encodes of
+        identical PCM legitimately differ sample-for-sample around a
+        changed span (MDCT overlap + encoder state). The frozen-profile
+        mix WAV is the authoritative substrate — unchanged regions are
+        bit-identical there by construction."""
         now = now or datetime.now(timezone.utc).isoformat()
         out = self.gate.compare_finals(a_path, b_path,
                                        unchanged_regions, fps)
@@ -70,9 +81,13 @@ class QualityService:
             out['ok']=False
             out['missing_treatment']='Treatment and control have identical final bytes'
         from ..audio import pcm
+        a_src, b_src = a_audio or a_path, b_audio or b_path
+        out["audio_evidence"]={"a":str(a_src),"b":str(b_src),
+                               "substrate":"mix" if (a_audio or b_audio)
+                               else "final_decode"}
         try:
-            a_audio=pcm.decode(a_path,audio_rate); b_audio=pcm.decode(b_path,audio_rate)
-            audio_checks=[self.gate.compare_audio_region(a_audio,b_audio,
+            a_dec=pcm.decode(a_src,audio_rate); b_dec=pcm.decode(b_src,audio_rate)
+            audio_checks=[self.gate.compare_audio_region(a_dec,b_dec,
                           {"start_s":r["start_frame"]/fps,"end_s":r["end_frame"]/fps},audio_rate)
                           for r in unchanged_regions]
         except (OSError,ValueError):

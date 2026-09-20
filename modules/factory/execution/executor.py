@@ -131,18 +131,31 @@ class Executor:
         except ProviderError as e:
             cls = retry.classify(e.code, getattr(e, "http_status", None),
                                  where="submit")
+            diag = {"cause": e.code, "class": cls}
+            if getattr(e, "http_status", None) is not None:
+                diag["http_status"] = e.http_status
+            if getattr(e, "detail", None):
+                diag["detail"] = e.detail
             if cls == "pre_acceptance":
                 self._set_status(attempt_id, "failed",
-                                 "submit_failed",
-                                 {"cause": e.code, "class": cls})
+                                 "submit_failed", diag)
                 reservation_id = self._attempt(attempt_id).get("reservation_id")
                 if reservation_id:
                     from ..budget import BudgetService
                     BudgetService(self.db).release(reservation_id, evidence=f"verified pre-acceptance rejection:{e.code}")
             else:  # ambiguous — accepted may have happened
                 self._set_status(attempt_id, "unknown",
-                                 "ack_lost",
-                                 {"cause": e.code, "class": cls})
+                                 "ack_lost", diag)
+            raise
+        except ContractError as e:
+            # Local contract failures (e.g. a response that fails schema
+            # or timing validation after the call returned) are NOT free
+            # — the request may have been billed. Record the real cause
+            # so reconciliation sees why instead of a bare "unclassified".
+            self._set_status(attempt_id, "unknown", "ack_lost",
+                             {"cause": e.code,
+                              "detail": str(e.detail)[:300],
+                              "class": "ambiguous"})
             raise
         except Exception:
             self._set_status(attempt_id, "unknown", "ack_lost", {"cause": "unclassified_transport_failure"})

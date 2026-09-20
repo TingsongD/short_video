@@ -12,6 +12,7 @@ import json
 import shlex
 import subprocess
 import time
+from fractions import Fraction
 from pathlib import Path
 
 
@@ -85,10 +86,31 @@ class FastPathRenderer:
         if kind != "image":
             # Matroska/WebM commonly omits duration on the individual
             # video stream while still reporting it on the container.
-            # Use the format duration as the authoritative fallback.
-            duration = float(info.get("duration") or
-                             (probe.get("format") or {}).get("duration") or 0)
-            if duration+1e-5 < source_in_s+frames/fps:
+            # Use the format duration as the authoritative fallback, then
+            # the stream's own frame count over its declared rate. When
+            # NO clock evidence exists the source cannot be verified —
+            # that is a rejection, never silent padding.
+            duration = info.get("duration") or \
+                (probe.get("format") or {}).get("duration")
+            if duration is None:
+                try:
+                    nb = int(info.get("nb_frames") or 0)
+                    rate = Fraction(str(info.get("avg_frame_rate") or
+                                        info.get("r_frame_rate") or "0"))
+                    duration = nb / float(rate) if nb and rate else None
+                except (ValueError, ZeroDivisionError):
+                    duration = None
+            if duration is None:
+                raise RuntimeError(
+                    "short_footage: source has no verifiable duration")
+            duration = float(duration)
+            # The filter below intentionally pads one frame before the
+            # exact trim.  Allow that single-frame tail when the container
+            # duration lands just short of the output clock (common when a
+            # source reports duration from timestamps); still reject a real
+            # shortage of more than one frame.
+            required = source_in_s + frames / fps
+            if duration + 1e-5 < required - 1 / fps:
                 raise RuntimeError("short_footage: source range exceeds duration")
         settings={"source_sha256":_digest(src),"frames":frames,"fps":fps,"source_in_s":source_in_s,
                   "width":width,"height":height,"kind":kind,"effects":list(effects),"renderer":"normalize.v3",

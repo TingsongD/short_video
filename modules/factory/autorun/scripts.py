@@ -6,7 +6,10 @@ using only words present in the source transcript: tighten, clarify or
 call back. No template here invents a fact, a number or a promise.
 """
 import math
+import re
 
+from ...script.voicetext import clean as _normalize
+from ..analysis.analyzer import assign_passages
 from ..domain.errors import ContractError
 
 STYLE = ("Vertical 9:16 social footage, original or authorized fictional "
@@ -44,13 +47,77 @@ def word_budget(beat, source_copy):
                          * RATE_MAX))
 
 
-def beat_copy(beat, transcript):
-    """Words spoken inside the beat's source window — verbatim."""
-    s, e = beat["start_s"], beat["end_s"]
-    parts = [t["text"].strip() for t in transcript
-             if t.get("end_s", 0) > s and t.get("start_s", 0) < e
-             and str(t.get("text") or "").strip()]
-    return " ".join(parts)
+def _passage_intervals(transcript):
+    """Passages with usable timing → [{start_s,end_s,text}]."""
+    out = []
+    for t in transcript:
+        text = str(t.get("text") or "").strip()
+        if not text:
+            continue
+        start = t.get("start_s")
+        end = t.get("end_s")
+        if start is None:
+            start = t.get("start", 0)
+        if end is None:
+            end = t.get("end", start)
+        try:
+            start, end = float(start), float(end)
+        except (TypeError, ValueError):
+            continue
+        out.append({"start_s": start, "end_s": end, "text": text})
+    return out
+
+
+def beat_copy(beat, transcript, _assigned=None):
+    """Assign each transcript passage to exactly one beat — verbatim.
+
+    A passage can be longer than a very short visual beat.  Using any
+    overlap (``end > start`` and ``start < end``) would copy that passage
+    into every adjacent beat, duplicating narration across the draft.
+    Ownership is single: the beat containing the passage's start, then
+    its midpoint, then its end; a passage owned by no beat is 'unplaced'
+    and reported, never silently duplicated or dropped.
+    """
+    if _assigned is None:
+        _assigned = assign_passages(
+            [beat], _passage_intervals(transcript))
+    return " ".join(p["text"] for p in
+                    _assigned["by_beat"].get(beat.get("id")) or [])
+
+
+def _norm_words(text):
+    """Case/punctuation-insensitive word list for the variation
+    equivalence check — 'Watch this dog!' and 'watch this dog' are the
+    same spoken line, not a variation."""
+    return re.sub(r"[^\w\s]", "",
+                  _normalize(str(text))).lower().split()
+
+
+def validate_variations(sc, beats):
+    """The experiment contract: B/C/D must each carry one *meaningful*
+    declared change — copy that still differs after text normalization
+    (case/punctuation/filler-insensitive) and a non-empty alternate
+    footage direction. Normalization-equivalent wording is not a
+    variation. → [problems]; empty means the quartet is valid."""
+    problems = []
+    changed = sc.get("changed") or {}
+    factors = sc.get("factors") or {}
+    for key in ("B", "C", "D"):
+        beat_id = changed.get(key)
+        if not beat_id:
+            problems.append(f"{key}: no changed beat declared")
+            continue
+        new_copy = str((sc.get(key) or {}).get(beat_id) or "").strip()
+        control = str((sc.get("A") or {}).get(beat_id) or "")
+        if not new_copy:
+            problems.append(f"{key}:{beat_id}: changed beat has no copy")
+        elif _norm_words(new_copy) == _norm_words(control):
+            problems.append(
+                f"{key}:{beat_id}: changed copy is normalization-"
+                "equivalent to the control — not a real variation")
+        if not DIRECTIONS.get(factors.get(key) or ""):
+            problems.append(f"{key}: no alternate footage direction")
+    return problems
 
 
 def _clauses(text):
@@ -117,10 +184,14 @@ def adapt(beats, transcript):
     B/C/D dicts contain ONLY their changed beat's copy."""
     if not beats:
         raise ContractError("script_no_beats", "beats")
-    a = {b["id"]: beat_copy(b, transcript) for b in beats}
+    assigned = assign_passages(beats, _passage_intervals(transcript))
+    a = {b["id"]: " ".join(
+        p["text"] for p in assigned["by_beat"].get(b["id"]) or [])
+        for b in beats}
     n = len(beats)
     out = {"A": a, "B": {}, "C": {}, "D": {}, "hypotheses": {},
-           "factors": {}, "metrics": {}, "changed": {}}
+           "factors": {}, "metrics": {}, "changed": {},
+           "unplaced": [p["text"] for p in assigned["unplaced"]]}
     for key in ("B", "C", "D"):
         idx = changed_index(key, n)
         beat = beats[idx]
@@ -173,3 +244,45 @@ def llm_request(model, beats, transcript, a_copy, changed):
                 "treatments": {"B": {"beat": changed["B"], "goal": "stronger curiosity hook"},
                                "C": {"beat": changed["C"], "goal": "clearer body explanation"},
                                "D": {"beat": changed["D"], "goal": "stronger payoff and loop"}}}}
+
+
+# Delivery resolutions the generation routes declare, mapped to the
+# pixel height of the *long* side's portrait complement: "720p" means a
+# 720-wide portrait (720×1280), matching provider conventions. Unknown
+# labels are refused — output dimensions are never guessed.
+_RESOLUTION_PX = {"360p": 360, "480p": 480, "540p": 540, "720p": 720,
+                  "1080p": 1080, "1440p": 1440, "2160p": 2160,
+                  "4k": 2160, "2k": 1440}
+
+
+def output_dims(aspect, resolution):
+    """Frozen output profile dimensions for a declared aspect+resolution.
+    → (width, height), both even. A resolution may name a standard label
+    ("720p") or declare exact pixels ("180x320") — both are honored
+    verbatim. ContractError when neither parses — the profile is a
+    declaration, not a probe of whichever input happened to render
+    first."""
+    res_label = str(resolution).strip().lower()
+    explicit = re.fullmatch(r"(\d+)x(\d+)", res_label)
+    if explicit:
+        w, h = int(explicit[1]), int(explicit[2])
+        if w > 0 and h > 0:
+            return w - w % 2, h - h % 2
+        raise ContractError("unknown_resolution", "resolution",
+                            str(resolution))
+    try:
+        aw, ah = (int(x) for x in str(aspect).split(":"))
+        assert aw > 0 and ah > 0
+    except (ValueError, AssertionError):
+        raise ContractError("unknown_aspect", "aspect", str(aspect))
+    res = _RESOLUTION_PX.get(res_label)
+    if res is None:
+        raise ContractError("unknown_resolution", "resolution",
+                            str(resolution))
+    if aw >= ah:                        # landscape or square
+        height = res
+        width = int(round(res * aw / ah / 2) * 2)
+    else:                               # portrait
+        width = res
+        height = int(round(res * ah / aw / 2) * 2)
+    return width, height

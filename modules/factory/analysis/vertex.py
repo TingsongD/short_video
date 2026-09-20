@@ -10,10 +10,23 @@ import json
 import re
 from pathlib import Path
 from .transport import ArtifactAnalyzer
-from .analyzer import parse_analysis
+from .analyzer import parse_analysis, validate_temporal
 from ..domain.errors import ContractError
 from ..integrations.http import BoundedHTTP
 from ..testing.fakes import ProviderError
+
+
+def _excerpt(v, n=300):
+    """Bounded, credential-stripped excerpt for diagnostics."""
+    if isinstance(v, (bytes, bytearray)):
+        v = v.decode("utf-8", "replace")
+    s = str(v)[:n]
+    return re.sub(r"(?i)(bearer|key|token|secret)[\"'=:\s]+[^&\s,\"']+",
+                  r"\1=<redacted>", s)
+
+
+BLOCKED_FINISH = {"SAFETY", "BLOCKLIST", "PROHIBITED_CONTENT", "SPII",
+                  "RECITATION", "IMAGE_SAFETY", "OTHER"}
 
 PROMPT = '''Analyze this video as reference evidence. Return only a JSON object:
 beats: [{id,start_s,end_s,role,confidence,visual_event}], transcript:
@@ -52,6 +65,13 @@ video plays but you cannot verify agreement, "fail" for broken or clearly
 mismatched output. Declared intent:
 '''
 
+TRANSLATE_PROMPT = '''Translate each transcript passage into the declared target
+language for spoken narration. Return only a JSON object:
+{"texts": {"<index>": "<translated passage>"}}
+Every input index must appear exactly once. Preserve meaning, facts and
+order; keep each passage speakable in roughly its source duration. No
+commentary.'''
+
 
 class VertexAnalyzer(ArtifactAnalyzer):
     def __init__(self,root,artifacts,auth,account,project,model,pricing,*,location='global',transport=None,policy=None,max_bytes=20*1024*1024):
@@ -70,7 +90,7 @@ class VertexAnalyzer(ArtifactAnalyzer):
 
     def price(self,request):
         if request.get('model')!=self.model:raise ContractError('model_mismatch','model')
-        if request.get('task')!='adapt_script':
+        if request.get('task') not in ('adapt_script','translate'):
             path=self.artifacts.verified_path(request['artifact_id'])
             if path.stat().st_size>self.maximum:raise ContractError('analysis_media_too_large','artifact_id','Import a smaller proxy or reviewed observations')
         p=self.pricing
@@ -80,6 +100,8 @@ class VertexAnalyzer(ArtifactAnalyzer):
         task=request.get('task','analyze')
         if task=='adapt_script':
             return {'script':self._adapt_script(request)},None,{}
+        if task=='translate':
+            return {'translation':self._translate(request)},None,{}
         if task=='review_final':
             artifact_id=request.get('artifact_id')
             row=self.artifacts.db.uow().artifacts.get(artifact_id)
@@ -91,23 +113,85 @@ class VertexAnalyzer(ArtifactAnalyzer):
             return {'review':self._review_final(path,request)},None,{}
         return super().execute(request)
 
-    def _post(self,parts):
+    def _generate(self,parts):
+        """One generateContent call → parsed JSON content, or a typed
+        ProviderError that preserves *why* the response was unusable.
+        Every failure here is post-response: the call happened and is
+        treated as billable — classifications stay 'ambiguous' until the
+        operator reconciles them, never silently pre-acceptance."""
         payload={'contents':[{'role':'user','parts':parts}],
                  'generationConfig':{'responseMimeType':'application/json','temperature':0,'maxOutputTokens':8192}}
         status,_,response=self.transport('POST',self.url,json.dumps(payload).encode(),{'Authorization':'Bearer '+self.auth.bearer(),'Content-Type':'application/json'})
-        if not 200<=status<300:raise ProviderError('analysis_http_error',http_status=status)
+        if not 200<=status<300:
+            raise ProviderError('analysis_http_error',http_status=status,
+                                detail=_excerpt(response))
         try:
-            native=json.loads(response);candidate=native['candidates'][0]
-            if candidate.get('finishReason')!='STOP':raise ValueError('incomplete')
-            return json.loads(''.join(p.get('text','') for p in candidate['content']['parts'] if not p.get('thought')))
-        except (ValueError,KeyError,IndexError,TypeError):raise ProviderError('malformed_analysis') from None
+            native=json.loads(response)
+        except (ValueError,TypeError):
+            raise ProviderError('analysis_invalid_json',
+                                detail='response body: '
+                                       + _excerpt(response)) from None
+        if not isinstance(native,dict):
+            raise ProviderError('analysis_invalid_json',
+                                detail='top-level response is not an object')
+        feedback=native.get('promptFeedback') or {}
+        if feedback.get('blockReason'):
+            raise ProviderError('analysis_blocked',
+                                detail='promptFeedback.blockReason='
+                                       + str(feedback['blockReason']))
+        candidates=native.get('candidates') or []
+        if not candidates:
+            raise ProviderError(
+                'analysis_missing_fields',
+                detail='no candidates; response keys: '
+                       + ','.join(sorted(native)[:8]))
+        candidate=candidates[0]
+        finish=str(candidate.get('finishReason') or '')
+        if finish in BLOCKED_FINISH:
+            raise ProviderError('analysis_blocked',
+                                detail='finishReason='+finish)
+        if finish!='STOP':
+            raise ProviderError('analysis_incomplete',
+                                detail='finishReason='
+                                       + (finish or 'missing'))
+        content=candidate.get('content') or {}
+        text=''.join(p.get('text','') for p in
+                     (content.get('parts') or [])
+                     if isinstance(p,dict) and not p.get('thought'))
+        if not text.strip():
+            raise ProviderError('analysis_missing_fields',
+                                detail='candidate content has no text parts')
+        try:
+            return json.loads(text)
+        except (ValueError,TypeError):
+            raise ProviderError('analysis_invalid_json',
+                                detail='content: '
+                                       + _excerpt(text)) from None
 
     def _adapt_script(self,request):
         self.price(request)
-        parsed=self._post([{'text':SCRIPT_PROMPT+'\n\nInput:\n'+json.dumps(request.get('script_input') or {},default=str)}])
+        parsed=self._generate([{'text':SCRIPT_PROMPT+'\n\nInput:\n'+json.dumps(request.get('script_input') or {},default=str)}])
         if not isinstance(parsed,dict) or not isinstance(parsed.get('variants'),dict):
-            raise ProviderError('malformed_analysis')
+            raise ProviderError('malformed_analysis',
+                                detail='script response lacks a variants object')
         return parsed
+
+    def _translate(self,request):
+        """Explicit translation stage — a paid, receipted effect like any
+        other; source-language passages become output-language copy with
+        full provenance, never silently re-transcribed as English."""
+        self.price(request)
+        ti=request.get('translation_input') or {}
+        parsed=self._generate([{'text':TRANSLATE_PROMPT+'\n\nInput:\n'+json.dumps(ti,default=str)}])
+        texts=parsed.get('texts') if isinstance(parsed,dict) else None
+        expected={str(i) for i in range(len(ti.get('passages') or []))}
+        if not isinstance(texts,dict) or not expected <= set(texts):
+            raise ProviderError('malformed_analysis',
+                                detail='translation response lacks texts '
+                                       'for every passage index')
+        return {'texts':{str(k):str(v) for k,v in texts.items()},
+                'source_language':ti.get('source_language',''),
+                'target_language':ti.get('target_language','')}
 
     def _review_final(self,path,request):
         self.price(request)
@@ -116,10 +200,11 @@ class VertexAnalyzer(ArtifactAnalyzer):
         from ..media.probe import probe
         info=probe(path)
         mime='video/webm' if 'webm' in info.format_name else 'video/mp4'
-        parsed=self._post([{'inlineData':{'mimeType':mime,'data':base64.b64encode(raw).decode()}},
-                           {'text':REVIEW_PROMPT+json.dumps(request.get('expected') or {},default=str)}])
+        parsed=self._generate([{'inlineData':{'mimeType':mime,'data':base64.b64encode(raw).decode()}},
+                               {'text':REVIEW_PROMPT+json.dumps(request.get('expected') or {},default=str)}])
         if not isinstance(parsed,dict) or 'verdict' not in parsed:
-            raise ProviderError('malformed_analysis')
+            raise ProviderError('malformed_analysis',
+                                detail='review response lacks a verdict field')
         return {'verdict':str(parsed.get('verdict')),'notes':[str(n) for n in (parsed.get('notes') or [])][:10]}
 
     def analyze_media(self,path,request):
@@ -129,12 +214,20 @@ class VertexAnalyzer(ArtifactAnalyzer):
         from ..media.probe import probe
         info=probe(path)
         mime='video/webm' if 'webm' in info.format_name else 'video/mp4'
-        payload={'contents':[{'role':'user','parts':[{'inlineData':{'mimeType':mime,'data':base64.b64encode(raw).decode()}},{'text':PROMPT}]}], 'generationConfig':{'responseMimeType':'application/json','temperature':0,'maxOutputTokens':8192}}
-        status,_,response=self.transport('POST',self.url,json.dumps(payload).encode(),{'Authorization':'Bearer '+self.auth.bearer(),'Content-Type':'application/json'})
-        if not 200<=status<300:raise ProviderError('analysis_http_error',http_status=status)
+        parsed=self._generate([{'inlineData':{'mimeType':mime,'data':base64.b64encode(raw).decode()}},
+                               {'text':PROMPT}])
         try:
-            native=json.loads(response);candidate=native['candidates'][0]
-            if candidate.get('finishReason')!='STOP':raise ValueError('incomplete')
-            parsed=json.loads(''.join(p.get('text','') for p in candidate['content']['parts'] if not p.get('thought')))
-        except (ValueError,KeyError,IndexError,TypeError):raise ProviderError('malformed_analysis') from None
-        return parse_analysis(parsed)
+            result=parse_analysis(parsed)
+        except ContractError as e:
+            raise ProviderError('malformed_analysis',
+                                detail=f'{e.code}: {e.detail}') from None
+        # The response parsed — but beats that cannot describe the probed
+        # media (0.4s of a 37.6s source) are still unusable. The call was
+        # billed, so this surfaces as an ambiguous attempt for operator
+        # reconciliation, never a silent pre-acceptance rejection.
+        try:
+            validate_temporal(result,info.duration_s)
+        except ContractError as e:
+            raise ProviderError('invalid_analysis_timing',
+                                detail=f'{e.code}: {e.detail}') from None
+        return result

@@ -337,7 +337,7 @@ def create_app(services, session_token=None):
     @app.post("/api/seeds/{seed_id}/media")
     async def attach(seed_id: str,request: Request):
         body=await json_command(request)
-        status,resp=mutation(request,body,lambda:(200,{"seed":services.attach_media(seed_id,body['artifact_id'])}))
+        status,resp=mutation(request,body,lambda:(200,{"seed":services.attach_media(seed_id,body['artifact_id'],role=body.get('role','master'))}))
         return JSONResponse(resp,status_code=status)
 
     @app.post("/api/autoruns", status_code=201)

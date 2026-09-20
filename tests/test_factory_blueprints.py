@@ -174,6 +174,17 @@ class TestReview:
         with pytest.raises(ContractError):
             BlueprintReview(env["db"]).accept(bp.id, bp.content_hash)
 
+    def test_explicit_human_review_can_override_flags(self, env):
+        env["analyzer"].scripts.pop(env["sha"])
+        bp = env["svc"].analyze(env["seed"].id)
+        from test_factory_application import seed_completed_analysis
+        seed_completed_analysis(env["db"], env["seed"].id, env["sha"])
+        review = BlueprintReview(env["db"])
+        accepted = review.accept(
+            bp.id, bp.content_hash, reviewer="operator",
+            allow_flags=True, notes="Explicit human review of flagged beats")
+        assert accepted.status == "accepted"
+
     def test_edit_creates_child_and_stales_dependents(self, env):
         bp = env["svc"].analyze(env["seed"].id)
         review = BlueprintReview(env["db"])

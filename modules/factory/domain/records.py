@@ -79,6 +79,10 @@ class Seed(Record):
     native_id: str = ""
     creator_id: str = ""
     source_asset_id: str = ""
+    # A lower-cost derivative attached FOR analysis only. It never
+    # replaces the production master: source_asset_id stays the
+    # canonical bytes and only an explicit consumer may read this.
+    analysis_asset_id: str = ""
     original_url: str = ""
     # metadata_only | needs_source_media | media_ready
     evidence_status: str = "metadata_only"
