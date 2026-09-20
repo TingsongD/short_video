@@ -46,6 +46,12 @@ exit; a live worker is never killed automatically. SQLite `database is
 locked` contention at startup is separately absorbed by bounded backoff
 (~2 min ceiling) — only persistent lock failure surfaces.
 
+Known gap: a worker launched directly with `scripts/factory.sh worker`
+puts `--root` between `cli` and `worker` in its command line, which the
+`up`/`down` orphan matcher does not expect — `down` may miss it and `up`
+then hits the DB lock (F11). Use the managed launcher; when a manual
+worker must run, stop it by its own pid.
+
 Build the dashboard once, then start the API and worker in separate terminals:
 
 ```bash

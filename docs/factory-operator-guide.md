@@ -81,8 +81,9 @@ render → QC. You click once and watch progress.
    media file (the file picker appears when the seed has no media), or
    pick an existing seed that already has media.
 2. **Voice and spend authority.** Enter the TTS voice id, check the
-   budgets this run may draw from, and optionally set per-operation
-   limits, a provider account, a music bed, or automated visual QC.
+   budgets this run may draw from, and optionally set spending limits
+   (compared against each paid plan's total, not per operation), a
+   provider account, a music bed, or automated visual QC.
 3. **Generate A–D automatically.** The run record shows a stage bar and
    updates live. **A** is a close adaptation; **B** varies the hook,
    **C** a body section, **D** the ending — each declares its changed
@@ -100,11 +101,12 @@ render → QC. You click once and watch progress.
    amount needed — including aggregate/provider ceilings that apply even
    when you didn't pick them. Check replacement budgets in step 2
    first; Resume adds them to the run (audited). Resume can also update
-   per-operation limits or an expired authorization's validity window
-   (audited parameter changes — the pause itself lists what's
-   resumable). Past pauses stay visible under **Pause history** after a
-   resume — the code, stage, explanation and recovery action are kept,
-   not just the latest pause.
+   the plan-level spending limits or an authorization's validity window
+   — those are audited Resume-API parameters (the pause lists what's
+   resumable); the dashboard's pause block currently sends budgets
+   only, so limit/expiry changes go through the API. Past pauses stay
+   visible under **Pause history** after a resume — the code, stage,
+   explanation and recovery action are kept, not just the latest pause.
    Local render timeouts retry on their own (bounded backoff); only
    exhaustion pauses the run.
    Narration is bought per unique line, not per segment: if several
@@ -408,9 +410,11 @@ you explicitly authorize each destination.
   minimum exposure or failing a guardrail on any required platform is
   disqualified — a tiny sample can't crown a champion.
 - **A QC verdict binds to the exact bytes it reviewed.** If a final is
-  replaced after its review was submitted, the old verdict is discarded
+  replaced after its review was submitted, the submission is discarded
   and the new bytes get one fresh review — a stale pass can never stamp
-  a different video.
+  a different video. Known gap (F01): a *recorded* verdict can survive
+  a replacement and be applied to the new result — treat a pass on a
+  replaced final as suspect until this is patched.
 - **A scan that didn't run isn't a pass.** If the media probe is
   missing, times out, or fails, the review comes out `uncertain` with
   the reason noted — never a silent green.
@@ -461,7 +465,7 @@ you explicitly authorize each destination.
 | `cancel_failed` / `unknown` after cancel | The provider refused or didn't confirm — the post may still go live. Check the remote job on the provider's side before assuming it's stopped. |
 | Proposal says `no_winner_artifact` | The champion has no accepted local master file — import or attach the reviewed final, then re-propose (it's idempotent). |
 | Selection stuck on `waiting` | Required checkpoint data hasn't arrived — check the checkpoint labels on the Publishing tab; a `retrying`/`late`/`missed` label says why. |
-| Worker exits `worker refused to start … worker_already_running` | A live worker already holds this database's `worker.lock` (an OS-level lock next to `factory.db` — the file lists the holder's pid, worker id and start time). It is never killed automatically: stop the recorded worker yourself, or point the new one at a different database — workers on different DBs lock independently. Brief `database is locked` contention at startup is ridden through with bounded backoff and does not need action. |
+| Worker exits `worker refused to start … worker_already_running` | A live worker already holds this database's `worker.lock` (an OS-level lock next to `factory.db` — the file lists the holder's pid, worker id and start time). It is never killed automatically: stop the recorded worker yourself, or point the new one at a different database — workers on different DBs lock independently. Brief `database is locked` contention at startup is ridden through with bounded backoff and does not need action. Note: a worker launched by hand with `scripts/factory.sh worker` currently escapes the `factory-up.sh`/`factory-down.sh` pidfile matching (F11) — the DB lock is the reliable guard; prefer the managed launcher. |
 | Analysis blocked with `transcript_failed` / `fetch failed` | The local WhisperX service was unreachable at that moment. Restart it (`./scripts/hypit.sh runtime up` or `./scripts/factory-up.sh`), confirm `whisperx.local` shows ready, then re-run the analysis evidence — the retry is free and local. |
 | Auto run paused `final_qc_flagged` | A final's automated review came back uncertain or failed. Watch it yourself, then either *Accept after human review* (records a named human verdict) or *Recheck once* (one fresh paid review — never an unbounded loop). Plain Resume just re-reads the recorded verdicts. |
 | Auto run paused `final_qc_blocked` | A mandatory technical or changed-region check did not pass on the *current* finals — missing, stale, failed or unbound evidence. A final existing on disk is not validation; Compare shows each variant's validation state and the actionable problems. Fix the cause and Resume — finals rendered under a superseded plan are re-rendered automatically (bounded), never rubber-stamped. |
@@ -471,7 +475,7 @@ you explicitly authorize each destination.
 | Auto run paused `speech_fit_failed` | Even the source-derived fallback line cannot fit its beat at the selected voice's pace. Shorten the copy, pick another beat boundary or a different voice, then Resume — fitting limits are never loosened to force success. |
 | Auto run paused `draft_failed` | The draft could not be created — e.g. the generation route's aspect/resolution has no known output dimensions, so no output profile could be frozen. Fix the route/settings, then Resume. |
 | Auto run paused `capability_unavailable` | You asked for something with no configured route (generated music, automated visual QC). Either qualify the route on the Providers tab, or Resume with the declared fallback the pause block offers (e.g. finish without music, technical checks only) — the run never silently weakens a requested capability. |
-| Auto run paused `limit_too_low` or an expired authorization | Resume can update the values it needs: raise the per-operation limits or extend the authorization validity window in the pause block — changes are audited on the run. |
+| Auto run paused `limit_too_low` or an expired authorization | Resume can update the values it needs via the API: raise the plan-level limits or extend the authorization validity window — changes are audited on the run. Known gap: a renewed `valid_until` can still pause once on the stored (already-minted) authorization — if the same expiry pause returns after a renewal, that is defect F06, not a new problem. |
 | New dispatch blocked by `spend_overrun` | A settled charge pushed a budget over its ceiling. Review the account, then call `POST /api/budgets/resolve-overrun` with operator, evidence and resolution (raise the ceiling or accept it as absorbed) — the block lifts and the event stays in the ledger. |
 | Manual post registration fails `platform_verifier_unavailable` | No platform verifier is configured for that destination. YouTube registrations verify against the Data API automatically when `youtube_analytics` is connected; other platforms stay honestly unverified until a verifier exists. |
 
@@ -511,10 +515,26 @@ you explicitly authorize each destination.
   invoice-confirmed) via the reservation `adjust` API with evidence;
   the estimate itself is never overwritten.
 - Manual-post verification exists for **YouTube only** (checked against
-  the Data API when `youtube_analytics` is connected). Manual
+  the Data API when `youtube_analytics` is connected). Known gap (F09):
+  an upload whose `uploadStatus` is `failed`, `rejected` or still
+  `uploaded` can currently be recorded as verified public if its
+  privacy is public — check the provider console before trusting a
+  manual-post registration until this is patched. Manual
   declarations on other platforms remain unverified by design.
-
----
+- **Known defects under repair** (see
+  `docs/factory-reports/REVIEW-2026-09-19-FOLLOWUP.md`, F01–F12): beyond
+  the verdict-binding, expiry-renewal, manual-post and launcher gaps
+  noted above — unchanged-region audio QC currently compares the
+  deterministic mix intermediates rather than the exported soundtrack
+  (F05); a source video whose frame rate differs from the output clock
+  can misassign or drop transcript passages (F04 — narrated sources at
+  24/25fps on a 30fps output are the risky case); translation pauses
+  advertise recovery actions that are not yet wired (F07 — the run
+  stays paused; ask for help rather than retrying); an attached
+  analysis proxy cannot yet be selected through the run interface
+  (F08 — the master is always submitted); and Resume after an edit can
+  retain the old dispatch job (F02). None of these are new spend risks —
+  they are correctness gaps being patched.
 
 *Questions or stuck states: `docs/factory-reports/REPAIRS.md` is the
 engineering ledger; this guide covers operator use only.*
