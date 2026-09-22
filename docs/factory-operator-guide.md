@@ -610,6 +610,12 @@ you explicitly authorize each destination.
   cannot slip through.
 - **Speech must match the script.** If copy changed, stale narration /
   captions / lip-sync footage are flagged instead of silently reused.
+- **New flash-cut finals carry temporal evidence.** The final technical review
+  checks all decoded output timestamps, phrase captions against the final
+  replacement-speech schedule, and whether required brief-edit intervals occupy
+  decoded frames. This does not claim semantic recognition of the intended event,
+  caption OCR or lip-sync verification; those limitations remain visible in the
+  review. Historical runs keep their saved QC policy.
 - **Publishing is gated.** Posting publicly requires its own explicit
   authorization and verified delivery; it can't happen by accident.
 - **No production without bound reference evidence.** A blueprint can only
@@ -855,8 +861,10 @@ video does not settle that charge.
 - New analysis routes were qualified narrowly for this run/source. Check current
   qualification and expiry before reuse; reference-conditioned generation remains disabled.
 - Jev ran in shadow mode; better cost/quality has not been measured.
-- Every decoded frame was processed by PE, but this is not exhaustive visual or
-  lip-sync review. Character continuity remains a quality limitation.
+- Every decoded source frame was processed by PE. New v2 finals also receive
+  all-frame timestamp and schedule checks, but neither is exhaustive semantic
+  visual review, pixel OCR or lip-sync verification. Character continuity remains
+  a quality limitation.
 - This source was continuous footage. It does not qualify rapid-cut reproduction;
   unreliable audio rhythm is an honest measurement, not a failed beat grid to invent.
 - Focused regressions and real local renders passed, not a fresh full release

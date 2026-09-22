@@ -9,9 +9,9 @@ PE_REVISION = 'aabf3b990573d8114ae6e501b4697106beac8f19'
 PE_SHA256 = 'ccc8340a14ea3ebf557a288ba4ed4a5bc026ab98bb4da42fc745d44b4c5c5ffb'
 
 
-def new_flashcut_policy():
-    return {
-        'version': 'flashcut_policy.v1', 'profile_id': PROFILE,
+def _policy(version, *, quality=None):
+    value = {
+        'version': version, 'profile_id': PROFILE,
         'renderer': 'hypit_primary.v1', 'editorial': 'semantic_edits.v1',
         'visual': {'coverage': 'all_frames', 'model': 'PE-Core-S16-384',
                    'code_revision': PE_COMMIT, 'checkpoint_revision': PE_REVISION,
@@ -34,12 +34,29 @@ def new_flashcut_policy():
                       'max_disk_bytes': 32 * 1024**3, 'min_free_bytes': 10 * 1024**3,
                       'no_progress_seconds': 120},
     }
+    if quality is not None:
+        value['quality'] = deepcopy(quality)
+    return value
+
+
+def legacy_flashcut_policy():
+    """Return the exact policy frozen into already-created v1 runs."""
+    return _policy('flashcut_policy.v1')
+
+
+def new_flashcut_policy():
+    """Default policy for newly created flash-cut runs only."""
+    return _policy('flashcut_policy.v2', quality={
+        'technical_temporal': 'flashcut_temporal_qc.v1',
+        'brief_event_max_frames': 6,
+        'caption_alignment': 'final_speech_schedule.v1',
+    })
 
 
 def validate_flashcut_policy(value):
-    # v1 is intentionally one qualified configuration, not arbitrary model or
-    # executable selection from dashboard input. Changes require a new version.
-    if value != new_flashcut_policy():
+    # Each version is one frozen configuration, not arbitrary executable input
+    # from the dashboard. Historical v1 records retain historical behavior.
+    if value not in (legacy_flashcut_policy(), new_flashcut_policy()):
         raise ContractError('unsupported_flashcut_policy', 'flashcut_policy')
     return deepcopy(value)
 

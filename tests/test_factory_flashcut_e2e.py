@@ -85,6 +85,15 @@ def test_new_flashcut_profile_reaches_native_compare_and_verified_delivery(appli
     for _ in range(1200):
         result=worker.tick()
         current=s.autorun.get(run['id'])
+        # New runs carry a saved cumulative USD guardrail.  A proven completed
+        # response may therefore receive the existing bounded replacement plan
+        # automatically, without fabricating human approval.  Keep the later
+        # format-recovery boundary manual: it is a distinct quote/identity.
+        if current.state.get('flashcut_response_recovery') and not approved_recovery:
+            automatic=s.source_evidence.blobs.read(current.state['flashcut_response_recovery'])
+            assert automatic['reviewer_type']=='automated'
+            assert automatic['reviewer']=='auto-pipeline'
+            approved_recovery='automatic'
         if recover_truncated in ('format_missing','format_gap_prose') and approved_format and current.stage!='video_analysis':
             assert current.state['analysis']
             expected=3 if recover_truncated=='format_gap_prose' else 2
@@ -192,6 +201,16 @@ def test_new_flashcut_profile_reaches_native_compare_and_verified_delivery(appli
         comp=s.db.uow().records.get('composition',final['composition_id'])
         assert json.loads(comp['body'])['renderer']=='hypit'
         assert final['editorial_manifest']['sha256']
+        technical=s.quality._get(next(check for check in final['check_ids']
+                                      if check.startswith('technical-')))
+        temporal=technical['evidence_data']['expected']['temporal']
+        assert temporal['version']=='flashcut_temporal_qc.v1'
+        assert temporal['caption_alignment']=='final_speech_schedule.v1'
+        coverage=technical['evidence_data']['report']['temporal_coverage']
+        assert coverage['video_pts']['frames']==exp.packaging['target_frames']
+        assert coverage['captions']['pixel_ocr'] is False
+        assert coverage['brief_events']['semantic_identity'] is False
+        assert coverage['lip_sync']=='not_verified'
     assert sum(any(p.get('text','').startswith(EDIT_PROMPT) for p in c['contents'][0]['parts']) for c in calls)==1
     assert all(any('inlineData' in p for p in c['contents'][0]['parts']) for c in calls[:-1])
     assert current.state['completion_phases']['delivery']=='complete'

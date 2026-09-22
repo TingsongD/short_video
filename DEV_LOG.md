@@ -7,6 +7,26 @@ decisions) is my direct work.
 
 ---
 
+## 2026-09-22 — Future-run temporal QC binding
+
+- Versioned new flash-cut runs as `flashcut_policy.v2`; historical v1 runs
+  remain valid and retain their saved behavior.
+- Bound final technical QC to the exact final narration/caption schedule and
+  native editorial plan. It checks every decoded output presentation timestamp,
+  exact phrase-caption coverage, and decoded-frame occupancy at required brief
+  edit intervals. The evidence explicitly reports that it does **not** perform
+  pixel OCR, semantic event recognition or lip-sync verification.
+- Wired the saved policy through the worker into each final A/B/C/D review;
+  the expected schedule and measured coverage are persisted with the review.
+- Focused policy/quality regressions: **21 passed**. A real offline
+  all-frame-analysis → native Hypit A/B/C/D → QC → Compare/mock-delivery path
+  passed in **219.46s** with local process inspection enabled. An earlier
+  sandbox-only invocation was interrupted after its supervisor could not publish
+  process evidence; it ran no test and made no provider request.
+- No paid provider calls, publishing, live delivery, budget changes, historical
+  reconciliation or historical-run mutation occurred. This is focused evidence,
+  not a fresh full-suite release sign-off.
+
 ## 2026-09-22 — Future-run hardening in progress
 
 - Added a server-issued, versioned **$50 cumulative USD guardrail** to each

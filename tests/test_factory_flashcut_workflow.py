@@ -1,5 +1,6 @@
 from test_factory_autorun import application, stack, make_seed, launch
-from modules.factory.analysis.evidence_policy import new_flashcut_policy
+from modules.factory.analysis.evidence_policy import (
+    legacy_flashcut_policy, new_flashcut_policy, validate_flashcut_policy)
 
 
 def test_profile_is_frozen_only_on_new_explicit_flashcut_runs(application):
@@ -13,6 +14,20 @@ def test_profile_is_frozen_only_on_new_explicit_flashcut_runs(application):
     assert saved.params['policies']['captions']=='phrases.v1'
     assert saved.params['workflow']['reference_policy']=='disabled'
     assert saved.params['policies']['variation']=='full_video'
+
+
+def test_new_temporal_policy_does_not_invalidate_historical_v1_runs():
+    current=new_flashcut_policy()
+    assert current['version']=='flashcut_policy.v2'
+    assert current['quality']=={
+        'technical_temporal':'flashcut_temporal_qc.v1',
+        'brief_event_max_frames':6,
+        'caption_alignment':'final_speech_schedule.v1',
+    }
+    historical=legacy_flashcut_policy()
+    assert historical['version']=='flashcut_policy.v1'
+    assert 'quality' not in historical
+    assert validate_flashcut_policy(historical)==historical
 
 
 def test_unqualified_profile_does_not_replace_legacy_video_analysis(application):

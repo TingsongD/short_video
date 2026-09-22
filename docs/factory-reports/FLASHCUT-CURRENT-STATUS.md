@@ -51,18 +51,23 @@ explicitly outside the requested next hardening scope.
    receives an isolated cumulative $50 USD guardrail. Holds and settlements
    count; Resume cannot drop it; unrelated runs cannot select it. Stricter
    shared/provider/category ceilings still apply. This does not fund live tests.
-4. **Implementation complete; end-to-end check running:** future runs can plan
+4. **Implemented and focused end-to-end checked:** future runs can plan
    bounded saved-response recovery for a completed response-cap failure. It does
    not replay an unknown HTTP 500. New analysis routes still require qualification
    beyond this exact run/source. Reference-conditioned generation remains disabled
    pending its own authorized live qualification.
 5. Measure Jev's benefit and test real rapid-cut, callback, silence and VFR fixtures.
    This continuous-footage seed does not establish flash-cut reproduction quality.
-6. Improve temporal/continuity inspection; sampled visual review is not exhaustive
-   motion or lip-sync verification. Weak rhythm is a valid result, not itself a bug.
+6. **Implemented for future v2 runs:** final technical QC now checks every decoded
+   output timestamp, phrase captions against final replacement-speech alignment,
+   and decoded-frame occupancy of required brief editorial intervals. It does not
+   semantically recognize the intended event, run pixel OCR or verify lip sync;
+   sampled visual review remains non-exhaustive. Weak rhythm is a valid result,
+   not itself a bug. Historical v1 runs retain their saved QC behavior.
 7. Finish release requalification. The complete dashboard suite (72 tests) and
-   production build pass; the clean complete backend result, final local-render
-   evidence and protected-state comparison are still pending.
+   production build pass. Focused temporal policy/quality checks (21) and one
+   actual offline A/B/C/D native-Hypit path (219.46s) pass. The clean complete
+   backend result and final protected-state comparison are still pending.
 8. Improve safe historical visibility controls if needed. Existing archive
    eligibility protected unresolved work; no historical clearing was performed.
 

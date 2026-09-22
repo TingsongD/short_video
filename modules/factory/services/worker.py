@@ -525,6 +525,7 @@ class ApplicationWorker:
                 upscaled.append(f"{p['id']}: {pv['width']}x{pv['height']} → {clock['width']}x{clock['height']}")
         renderer='hypit' if any(x.get('transition_out') not in ('cut','none','') or 'kenburns' in x.get('effects',[]) for x in pictures) else 'ffmpeg_fast'
         render_options = {}
+        temporal_expected = None
         flashcut = exp.packaging.get('flashcut_policy')
         if flashcut:
             from ..templates.capabilities import renderer_order
@@ -540,6 +541,23 @@ class ApplicationWorker:
             clock.update(fps_num=exp.output_clock['num'],fps_den=exp.output_clock['den'],caption_preset='phrases.v1')
             renderer = renderer_order(flashcut['renderer'])[0]
             render_options = {'renderer_policy': flashcut['renderer'], 'premix': audio[0],'native_editorial':editorial}
+            quality = flashcut.get('quality') or {}
+            if quality.get('technical_temporal'):
+                maximum = quality['brief_event_max_frames']
+                temporal_expected = {
+                    'version': quality['technical_temporal'],
+                    'caption_alignment': quality['caption_alignment'],
+                    'brief_event_max_frames': maximum,
+                    'captions': captions,
+                    'passages': editorial['passages'],
+                    'brief_events': [
+                        {name: event[name] for name in
+                         ('id', 'kind', 'required', 'start_frame', 'end_frame')}
+                        for event in editorial['events']
+                        if event.get('required') is True
+                        and event['end_frame'] - event['start_frame'] <= maximum
+                    ],
+                }
         cid='comp-'+content_hash([plan['id'],key])[:24]
         result=s.composition.compile(cid,exp.experiment_id,key,plan['id'],segments,captions,clock,renderer,plan_hash=plan['plan_hash'],now=utcnow(),**render_options)
         if result['diagnostics']: raise ContractError('compile_failed','diagnostics',json.dumps(result['diagnostics']))
@@ -577,6 +595,8 @@ class ApplicationWorker:
             else:
                 stills.append({'start_s':start,'end_s':end,'approved':True,'artifact_id':p['artifact_id']})
         expected={**clock,'frames':variant.target_frames,'has_audio':True,'narration':narration,'narration_required':any(seg.get('copy') for seg in variant.segments),'intentional_stills':stills,'upscaled_inputs':upscaled}
+        if temporal_expected is not None:
+            expected['temporal'] = temporal_expected
         tech='technical-'+bid
         if not s.quality._get(tech): s.quality.inspect(tech,path,expected,binding=binding)
         checks=[tech]
