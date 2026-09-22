@@ -96,9 +96,16 @@ class FlashcutAnalysis:
             raise ContractError('analysis_media_mismatch','provider_result')
         overview=outputs[0].get('analysis')
         if not overview:raise ContractError('analysis_evidence_unavailable','whole_video_understanding')
-        # Supplementary collection validates its own fixed clarification; keep
-        # original responses immutable in the understanding bundle.
-        pending=set() if run.state.get('flashcut_format_recovery') else set(x for out in outputs for x in out['essential_missing'])
+        # Supplementary collection validates its own fixed clarification. On the
+        # normal path, whole-video evidence may clear only outside-window context.
+        from ..analysis.context_coverage import analysis_pending
+        pending, resolution = analysis_pending(
+            plan['requests'], outputs, format_recovery=bool(run.state.get('flashcut_format_recovery')))
+        if resolution is not None:
+            ref = self.s.source_evidence.blobs.put(resolution)
+            if run.state.get('flashcut_context_resolution') != ref:
+                run.state['flashcut_context_resolution'] = ref
+                self.auto._put(run)
         clarifications=run.state.setdefault('flashcut_clarifications',[])
         for index,request in enumerate(clarifications):
             ledger.claim(eid,request)
@@ -121,7 +128,9 @@ class FlashcutAnalysis:
             self.auto._put(run);return 'wait'
         observations=[{**o,'id':f'{i}:{o["id"]}'} for i,out in enumerate(outputs) for o in out['observations']]
         bundle=self.s.source_evidence.blobs.put({'version':'flashcut_understanding.v1','binding':plan['binding'],
-            'overview':overview,'responses':outputs,'observations':observations,'plan_identity':plan['identity']})
+            'overview':overview,'responses':outputs,'observations':observations,'plan_identity':plan['identity'],
+            **({'context_resolution':run.state['flashcut_context_resolution']}
+               if run.state.get('flashcut_context_resolution') else {})})
         run.state.update(analysis=overview,analysis_source_sha=plan['binding']['source_sha256'],
             flashcut_understanding=bundle,flashcut_substage='complete')
         self.auto._advance(run,'sections');return 'next'

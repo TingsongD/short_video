@@ -4,6 +4,13 @@ Updated 2026-09-22. This is the current status index for the AVvVLM5b-mE
 acceptance run. Older reports retain their original checkpoint evidence; their
 paused-state statements do not describe the completed run.
 
+Future-run hardening is tracked separately in
+[FUTURE-RUN-HARDENING-2026-09-22.md](FUTURE-RUN-HARDENING-2026-09-22.md).
+The [qualification matrix](FLASHCUT-QUALIFICATION-MATRIX.md) distinguishes the
+completed run's narrow live acceptance from the new v3 compact evidence route.
+The [live-only checklist](FLASHCUT-LIVE-ONLY-ACCEPTANCE.md) contains unpaid
+three-seed stage-one estimates; it does not authorize provider requests.
+
 ## Outcome
 
 - Run: `auto-2c9de6ddf2e34d5c`; experiment: `exp-auto-2c9de6ddf2e34d5c`, revision 3.
@@ -41,50 +48,60 @@ explicitly outside the requested next hardening scope.
 
 ## Follow-on hardening status
 
-1. **Implemented offline, rollout pending:** unusable completed narration
+1. **Deployed for future runs:** unusable completed narration
    rewrites can consume a distinct second bounded attempt, and completed invalid
    editorial plans can use a conservative deterministic fallback when every
    retained event remains source-bound and unambiguous. Unsafe cases still pause.
 2. Preserve and reconcile unknown outcomes only with evidence. Do not erase old
    holds, resubmit unknown requests or treat execution-capacity release as a refund.
-3. **Implemented offline, rollout pending:** each newly created automatic run
+3. **Deployed for future runs:** each newly created automatic run
    receives an isolated cumulative $50 USD guardrail. Holds and settlements
    count; Resume cannot drop it; unrelated runs cannot select it. Stricter
    shared/provider/category ceilings still apply. This does not fund live tests.
-4. **Implemented and focused end-to-end checked:** future runs can plan
+4. **Deployed and end-to-end checked offline:** future runs can plan
    bounded saved-response recovery for a completed response-cap failure. It does
    not replay an unknown HTTP 500. New analysis routes still require qualification
    beyond this exact run/source. Reference-conditioned generation remains disabled
    pending its own authorized live qualification.
-5. Measure Jev's benefit and test real rapid-cut, callback, silence and VFR fixtures.
-   This continuous-footage seed does not establish flash-cut reproduction quality.
-6. **Implemented for future v2 runs:** final technical QC now checks every decoded
+5. Jev's retained shadow observations covered only one of nine required
+   labeled cases and removed none of 78 optional candidates. The nine-case
+   offline gate and rapid-cut, callback, silence and VFR fixtures now exist,
+   but active filtering remains disabled. This continuous-footage seed does
+   not establish flash-cut reproduction quality.
+6. **Implemented for future v2/v3 runs:** final technical QC now checks every decoded
    output timestamp, phrase captions against final replacement-speech alignment,
    and decoded-frame occupancy of required brief editorial intervals. It does not
    semantically recognize the intended event, run pixel OCR or verify lip sync;
    sampled visual review remains non-exhaustive. Weak rhythm is a valid result,
    not itself a bug. Historical v1 runs retain their saved QC behavior.
-7. Finish release requalification. The complete dashboard suite (72 tests) and
-   production build pass. Focused temporal policy/quality checks (21) and one
-   actual offline A/B/C/D native-Hypit path (219.46s) pass. The clean complete
-   backend result and final protected-state comparison are still pending.
-8. Improve safe historical visibility controls if needed. Existing archive
-   eligibility protected unresolved work; no historical clearing was performed.
+7. Future v3 evidence packaging passed unpaid all-frame preflight on three
+   retained seeds: 1,869, 635 and 423 source frames. Clock-bound image/window
+   bundles and candidate partitioning fit the saved per-request limits without
+   removing measured candidates. Provider acceptance on those new payloads
+   remains unverified; see the separate live-only checklist.
+8. The local release gate passed: backend 1,573 tests with seven helper-import
+   skips, separate Python 3.11 helper 27 tests, dashboard 73 tests and build,
+   and 16 actual Hypit/FFmpeg render tests with no renderer skips. The owned
+   API/worker were restarted while idle, with zero active jobs in the backup.
+   All 20 protected final hashes and tracked historical rows still match.
+9. Safe UI-only history hiding is available for eligible entries. Unresolved
+   work remains discoverable; no historical clearing was performed.
 
 The hardening tracker is
 [FUTURE-RUN-HARDENING-2026-09-22.md](FUTURE-RUN-HARDENING-2026-09-22.md).
-Focused passing tests are evidence only for completed slices, not a full release
-qualification or new spending authorization. Provider latency and interactive
-authentication cannot be guaranteed away. No exact per-issue delay breakdown
-was measured.
+The local release gate does not qualify new Gemini media payloads or unattended
+multi-seed quality and is not new spending authorization. Provider latency and
+interactive authentication cannot be guaranteed away. No exact per-issue delay
+breakdown was measured.
 
 ## Verification and evidence
 
 Focused checks recorded during recovery include 105 coverage/recovery tests,
 36 rendering/composition tests and 31 final-review/context/quality tests. These
 are separate, potentially overlapping runs, not an additive full-suite total.
-Real Hypit/FFmpeg fixtures and final decode/audio checks passed. The complete
-backend/frontend suite was not rerun after the final recovery patches.
+Real Hypit/FFmpeg fixtures and final decode/audio checks passed. At the time
+the AVv run completed, the complete suite had not been rerun; the follow-on
+hardening release results are now listed above and in the tracker.
 
 All 16 historical final bindings/hashes and protected records, jobs, attempts,
 assets, reservations and effect bindings remained unchanged. Five baseline

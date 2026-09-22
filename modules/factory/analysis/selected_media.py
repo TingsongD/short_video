@@ -10,6 +10,13 @@ from ..domain.errors import ContractError
 from ..media.source_clock import extract_audio
 
 
+LEGACY_MEDIA_POLICY={'version':'selected_media.v1'}
+COMPACT_MEDIA_POLICY={'version':'selected_media.v2',
+    'image_encoding':'jpeg_q88_444.v1','window_crf':28,
+    'window_max_dimension':1280,'overview_crf':34,
+    'overview_max_dimension':1280,'overview_max_bytes':14*1024*1024}
+
+
 def _ranges(clock,fusion):
     times=[Fraction(f['source_time']) for f in clock['frames']]
     intervals=[]
@@ -48,7 +55,8 @@ def _ranges(clock,fusion):
     return bounded
 
 
-def _window(source,target,clock,interval,pcm=None,audio=None):
+def _window(source,target,clock,interval,pcm=None,audio=None,*,crf=18,
+            audio_bitrate=192000,max_dimension=None):
     import av
     import numpy as np
     low,high=Fraction(interval['source_start']),Fraction(interval['source_end'])
@@ -56,11 +64,16 @@ def _window(source,target,clock,interval,pcm=None,audio=None):
     with av.open(str(source)) as input_media, av.open(str(target),'w') as output:
         original=input_media.streams[clock['video']['index']]
         video=output.add_stream('libx264',rate=original.average_rate or Fraction(30))
-        video.width,video.height=original.codec_context.width,original.codec_context.height
+        width,height=original.codec_context.width,original.codec_context.height
+        if max_dimension and max(width,height)>max_dimension:
+            scale=Fraction(max_dimension,max(width,height))
+            width=max(2,(int(width*scale)//2)*2)
+            height=max(2,(int(height*scale)//2)*2)
+        video.width,video.height=width,height
         video.pix_fmt='yuv420p'
         video.time_base=base
         video.codec_context.time_base=base
-        video.options={'crf':'18','preset':'fast'}
+        video.options={'crf':str(crf),'preset':'fast'}
         sound=None
         audio_cursor,audio_end,offset=0,0,0
         if pcm is not None:
@@ -73,7 +86,7 @@ def _window(source,target,clock,interval,pcm=None,audio=None):
                 layout={1:'mono',2:'stereo'}.get(audio['channels'],layout)
                 sound=output.add_stream('aac',rate=48000)
                 sound.layout=layout
-                sound.bit_rate=192000
+                sound.bit_rate=audio_bitrate
                 sound.time_base=Fraction(1,48000)
         def emit_audio(until):
             nonlocal audio_cursor
@@ -97,6 +110,8 @@ def _window(source,target,clock,interval,pcm=None,audio=None):
             if frame.pts!=expected['pts'] or str(frame.time_base)!=expected['time_base'] or getattr(frame,'is_corrupt',False):
                 raise ContractError('source_evidence_stale','window_frame')
             target_time=Fraction(expected['source_time'])-low
+            if frame.width!=width or frame.height!=height:
+                frame=frame.reformat(width=width,height=height,format='yuv420p')
             frame.pts=round(target_time/base)
             frame.time_base=base
             for packet in video.encode(frame):
@@ -126,9 +141,14 @@ def _window(source,target,clock,interval,pcm=None,audio=None):
     return audio_present
 
 
-def materialize_selected(source,clock,fusion,artifacts,workspace,*,progress=None):
+def materialize_selected(source,clock,fusion,artifacts,workspace,*,progress=None,
+                         policy=None):
     import av
     import numpy as np
+    policy=policy or LEGACY_MEDIA_POLICY
+    if policy not in (LEGACY_MEDIA_POLICY,COMPACT_MEDIA_POLICY):
+        raise ContractError('unsupported_selected_media_policy','policy')
+    compact=policy==COMPACT_MEDIA_POLICY
     progress=progress or (lambda **_:None)
     indices=fusion['selected_frame_indices']
     ranges=_ranges(clock,fusion)
@@ -153,12 +173,20 @@ def materialize_selected(source,clock,fusion,artifacts,workspace,*,progress=None
                 expected=clock['frames'][index]
                 if hashlib.sha256(image.tobytes()).hexdigest()!=expected['pixel_sha256']:
                     raise ContractError('source_evidence_stale','selected_frame')
-                path=temp/f'frame-{index}.png'
-                image.save(path)
+                path=temp/f'frame-{index}.{"jpg" if compact else "png"}'
+                if compact:
+                    image.save(path,format='JPEG',quality=88,subsampling=0,
+                               optimize=True,progressive=False)
+                else:
+                    image.save(path)
                 detail={'source_sha256':clock['source_sha256'],'frame_index':index,'source_time':expected['source_time'],
-                        'pixel_sha256':expected['pixel_sha256'],'version':'selected_media.v1'}
+                        'pixel_sha256':expected['pixel_sha256'],
+                        'version':'selected_media.v2' if compact else 'selected_media.v1',
+                        'mime_type':'image/jpeg' if compact else 'image/png',
+                        'encoding':policy.get('image_encoding','png_lossless.v1')}
                 artifact=artifacts.intake_file(path,'seed_source',f"flashcut:{clock['source_sha256']}:{index}",json.dumps(detail))
-                images.append({**detail,'artifact_id':artifact.id,'sha256':artifact.sha256,'bytes':artifact.byte_count})
+                images.append({**detail,'artifact_id':artifact.id,
+                               'sha256':artifact.sha256,'bytes':artifact.byte_count})
                 progress(stage='selected_media')
         if len(images)!=len(selected):
             raise ContractError('coverage_incomplete','selected_frames')
@@ -168,12 +196,43 @@ def materialize_selected(source,clock,fusion,artifacts,workspace,*,progress=None
             pcm=np.memmap(temp/'audio.f32',mode='r',dtype='<f4',shape=(audio['samples'],audio['channels']))
         for number,interval in enumerate(ranges):
             target=temp/f'window-{number}.mp4'
-            audio_present=_window(source,target,clock,interval,pcm,audio)
+            audio_present=_window(source,target,clock,interval,pcm,audio,
+                                  crf=policy.get('window_crf',18),
+                                  max_dimension=policy.get('window_max_dimension'))
             detail={**interval,'audio_present':audio_present,'source_sha256':clock['source_sha256'],
-                    'version':'selected_media.v1','mapping':'source_time=window_time+source_start'}
+                    'version':'selected_media.v2' if compact else 'selected_media.v1',
+                    'mapping':'source_time=window_time+source_start',
+                    'encoding':f"h264_crf{policy.get('window_crf',18)}_aac192k_max{policy.get('window_max_dimension','native')}.v1"}
             artifact=artifacts.intake_file(target,'seed_source',f"flashcut-window:{clock['source_sha256']}:{number}",json.dumps(detail))
             windows.append({**detail,'artifact_id':artifact.id,'sha256':artifact.sha256,'bytes':artifact.byte_count})
             progress(stage='selected_media')
+        overview=None
+        if compact:
+            target=temp/'overview.mp4'
+            interval={'first_frame':0,'end_frame':len(clock['frames']),
+                      'source_start':'0','source_end':str(clock['duration']),
+                      'candidate_ids':[]}
+            audio_present=_window(source,target,clock,interval,pcm,audio,
+                                  crf=policy['overview_crf'],audio_bitrate=96000,
+                                  max_dimension=policy['overview_max_dimension'])
+            size=target.stat().st_size
+            if size>policy['overview_max_bytes']:
+                raise ContractError('evidence_media_limit','overview_bytes',
+                    'The clock-verified overview exceeds the qualified inline-media envelope.')
+            detail={**interval,'audio_present':audio_present,
+                'source_sha256':clock['source_sha256'],'version':'selected_media.v2',
+                'mapping':'source_time=overview_time',
+                'encoding':f"h264_crf{policy['overview_crf']}_aac96k_max{policy['overview_max_dimension']}.v1"}
+            artifact=artifacts.intake_file(target,'seed_source',
+                f"flashcut-overview:{clock['source_sha256']}",json.dumps(detail))
+            overview={**detail,'artifact_id':artifact.id,
+                      'sha256':artifact.sha256,'bytes':artifact.byte_count}
+            progress(stage='selected_media')
         if pcm is not None:
             del pcm
-    return {'version':'selected_media.v1','source_sha256':clock['source_sha256'],'images':images,'windows':windows}
+    result={'version':'selected_media.v2' if compact else 'selected_media.v1',
+            'source_sha256':clock['source_sha256'],'images':images,
+            'windows':windows}
+    if compact:
+        result.update(policy=policy,overview=overview)
+    return result

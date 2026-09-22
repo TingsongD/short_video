@@ -18,7 +18,7 @@ def test_profile_is_frozen_only_on_new_explicit_flashcut_runs(application):
 
 def test_new_temporal_policy_does_not_invalidate_historical_v1_runs():
     current=new_flashcut_policy()
-    assert current['version']=='flashcut_policy.v2'
+    assert current['version']=='flashcut_policy.v3'
     assert current['quality']=={
         'technical_temporal':'flashcut_temporal_qc.v1',
         'brief_event_max_frames':6,

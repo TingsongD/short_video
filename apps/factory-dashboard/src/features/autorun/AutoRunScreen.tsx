@@ -39,6 +39,7 @@ export function RunProgress({ run }: { run: Row }) {
   const overlayRepairs = Object.entries(run.state?.overlay_repair_attempts || {});
   const source=run.source_analysis;
   const spend=run.spending_policy;
+  const wait=run.provider_wait || run.state?.provider_wait;
   return <div className={`run-progress ${run.status}`}>
     <div role="status" aria-live="polite">
       <strong>{state}</strong> · {LABEL[run.stage] || run.stage}
@@ -65,8 +66,13 @@ export function RunProgress({ run }: { run: Row }) {
       {source.next_attempt_at && <p>Next attempt: {source.next_attempt_at}</p>}
       {source.updated_at && <p>Evidence last updated: {source.updated_at}</p>}
     </section>}
-    {run.status === 'running' && run.state?.provider_wait?.reason === 'analysis_throttled' &&
+    {run.status === 'running' && wait?.reason === 'analysis_throttled' &&
       <p role="status">Google is busy — waiting before an automatic QC/analysis retry. Up to two retries; existing clips are preserved.</p>}
+    {wait && <section aria-label="Provider wait">
+      <p>Waiting ({String(wait.reason || 'provider')}). {typeof wait.elapsed_s === 'number' ? `${wait.elapsed_s}s elapsed` : 'Elapsed time appears after the operation is accepted.'} Next poll: {wait.next_poll_at || 'not scheduled'}.</p>
+      <p>Operation: {wait.operation_id || 'pending. The saved request remains the one being observed.'}</p>
+      <p>Last successful observation: {wait.last_observed_at || 'none yet'}.</p>
+    </section>}
     {run.state?.source_timing && <details><summary>Source timing evidence</summary>
       <ul>{(run.state.source_timing.passages||[]).map((p:Row,i:number)=><li key={i}>Passage {i+1}: {p.quality === 'passage_only' ? 'Passage timing only — word timing unavailable' : p.quality} · {p.attempts}/2 local repair attempts</li>)}</ul>
       <p>Final captions use replacement narration alignment, not source-word estimates.</p>

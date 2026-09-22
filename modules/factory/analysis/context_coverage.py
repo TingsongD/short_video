@@ -23,9 +23,11 @@ def resolve_context_coverage(requests,outputs,*,local_evidence=None):
     supporting=[]
     for index,(request,output) in enumerate(zip(requests,outputs)):
         source=next((m for m in request['media'] if m['id']=='source'),{})
+        source_identity=source.get('source_sha256') or source.get('sha256')
         if (request['scope']!='whole' or output.get('scope')!='whole' or not output.get('analysis')
                 or output['essential_missing'] or source.get('kind')!='video'
-                or source.get('sha256')!=binding['source_sha256']
+                or source_identity!=binding['source_sha256']
+                or not isinstance(source.get('sha256'),str) or len(source['sha256'])!=64
                 or Fraction(source.get('source_start','-1'))!=0 or Fraction(source.get('source_end','-1'))!=duration):continue
         for obs in output['observations']:
             if (obs['confidence']=='observed' and obs['time_basis']=='source' and 'source' in obs['evidence_ids']
@@ -49,7 +51,7 @@ def resolve_context_coverage(requests,outputs,*,local_evidence=None):
                     # Do not reinterpret a question about media it actually saw.
                     if not any(Fraction(w['source_start'])<=position<Fraction(w['source_end']) for w in windows):
                         ranges=[(max(Fraction(0),position-Fraction(1,2)),min(duration,position+Fraction(1,2)))]
-                elif flag=='source' and output.get('coverage_gap_recovery',{}).get('version')=='coverage_gap_recovery.v1':
+                elif flag=='source' and output.get('coverage_gap_recovery',{}).get('version') in ('coverage_gap_recovery.v1','coverage_gap_recovery.v2'):
                     ranges=[(Fraction(r['start_s']),Fraction(r['end_s']))
                             for r in output['coverage_gap_recovery']['claimed_ranges']]
                     if any(_covered_by_windows(start,end,windows) for start,end in ranges):ranges=[]
@@ -62,3 +64,17 @@ def resolve_context_coverage(requests,outputs,*,local_evidence=None):
                              'supporting_observation_ids':[p['observation_id'] for p in support],'support':support})
     return {'version':POLICY,'binding':binding,'request_hashes':[wire_hash(q) for q in requests],
             'response_hashes':[content_hash(o) for o in outputs],'resolutions':resolved,'pending':pending}
+
+
+def analysis_pending(requests, outputs, *, format_recovery=False):
+    """Window-context flags may reuse whole-video evidence; other flags stay pending.
+
+    Format recovery has already applied its own fixed clarification. A bundle
+    whose responses do not line up with the frozen requests keeps every flag.
+    """
+    if format_recovery:
+        return set(), None
+    if len(outputs) != len(requests):
+        return {flag for output in outputs for flag in output.get('essential_missing', [])}, None
+    resolution = resolve_context_coverage(requests, outputs)
+    return {item['flag'] for item in resolution['pending']}, resolution

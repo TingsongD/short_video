@@ -46,8 +46,13 @@ def preflight(args):
     verify_installation(ROOT)
     transcript=json.loads(args.transcript.read_text())
     pricing=json.loads(args.pricing.read_text())
-    if args.destination.exists():raise ValueError('Refusing to overwrite a preflight workspace.')
-    args.destination.mkdir(mode=0o700,parents=True)
+    if args.destination.exists():
+        if not args.resume or (args.destination/'quote.json').exists():
+            raise ValueError('Refusing to overwrite a completed or unrequested preflight workspace.')
+    else:
+        if args.resume:
+            raise ValueError('No preflight workspace exists to resume.')
+        args.destination.mkdir(mode=0o700,parents=True)
     db=Database(args.destination/'preflight.db')
     try:
         artifacts=ArtifactStore(args.destination/'artifacts',db)
@@ -57,7 +62,16 @@ def preflight(args):
         binding={'seed_id':'unpaid-preflight','seed_revision':1,'source_artifact_id':artifact.id,
             'source_sha256':artifact.sha256,'analysis_revision':1,
             'transcript_sha256':args.transcript_sha256,'edit_token':content_hash(['preflight',binding_seed(args)])}
-        record=store.create('unpaid-preflight',binding,policy)
+        if args.resume:
+            rows=db.conn.execute("SELECT body FROM records WHERE kind='sourceevidence'").fetchall()
+            if len(rows)!=1:
+                raise ValueError('Preflight workspace must contain exactly one source-evidence binding.')
+            record=json.loads(rows[0][0])
+            if (record['run_id']!='unpaid-preflight' or record['binding']!=binding
+                    or record['policy']!=policy):
+                raise ValueError('Preflight source or policy binding changed; do not resume.')
+        else:
+            record=store.create('unpaid-preflight',binding,policy)
         encoder=PEEncoder(ROOT/'vendor/flashcut-perception-models',ROOT/'vendor/flashcut-helper/models/PE-Core-S16-384.pt')
         started=time.monotonic()
         analyze_source(store,record['id'],args.source,encoder,binding=binding)
@@ -109,4 +123,5 @@ if __name__=='__main__':
         parser.add_argument('--'+name,required=True,type=Path)
     for name in ('source-sha256','transcript-sha256'):
         parser.add_argument('--'+name,required=True)
+    parser.add_argument('--resume',action='store_true')
     preflight(parser.parse_args())

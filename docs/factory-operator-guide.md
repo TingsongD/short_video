@@ -838,10 +838,10 @@ subscription changes or spending over any applicable limit.
 
 | What you see | Safe next step |
 | --- | --- |
-| Provider still generating | Keep the original job; a slow request is not permission to submit another. One clip in this run took about ten minutes. |
+| Provider still generating | Keep the original job. The run shows waiting, elapsed time since the operation was accepted, the remote operation id, the last successful observation, and the next poll. A missing operation id means the submission is still unconfirmed. Do not submit another copy. |
 | Unknown provider outcome / HTTP 500 | Preserve its identity and hold. Do not repeatedly Resume or recreate the request. Use evidence-backed reconciliation or supported independent recovery. |
 | Completed analysis hit its response cap | On new hardened runs, the app may automatically plan the bounded saved-response recovery if the original completed payload is present and the run has authority. This is a new request identity, not a replay. An HTTP 500 or submission with an unknown outcome still pauses. |
-| Returned but invalid analysis | Use the specific bounded recovery offered for that run; malformed completed output, missing evidence and unknown transport outcomes are different states and not every one is safe to retry. |
+| Returned but invalid analysis | A completed compact answer may report unseen time only as structured `coverage_gaps` (`start_s`, `end_s`). The original text is kept and is not parsed into timestamps. Whole-video evidence can clear a window-context gap only when the source binding and coverage checks pass. Malformed output, missing evidence and unknown transport outcomes stay different states. |
 | Google sign-in required | Complete sign-in through the supported flow. Never paste tokens/passwords into logs; authentication does not resolve old financial holds. |
 | Narration cannot fit | The app may make at most two distinct repair attempts per affected segment. An unusable completed first rewrite is retained as evidence and can advance to the second attempt. Unknown outcomes never advance automatically; do not reset counters or bypass timing. |
 | Editorial plan incomplete | A completed but invalid plan may be replaced by conservative source-bound coverage and exact observed cuts only when variant ownership, clip ranges and timing are unambiguous. Conflicts, invalid JSON and unknown provider outcomes pause with a technical reason. |
@@ -867,5 +867,44 @@ video does not settle that charge.
   a quality limitation.
 - This source was continuous footage. It does not qualify rapid-cut reproduction;
   unreliable audio rhythm is an honest measurement, not a failed beat grid to invent.
-- Focused regressions and real local renders passed, not a fresh full release
-  suite after the final patches. See the current handover for precise evidence.
+- Offline tests and local renders do not replace a fresh multi-seed live
+  acceptance run. The prepared checklist is
+  [FLASHCUT-LIVE-ONLY-ACCEPTANCE.md](factory-reports/FLASHCUT-LIVE-ONLY-ACCEPTANCE.md).
+  It is not spending authorization. See the hardening tracker for the latest
+  offline evidence.
+
+## 9. New flash-cut source evidence (future runs)
+
+New flash-cut runs save `flashcut_policy.v3`. The source helper still processes
+**every decoded frame** and measures the soundtrack. It then keeps selected
+timestamp-bound evidence images, short audio-bearing windows and a compact
+whole-video overview for Gemini. The overview is compressed and capped; it
+does not replace the original source or the selected frames. Existing v1/v2
+runs keep their saved evidence policy.
+
+The Auto status shows decoded and encoded frame counts, audio/rhythm status,
+analysis requests, waiting/backoff and the last successful update. A source
+with dense events may need several bounded Gemini requests. If the source
+cannot fit the qualified media, context or cumulative call limits, the run
+pauses with a technical limit instead of dropping necessary events. Do not
+recreate a paused paid request whose outcome is unknown; use its recorded
+reconciliation action.
+
+The installed local helper and three-source unpaid preflight are documented in
+the [helper guide](flashcut-helper.md). Current provider scope is in the
+[qualification matrix](factory-reports/FLASHCUT-QUALIFICATION-MATRIX.md).
+The [live-only checklist and stage-one estimate](factory-reports/FLASHCUT-LIVE-ONLY-ACCEPTANCE.md)
+shows what must be re-quoted and separately authorized before testing the new
+Gemini payload with real provider requests. Jev remains advisory in shadow
+mode because it has not demonstrated an evidence-selection or cost benefit.
+Image-reference character generation remains disabled. A passing local test
+or quote does not mean a new run is ready for unattended production.
+
+For a local service restart, wait until there are no active jobs, take the
+consistent rollout backup, and stop only this checkout's API/worker and owned
+Hypit runtime. Start **one** worker, then confirm `/api/health`, the worker
+heartbeat and the dashboard bundle. A detached launcher invoked from a
+short-lived agent shell may report healthy and then lose its child processes;
+use persistent terminals/sessions and recheck health after the launcher exits.
+The 2026-09-22 rollout kept shared media programs running when ownership was
+unclear and did not resume historical paused runs.

@@ -72,7 +72,8 @@ def test_shadow_and_fallback_never_drop_mandatory_coverage():
     with pytest.raises(ContractError,match='jev_active_unqualified'):
         select_evidence(candidates,{'audio:1':'optional'},mode='active')
     proof={'qualified':True,'mandatory_loss':0,'benefit_observed':True,'evidence_sha256':'d'*64}
-    assert select_evidence(candidates,{'audio:1':'optional'},mode='active',benchmark=proof)==['opening']
+    with pytest.raises(ContractError,match='jev_active_unqualified'):
+        select_evidence(candidates,{'audio:1':'optional'},mode='active',benchmark=proof)
 
 
 def test_jev_uses_normal_reservation_and_unknown_is_not_replayed(tmp_path):

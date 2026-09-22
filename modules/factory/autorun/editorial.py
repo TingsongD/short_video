@@ -28,6 +28,11 @@ def prepare(autorun,run):
     output=s.commands.get(run.state[tag+'_jobs'][0])['command']['result']['result']
     if output['binding']!=binding:raise ContractError('editorial_evidence_mismatch','result')
     saved=store.save(binding,inputs,output['editorial'])
+    origin = output.get('plan_origin') or (
+        'local_conservative' if output.get('editorial_recovery') else 'provider')
+    if origin not in ('provider', 'local_conservative'):
+        raise ContractError('editorial_plan_unproven', 'plan_origin')
+    run.state['editorial_plan_origin'] = origin
     if output.get('editorial_recovery'):
         run.notes.append(
             'Editorial provider response was complete but invalid; '

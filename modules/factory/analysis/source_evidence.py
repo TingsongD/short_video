@@ -209,7 +209,8 @@ class SourceEvidenceService:
             record = self.get(evidence_id)
             self._guard(u, record, current_binding, lease)
             if (record['policy'].get('version') in
-                    ('flashcut_policy.v1', 'flashcut_policy.v2')
+                    ('flashcut_policy.v1', 'flashcut_policy.v2',
+                     'flashcut_policy.v3')
                     and 'media' not in totals):
                 raise ContractError('coverage_incomplete','selected_media')
             if record['status'] == 'complete':

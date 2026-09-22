@@ -26,19 +26,44 @@ def build_analysis_plan(store,evidence_id,adapter,transcript):
     binding={'source_sha256':record['binding']['source_sha256'],'transcript_sha256':record['binding']['transcript_sha256'],
              'evidence_sha256':record['manifest']['sha256']}
     candidates=[{k:c[k] for k in ('id','kind','source_time','mandatory','support')} for c in fusion['candidates']]
+    compact=media.get('version')=='selected_media.v2'
     context={'source_duration':clock['duration'],'source_clock':{k:clock[k] for k in ('version','origin','video','audio')},
-             'transcript':transcript,'candidates':candidates,
+             'transcript':transcript,
              'coverage':{'decoded_frames':clock['decoded_frames'],'encoded_frames':clock['decoded_frames']}}
     base={'task':'analyze_flashcut','model':MODEL,'prompt_version':'flashcut_understanding.v1',
-          'binding':binding,'context':context,'limits':deepcopy(adapter.limits)}
-    overview={**base,'scope':'whole','media':[{'id':'source','kind':'video',
-        'artifact_id':record['binding']['source_artifact_id'],'sha256':binding['source_sha256'],
-        'source_start':'0','source_end':clock['duration']}]}
+          'binding':binding,'limits':deepcopy(adapter.limits)}
+    def with_context(media_values,*,whole=False):
+        if not compact:
+            relevant=candidates
+        elif whole:
+            relevant=[candidate for candidate in candidates if candidate['mandatory']]
+        else:
+            ranges=[(Fraction(item['source_start']),Fraction(item['source_end']))
+                    for item in media_values if item['kind']=='video']
+            relevant=[candidate for candidate in candidates
+                      if any(start<=Fraction(candidate['source_time'])<end
+                             for start,end in ranges)]
+        return {**deepcopy(context),'candidates':relevant}
+    packaged=media.get('overview')
+    overview_item={'id':'source','kind':'video',
+        'artifact_id':packaged['artifact_id'] if packaged else record['binding']['source_artifact_id'],
+        'sha256':packaged['sha256'] if packaged else binding['source_sha256'],
+        'source_start':'0','source_end':clock['duration']}
+    if compact:
+        overview_item['source_sha256']=binding['source_sha256']
+    overview_media=[overview_item]
+    overview={**base,'scope':'whole','context':with_context(overview_media,whole=True),
+              'media':overview_media}
     requests=[overview]
     windows=[{'id':f'window:{i}','kind':'video',**{k:w[k] for k in ('artifact_id','sha256','source_start','source_end')}}
              for i,w in enumerate(media['windows'])]
-    images=[{'id':f"frame:{i['frame_index']}",'kind':'image',**{k:i[k] for k in ('artifact_id','sha256','source_time')}}
-            for i in media['images']]
+    images=[]
+    for item in media['images']:
+        image={'id':f"frame:{item['frame_index']}",'kind':'image',
+               **{k:item[k] for k in ('artifact_id','sha256','source_time')}}
+        if compact:
+            image['mime_type']=item['mime_type']
+        images.append(image)
     # Greedy deterministic packing attempts validation against actual bytes.
     # Any item that cannot fit alone is a technical pause, never an omission.
     group=[]
@@ -51,7 +76,9 @@ def build_analysis_plan(store,evidence_id,adapter,transcript):
             nearest=min(containing,key=lambda w:(abs((Fraction(w['source_start'])+Fraction(w['source_end']))/2-point),w['id']))
             chosen.add(nearest['id'])
         relevant=[w for w in windows if w['id'] in chosen]
-        return {**base,'scope':'window','media':relevant+items}
+        media_values=relevant+items
+        return {**base,'scope':'window','context':with_context(media_values),
+                'media':media_values}
     for image in images:
         proposed=target(group+[image])
         try:
@@ -70,7 +97,14 @@ def build_analysis_plan(store,evidence_id,adapter,transcript):
     used={m['id'] for req in requests[1:] for m in req['media'] if m['kind']=='video'}
     for window in windows:
         if window['id'] not in used:
-            requests.append({**base,'scope':'window','media':[window]})
+            requests.append({**base,'scope':'window',
+                             'context':with_context([window]),'media':[window]})
+    if compact:
+        covered={candidate['id'] for request in requests[1:]
+                 for candidate in request['context']['candidates']}
+        if covered!={candidate['id'] for candidate in candidates}:
+            raise ContractError('analysis_evidence_unavailable','candidate_context',
+                                'Every measured candidate needs a clock-bound media window.')
     if len(requests)+2>adapter.limits['requests']:
         raise ContractError('flashcut_request_limit','cumulative_requests', 'Mandatory source evidence exceeds the qualified envelope.')
     usages=[adapter.prepared(request)[1] for request in requests]
@@ -90,8 +124,11 @@ def build_analysis_plan(store,evidence_id,adapter,transcript):
               'max_input_tokens':sum(u['input_tokens_bound'] for u in usages)+2*limits['input_tokens'],
               'max_output_tokens':sum(u['output_tokens_bound'] for u in usages)+2*limits['output_tokens'],
               'reserve_usd_micros':sum(q['reserve_amount'] for q in quotes)+2*clarification_cost}
-    plan={'version':'flashcut_analysis_plan.v1','binding':binding,'requests':requests,
+    plan={'version':'flashcut_analysis_plan.v2' if compact else 'flashcut_analysis_plan.v1',
+          'binding':binding,'requests':requests,
           'usage_bounds':usages,'quotes':quotes,'envelope':envelope}
+    if compact:
+        plan['candidate_index']=candidates
     plan['identity']=content_hash(plan)
     return plan
 
@@ -111,7 +148,11 @@ def jev_summaries(store,evidence_id):
 
 def build_clarification_request(plan,pending):
     """Group questions covered by the same media; never discard a question."""
-    candidates={c['id']:c for c in plan['requests'][0]['context']['candidates']}
+    values=plan.get('candidate_index')
+    if values is None:
+        values=[c for request in plan['requests']
+                for c in request['context']['candidates']]
+    candidates={c['id']:c for c in values}
     def contains(request,wanted):
         point=candidates.get(wanted,{}).get('source_time')
         return any(m['id']==wanted or (point is not None and m['kind']=='video'
@@ -123,5 +164,9 @@ def build_clarification_request(plan,pending):
     request=deepcopy(original)
     request.update(scope='clarification',response_contract='flashcut_structured.v1')
     request['context']['clarify_ids']=[p for p in pending if contains(request,p)]
+    present={candidate['id'] for candidate in request['context']['candidates']}
+    request['context']['candidates'] += [deepcopy(candidates[p])
+        for p in request['context']['clarify_ids']
+        if p in candidates and p not in present]
     request['context']['clarification_instruction']='Resolve all named missing evidence from actual supplied media. Return grounded observations for each, or explicitly retain its ID in essential_missing. Never invent observations.'
     return request

@@ -147,3 +147,85 @@ def test_clarification_groups_missing_candidates_only_with_complete_media_covera
     request=build_clarification_request(plan,['coverage:2','coverage:8'])
     assert request['media'][0]['id']=='source'
     assert request['context']['clarify_ids']==['coverage:2','coverage:8']
+    plan['candidate_index']=candidates
+    source_request=build_clarification_request(plan,['source'])
+    assert source_request['context']['clarify_ids']==['source']
+    assert source_request['media'][0]['id']=='source'
+    assert source_request['context']['candidates']==candidates
+
+
+def test_dense_candidate_context_is_partitioned_without_dropping_evidence():
+    """A long source must not copy every measured event into every request."""
+    from modules.factory.analysis.flashcut_requests import build_analysis_plan
+
+    candidates=[]
+    for index in range(600):
+        second=index % 60
+        candidates.append({
+            'id':f'audio:onset_candidate:{index}',
+            'kind':'onset_candidate',
+            'source_time':str(second),
+            'mandatory':index in (0,599),
+            'support':['spectral_change','dense_fixture_' + ('x' * 40)],
+        })
+    binding={'source_sha256':'a'*64,'transcript_sha256':'b'*64,
+             'evidence_sha256':'c'*64}
+    record={'binding':{**binding,'source_artifact_id':'source-artifact'},
+            'manifest':{'sha256':'c'*64}}
+    clock={'duration':'60','version':'clock.v1','origin':'source',
+           'video':{},'audio':{},'decoded_frames':1800}
+    fusion={'candidates':candidates}
+    media={'version':'selected_media.v2',
+           'overview':{'artifact_id':'overview-artifact',
+                       'sha256':'2'*64},
+           'images':[
+        {'artifact_id':'image-a','sha256':'d'*64,'source_time':'10',
+         'frame_index':300,'mime_type':'image/jpeg'},
+        {'artifact_id':'image-b','sha256':'e'*64,'source_time':'50',
+         'frame_index':1500,'mime_type':'image/jpeg'},
+    ],'windows':[
+        {'artifact_id':'window-a','sha256':'f'*64,
+         'source_start':'0','source_end':'30'},
+        {'artifact_id':'window-b','sha256':'1'*64,
+         'source_start':'30','source_end':'60'},
+    ]}
+
+    class Blobs:
+        values={'clock':clock,'fusion':fusion,'media':media}
+        def read(self, value):
+            return self.values[value]
+    class Store:
+        blobs=Blobs()
+        def get(self, evidence_id):
+            assert evidence_id=='evidence'
+            return record
+        def manifest(self, evidence_id):
+            assert evidence_id=='evidence'
+            return {'chunks':[{'stage':stage,'blob':stage}
+                              for stage in ('clock','fusion','media')]}
+    class Adapter:
+        limits={'requests':20,'images':24,'windows':8,
+                'media_seconds':600,'payload_bytes':20*1024**2,
+                'context_bytes':64000,'input_tokens':1000000,
+                'output_tokens':8192,'clarifications':2}
+        pricing={'input_usd_micros_per_million':750000,
+                 'output_usd_micros_per_million':3750000}
+        def prepared(self, request):
+            if len(json.dumps(request['context']).encode()) > 64000:
+                raise ContractError('flashcut_request_limit','context')
+            return None, {'images':sum(m['kind']=='image' for m in request['media']),
+                'windows':sum(m['kind']=='video' for m in request['media']),
+                'media_seconds':'30','payload_bytes':1000,
+                'input_tokens_bound':2000,'output_tokens_bound':8192}
+        def price(self, request):
+            self.prepared(request)
+            return {'reserve_amount':10}
+
+    plan=build_analysis_plan(Store(),'evidence',Adapter(),[])
+    assert plan['version']=='flashcut_analysis_plan.v2'
+    assert plan['candidate_index']==candidates
+    assert {c['id'] for c in plan['requests'][0]['context']['candidates']} == {
+        candidates[0]['id'],candidates[-1]['id']}
+    covered={c['id'] for request in plan['requests'][1:]
+             for c in request['context']['candidates']}
+    assert covered=={c['id'] for c in candidates}

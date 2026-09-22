@@ -66,6 +66,9 @@ def validate_observations(value,request):
     try:
         if not isinstance(value,dict) or not isinstance(value['observations'],list) or len(value['observations'])>256:
             raise ValueError()
+        gaps=value.get('coverage_gaps', [])
+        if not isinstance(gaps, list) or gaps:
+            raise ValueError()
         media={m['id']:m for m in request['media']}
         candidates={c['id'] for c in request.get('context',{}).get('candidates',[])}
         missing=value['essential_missing']
@@ -198,11 +201,11 @@ class FlashcutAnalyzer(VertexAnalyzer):
             'original_request':deepcopy(request),'proof':proof}}
 
     def inspect_saved_coverage_gaps(self,request,attempt_id):
-        """Retain narrowly recognized gap claims for mandatory clarification.
+        """Retain structured gap claims and the provider's original text.
 
-        This does not accept the answer as complete, repair scene timestamps,
-        alter a receipt or call the provider. The collector must verify a
-        separately quoted whole-source clarification before using this result.
+        Ranges come only from coverage_gaps objects. Prose in essential_missing
+        is stored verbatim and is never parsed into timestamps. This does not
+        accept the answer as complete, alter a receipt, or call the provider.
         """
         if request.get('scope')!='window' or request.get('response_contract')!='flashcut_compact.v2':
             raise ContractError('flashcut_gap_recovery_unavailable','request')
@@ -213,22 +216,39 @@ class FlashcutAnalyzer(VertexAnalyzer):
         if hashlib.sha256(saved).hexdigest()!=proof['saved_response_sha256']:
             raise ContractError('flashcut_response_unproven','saved_response_changed')
         value=self._response_content(json.loads(saved)['response'])
-        missing=value.get('essential_missing') if isinstance(value,dict) else None
-        if not isinstance(missing,list) or not 1<=len(missing)<=256:
+        if not isinstance(value,dict):
+            raise ContractError('flashcut_gap_recovery_unavailable','response')
+        missing=value.get('essential_missing')
+        gaps=value.get('coverage_gaps')
+        if (not isinstance(missing,list) or len(missing)>256
+                or any(not isinstance(item,str) for item in missing)):
             raise ContractError('flashcut_gap_recovery_unavailable','essential_missing')
+        if not isinstance(gaps,list) or not 1<=len(gaps)<=32:
+            raise ContractError('flashcut_gap_recovery_unavailable','coverage_gaps')
+        duration=Fraction(request['context']['source_duration'])
         ranges=[]
-        for item in missing:
-            match=re.fullmatch(r'Video coverage is missing from source time (\d+(?:\.\d+)?)s to (\d+(?:\.\d+)?)s\.',item) if isinstance(item,str) else None
-            if not match:raise ContractError('flashcut_gap_recovery_unavailable','essential_missing')
-            start,end=map(Fraction,match.groups())
-            if not 0<=start<end<=Fraction(request['context']['source_duration']):
+        for item in gaps:
+            if not isinstance(item,dict) or set(item)!={'start_s','end_s'}:
+                raise ContractError('flashcut_gap_recovery_unavailable','coverage_gaps')
+            start_value,end_value=item['start_s'],item['end_s']
+            if (isinstance(start_value,bool) or isinstance(end_value,bool)
+                    or type(start_value) not in (int,float,str) or type(end_value) not in (int,float,str)
+                    or (isinstance(start_value,float) and not math.isfinite(start_value))
+                    or (isinstance(end_value,float) and not math.isfinite(end_value))):
+                raise ContractError('flashcut_gap_recovery_unavailable','range')
+            try:
+                start,end=Fraction(str(start_value)),Fraction(str(end_value))
+            except (ValueError, ZeroDivisionError):
+                raise ContractError('flashcut_gap_recovery_unavailable','range') from None
+            if not 0<=start<end<=duration:
                 raise ContractError('flashcut_gap_recovery_unavailable','range')
             ranges.append({'start_s':str(start),'end_s':str(end)})
         # Every original observation still passes the exact ID/coverage/type
         # checks. Never turn a malformed observation into accepted evidence.
-        result=validate_observations({**value,'essential_missing':[]},request)
+        checked={k:v for k,v in value.items() if k!='coverage_gaps'}
+        result=validate_observations({**checked,'essential_missing':[]},request)
         result.update(scope=request['scope'],binding=request['binding'],essential_missing=['source'],
-            coverage_gap_recovery={'version':'coverage_gap_recovery.v1','original_essential_missing':missing,
+            coverage_gap_recovery={'version':'coverage_gap_recovery.v2','original_essential_missing':list(missing),
                                    'claimed_ranges':ranges,'status':'requires_source_clarification'})
         return {**proof,'result':result}
 
@@ -259,6 +279,9 @@ class FlashcutAnalyzer(VertexAnalyzer):
             schema['properties']['analysis']=scene_analysis_schema()
             schema['required'].append('analysis')
         if compact:
+            schema['properties']['coverage_gaps']={'type':'ARRAY','items':object_schema({
+                'start_s':NUMBER,'end_s':NUMBER})}
+            schema['required'].append('coverage_gaps')
             # Provider shape constraints stay small; application validation
             # remains authoritative for IDs, coverage, lengths and timestamps.
             def simplify(value):
@@ -379,10 +402,20 @@ class FlashcutAnalyzer(VertexAnalyzer):
                 raise ContractError('analysis_media_mismatch','artifact_id')
             if item['kind']=='image':
                 expected=[m for m in selected['images'] if m['artifact_id']==row['id'] and m['sha256']==row['sha256']
-                          and m['source_time']==item.get('source_time')]
+                          and m['source_time']==item.get('source_time')
+                          and m.get('mime_type','image/png')==item.get('mime_type','image/png')]
             else:
                 expected=[m for m in selected['windows'] if m['artifact_id']==row['id'] and m['sha256']==row['sha256']
                           and m['source_start']==item.get('source_start') and m['source_end']==item.get('source_end')]
+                overview=selected.get('overview')
+                if (item['id']=='source' and overview
+                        and item['artifact_id']==overview['artifact_id']
+                        and item['sha256']==overview['sha256']
+                        and item.get('source_sha256')==binding['source_sha256']
+                        and overview.get('source_sha256')==binding['source_sha256']
+                        and item.get('source_start')==overview.get('source_start')
+                        and item.get('source_end')==overview.get('source_end')):
+                    expected.append(overview)
                 if (item['artifact_id']==evidence['binding']['source_artifact_id']
                         and item['sha256']==binding['source_sha256'] and item.get('source_start')=='0'
                         and Fraction(item.get('source_end','0'))==duration):
@@ -395,7 +428,9 @@ class FlashcutAnalyzer(VertexAnalyzer):
                 raise ContractError('flashcut_request_limit','media_bytes')
             if item['kind']=='image':
                 images+=1
-                mime='image/png'
+                mime=item.get('mime_type','image/png')
+                if mime not in ('image/png','image/jpeg'):
+                    raise ContractError('analysis_media_format_unqualified','image')
                 if not 0<=Fraction(item['source_time'])<duration:
                     raise ContractError('invalid_flashcut_request','image_time')
             elif item['kind']=='video':
@@ -439,6 +474,8 @@ consistent role IDs, and wardrobe as the schema's role/description array. Leave 
 empty: reliable word timing is supplied independently. Do not invent human approvals.
 For clarification, address every clarify_id supplied in context; keep any unresolved ID in
 essential_missing. Never invent observations to resolve missing evidence.
+Report an unseen source interval only as coverage_gaps objects with start_s and end_s.
+Do not describe gaps as sentences inside essential_missing; that text is not timing evidence.
 Use the separately supplied response schema; describe uncertainty explicitly.
 Source context follows:\n'''
         parts.append({'text':prompt+json.dumps({'scope':scope,'binding':binding,**context},sort_keys=True)})
@@ -491,6 +528,7 @@ Source context follows:\n'''
                 recovery = {'kind': 'deterministic_conservative.v1',
                             'reason': error.code}
             return {'editorial':parsed,'binding':request['editorial_binding'],
+                    'plan_origin':'local_conservative' if recovery else 'provider',
                     'request_limits':usage,
                     **({'editorial_recovery': recovery} if recovery else {})},None,{}
         result=validate_observations(parsed,request)

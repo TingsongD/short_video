@@ -39,11 +39,8 @@ def select_evidence(candidates, advice, *, mode='shadow', benchmark=None):
     # Unavailable or ambiguous advice always conservatively retains everything.
     if mode != 'active' or advice is None:
         return [c['id'] for c in candidates]
-    proof=benchmark or {}
-    if (proof.get('qualified') is not True or proof.get('mandatory_loss') != 0
-            or proof.get('benefit_observed') is not True
-            or not re.fullmatch('[a-f0-9]{64}',str(proof.get('evidence_sha256','')))):
-        raise ContractError('jev_active_unqualified','benchmark')
+    from .jev_benchmark import validate_active_benchmark
+    validate_active_benchmark(benchmark)
     optional={c['id'] for c in candidates if not c['mandatory']}
     if not isinstance(advice,dict) or set(advice)!=optional or any(v not in ('retain','optional') for v in advice.values()):
         raise ContractError('invalid_jev_decisions','advice')

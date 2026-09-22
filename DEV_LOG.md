@@ -7,6 +7,48 @@ decisions) is my direct work.
 
 ---
 
+## 2026-09-22 — Bounded future flash-cut evidence and release qualification
+
+- A retained rapid-cut seed exposed a real preflight failure: duplicating all
+  measured candidate summaries in every Gemini request exceeded the saved
+  context envelope. The first media package also required too many oversized
+  PNG/window payloads. No provider request was made while reproducing this.
+- New runs now save `flashcut_policy.v3` and `selected_media.v2`: every decoded
+  source frame is still encoded by PE, while selected exact-timestamp images
+  are registered as original-dimension JPEGs and clock-verified MP4 windows
+  plus a size-capped overview supply Gemini. `flashcut_analysis_plan.v2`
+  partitions candidate summaries by source-clock window and checks that each
+  measured candidate is covered. Legacy v1/v2 evidence remains on its saved
+  path. A missing essential context item cannot be silently dropped to fit a
+  limit.
+- Fixed a clarification case where a whole-source missing item was treated as
+  a candidate ID. Added restart-safe `--resume` to the unpaid preflight with
+  exact source/transcript/policy binding checks.
+- Isolated, provider-free preflight passed on three retained sources: 1,869,
+  635 and 423 decoded/encoded frames, with 10, 4 and 3 initial bounded Gemini
+  requests. The dated analysis/Jev/editorial subtotal is **$10.292398** for
+  all three seeds, not a full A/B/C/D production quote or authorization.
+- The complete backend suite passed **1,573 tests with seven helper-import
+  skips** in 38m30s; the separately installed Python 3.11 helper passed all
+  **27 tests**. The dashboard passed **73 tests** and its production build;
+  a separate real Hypit/FFmpeg render gate passed **16 tests** with no skips.
+  The seven backend skips are precisely the helper modules run in the separate
+  environment, not missing renderer checks.
+- Took an owner-only consistent rollout backup with zero active production
+  jobs. Rebuilt the dashboard while the owned API/worker were stopped. The
+  detached launcher could not retain children under the agent shell, so the
+  API and one worker were started in persistent sessions with absolute
+  interpreter paths recognized by the scoped lifecycle scripts. Health,
+  the served dashboard asset and owner-only logs were checked. Unowned local
+  media programs were left running; four exact orphaned test-only Hypit
+  workers from interrupted suites were stopped through their own runtimes.
+- Post-rollout comparison shows **20/20 final hashes unchanged** and zero
+  modified/missing protected records, jobs, attempts, reservations, budget
+  rows, artifacts or effect bindings. No paid generation, publishing,
+  historical hold change, or paused-run resumption occurred.
+- See the [qualification matrix](docs/factory-reports/FLASHCUT-QUALIFICATION-MATRIX.md)
+  and [live-only quote/checklist](docs/factory-reports/FLASHCUT-LIVE-ONLY-ACCEPTANCE.md).
+
 ## 2026-09-22 — Future-run temporal QC binding
 
 - Versioned new flash-cut runs as `flashcut_policy.v2`; historical v1 runs
@@ -27,7 +69,10 @@ decisions) is my direct work.
   reconciliation or historical-run mutation occurred. This is focused evidence,
   not a fresh full-suite release sign-off.
 
-## 2026-09-22 — Future-run hardening in progress
+## 2026-09-22 — Future-run hardening pre-release checkpoint
+
+This section preserves the intermediate state. The release entry above
+supersedes its pending-test and undeployed statements.
 
 - Added a server-issued, versioned **$50 cumulative USD guardrail** to each
   newly created automatic run. The ceiling is stored as a run-owned budget,

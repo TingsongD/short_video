@@ -141,5 +141,7 @@ def analyze_source(evidence, evidence_id, source, encoder, *, binding, lease=Non
     row = evidence.db.conn.execute("SELECT value FROM meta WHERE key='artifact_root'").fetchone()
     artifacts = ArtifactStore(row[0] if row else evidence.blobs.root.parent/'artifacts', evidence.db)
     evidence.chunk(evidence_id, 'media', 0, 1,
-                   lambda: materialize_selected(source,clock,fusion,artifacts,evidence.blobs.root,progress=progress), **args)
+                   lambda: materialize_selected(source,clock,fusion,artifacts,
+                       evidence.blobs.root,progress=progress,
+                       policy=policy.get('media')), **args)
     return evidence.complete(evidence_id, {'clock': 1, 'visual': total, 'audio': audio_total, 'fusion': 1, 'media':1}, **args)

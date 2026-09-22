@@ -46,6 +46,18 @@ def legacy_flashcut_policy():
 
 def new_flashcut_policy():
     """Default policy for newly created flash-cut runs only."""
+    from .selected_media import COMPACT_MEDIA_POLICY
+    value=_policy('flashcut_policy.v3', quality={
+        'technical_temporal': 'flashcut_temporal_qc.v1',
+        'brief_event_max_frames': 6,
+        'caption_alignment': 'final_speech_schedule.v1',
+    })
+    value['media']=deepcopy(COMPACT_MEDIA_POLICY)
+    return value
+
+
+def temporal_flashcut_policy():
+    """Exact undeployed v2 contract retained for deterministic compatibility."""
     return _policy('flashcut_policy.v2', quality={
         'technical_temporal': 'flashcut_temporal_qc.v1',
         'brief_event_max_frames': 6,
@@ -56,7 +68,8 @@ def new_flashcut_policy():
 def validate_flashcut_policy(value):
     # Each version is one frozen configuration, not arbitrary executable input
     # from the dashboard. Historical v1 records retain historical behavior.
-    if value not in (legacy_flashcut_policy(), new_flashcut_policy()):
+    if value not in (legacy_flashcut_policy(), temporal_flashcut_policy(),
+                     new_flashcut_policy()):
         raise ContractError('unsupported_flashcut_policy', 'flashcut_policy')
     return deepcopy(value)
 

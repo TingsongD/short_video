@@ -7,7 +7,7 @@ np = pytest.importorskip('numpy', reason='VALIDATION GAP: run isolated helper te
 def test_dense_analysis_resumes_without_reencoding_completed_frames(tmp_path):
     from modules.factory.analysis.dense_source import analyze_source
     from modules.factory.analysis.source_evidence import SourceEvidenceService
-    from modules.factory.analysis.evidence_policy import new_flashcut_policy
+    from modules.factory.analysis.evidence_policy import new_flashcut_policy,legacy_flashcut_policy
     from modules.factory.store import Database
     clip = tmp_path/'fixture.mp4'
     subprocess.run(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i', 'color=red:s=72x128:r=30:d=1',
@@ -55,8 +55,19 @@ def test_dense_analysis_resumes_without_reencoding_completed_frames(tmp_path):
         assert plan['envelope']['initial_requests']==2
         assert plan['envelope']['max_requests']==4
         assert plan['envelope']['reserve_usd_micros']>sum(q['reserve_amount'] for q in plan['quotes'])
-        assert plan['requests'][0]['media'][0]['sha256']==original.sha256
+        overview=plan['requests'][0]['media'][0]
+        assert overview['source_sha256']==original.sha256
+        assert overview['sha256']!=original.sha256
+        assert plan['version']=='flashcut_analysis_plan.v2'
         assert plan['identity'] and analyzed['status']=='complete'
+        legacy=service.create('legacy-quoted-run',current,legacy_flashcut_policy())
+        analyze_source(service,legacy['id'],clip,encoder,binding=current)
+        legacy_plan=build_analysis_plan(service,legacy['id'],route,[])
+        assert legacy_plan['version']=='flashcut_analysis_plan.v1'
+        assert 'candidate_index' not in legacy_plan
+        assert legacy_plan['requests'][0]['media'][0]['sha256']==original.sha256
+        assert all('mime_type' not in item for request in legacy_plan['requests']
+                   for item in request['media'])
     finally:
         db.close()
 

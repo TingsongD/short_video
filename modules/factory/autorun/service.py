@@ -195,6 +195,9 @@ class AutoRunService:
         if run.params.get('flashcut_policy'):
             from .flashcut import FlashcutAnalysis
             out['source_analysis']=FlashcutAnalysis(self).status(run)
+        wait = run.state.get('provider_wait')
+        if isinstance(wait, dict) and wait.get('job_id'):
+            out['provider_wait'] = self._provider_wait_view(wait)
         out['recovery'] = AnalysisRecovery(self.s).describe(run)
         if run.status == 'paused' and (run.pause.get('code', '').startswith('ai_scene_review_')
                                       or run.pause.get('code') == 'blueprint_flags'):
@@ -207,6 +210,23 @@ class AutoRunService:
             }
             out['pause'] = {**out['pause'], 'action': out['recovery']['message']}
         return out
+
+    def _provider_wait_view(self, wait):
+        from datetime import datetime, timezone
+        from .waiting import provider_wait_view
+        jid = wait['job_id']
+        job = self.s.db.uow().jobs.get(jid)
+        attempts = list(self.s.db.conn.execute(
+            'SELECT id, remote_id, status, created_at FROM attempts WHERE job_id=? ORDER BY attempt_seq',
+            (jid,)))
+        observations = []
+        for attempt in attempts:
+            row = self.s.db.conn.execute(
+                "SELECT created_at FROM events WHERE stream=? AND type='observed' ORDER BY seq DESC LIMIT 1",
+                ('attempt:' + attempt['id'],)).fetchone()
+            if row:
+                observations.append({'attempt_id': attempt['id'], 'created_at': row['created_at']})
+        return provider_wait_view(wait, job, attempts, observations, now=datetime.now(timezone.utc))
 
     def detail(self, run_id):
         run = self.get(run_id)

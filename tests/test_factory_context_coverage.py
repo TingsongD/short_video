@@ -71,3 +71,23 @@ def test_visual_candidates_require_explicit_source_bound_local_observation():
         'description':'The view shifts while the same subject remains present.','evidence_ids':['frame:239','frame:240','frame:241']}]}
     assert resolve_context_coverage(requests,outputs,local_evidence=local)['pending']==[]
     assert resolve_context_coverage(requests,outputs)['pending']
+
+
+def test_normal_analysis_reuses_whole_video_context_and_keeps_other_flags():
+    from modules.factory.analysis.context_coverage import analysis_pending
+    requests,outputs=evidence()
+    outputs[1]['essential_missing']=['coverage:8','visual:240']
+    requests[1]['context']['candidates'].append({'id':'visual:240','kind':'visual_change_candidate','mandatory':True,
+        'source_time':'1','support':['pixel_change']})
+    pending,resolution=analysis_pending(requests,outputs)
+    assert pending=={'visual:240'}
+    assert resolution['resolutions'][0]['flag']=='coverage:8'
+    assert outputs[1]['essential_missing']==['coverage:8','visual:240']
+
+
+def test_mismatched_or_format_recovery_bundles_do_not_drop_flags():
+    from modules.factory.analysis.context_coverage import analysis_pending
+    requests,outputs=evidence()
+    assert analysis_pending(requests,outputs,format_recovery=True)==(set(),None)
+    assert analysis_pending(requests,outputs+[{'essential_missing':['kept']}])==(
+        {'coverage:8','kept'},None)

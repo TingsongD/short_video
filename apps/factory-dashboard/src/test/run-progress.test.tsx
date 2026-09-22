@@ -20,6 +20,16 @@ it('reports measured all-frame coverage without guessing an unknown total',()=>{
   expect(screen.getByText(/Audio: absent/)).toBeTruthy();
   expect(screen.getByText(/Next attempt: 2026/)).toBeTruthy();
 });
+it('shows a slow operation id, elapsed time, last observation and next poll', () => {
+  render(<RunProgress run={{id:'r',status:'running',stage:'footage',provider_wait:{
+    reason:'remote_unfinished',elapsed_s:600,operation_id:'operations/123',
+    last_observed_at:'2026-09-22T12:00:08Z',next_poll_at:'2026-09-22T12:00:40Z'}}}/>);
+  const wait = screen.getByRole('region', {name:'Provider wait'});
+  expect(wait.textContent).toMatch(/600s elapsed/);
+  expect(wait.textContent).toMatch(/operations\/123/);
+  expect(wait.textContent).toMatch(/2026-09-22T12:00:08Z/);
+  expect(wait.textContent).toMatch(/Next poll: 2026-09-22T12:00:40Z/);
+});
 it('shows provider backoff as waiting, not a failed or completed run', () => {
   const run = {id:'r',status:'running',stage:'footage',state:{provider_wait:{reason:'analysis_throttled'}}};
   const {rerender} = render(<RunProgress run={run}/>);

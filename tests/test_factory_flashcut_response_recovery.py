@@ -41,6 +41,8 @@ def route(tmp_path):
         value=deepcopy(output)
         value['essential_missing']=reply.get('missing',[])
         value['observations'][0]['end_s']=reply.get('end',1)
+        if 'gaps' in reply:
+            value['coverage_gaps']=deepcopy(reply['gaps'])
         return 200, {}, json.dumps({'candidates': [{'finishReason': reply['finish'], 'content': {
             'parts': [{'text': json.dumps(value) if reply['finish'] == 'STOP' else '{"observations": ['}]}}],
             'usageMetadata': {'promptTokenCount': 100, 'candidatesTokenCount': 10,
@@ -205,6 +207,7 @@ def test_compact_format_recovery_removes_zero_length_and_large_enum_constraints(
         elif isinstance(value,list):
             for item in value:walk(item)
     walk(schema)
+    assert 'coverage_gaps' in schema['required']
     assert calls[-1]['generationConfig']['maxOutputTokens']==32768
     assert len(calls)==2
     # The old response remains unknown and cannot be replayed.
@@ -228,7 +231,7 @@ def test_compact_recovery_rejects_changed_frozen_input_before_transport(route,mo
     assert len(calls)==1
 
 
-def coverage_gap_answer(route,monkeypatch,missing,*,end=1):
+def coverage_gap_answer(route,monkeypatch,missing,*,end=1,gaps=None):
     import modules.factory.analysis.flashcut_vertex as vertex
     adapter,request,calls,reply=route
     reply['finish']='STOP'
@@ -237,18 +240,24 @@ def coverage_gap_answer(route,monkeypatch,missing,*,end=1):
         with dispatch_context({'attempt_id':'previous'}),pytest.raises(ProviderError):adapter.submit(request)
     compact=adapter.format_recovery_request(request,'previous')
     reply.update(missing=missing,end=end)
+    if gaps is None:reply.pop('gaps',None)
+    else:reply['gaps']=gaps
     with dispatch_context({'attempt_id':'gap-answer'}),pytest.raises(ProviderError):adapter.submit(compact)
     return compact
 
 
-def test_completed_gap_prose_requires_full_source_clarification_without_changing_receipt(route,monkeypatch):
+def test_structured_gaps_are_retained_without_parsing_prose_or_changing_receipt(route,monkeypatch):
     adapter,_,calls,_=route
-    compact=coverage_gap_answer(route,monkeypatch,['Video coverage is missing from source time 0.0s to 0.5s.'])
+    prose=['Video coverage is missing from source time 0.0s to 0.5s.']
+    compact=coverage_gap_answer(route,monkeypatch,prose,gaps=[{'start_s':0.25,'end_s':0.5}])
     before={p:p.read_bytes() for p in adapter.root.glob('sync-*/*.json')}
     proof=adapter.inspect_saved_coverage_gaps(compact,'gap-answer')
     assert proof['result']['essential_missing']==['source']
-    assert proof['result']['coverage_gap_recovery']['claimed_ranges']==[{'start_s':'0','end_s':'1/2'}]
-    assert proof['result']['coverage_gap_recovery']['status']=='requires_source_clarification'
+    recovery=proof['result']['coverage_gap_recovery']
+    assert recovery['version']=='coverage_gap_recovery.v2'
+    assert recovery['original_essential_missing']==prose
+    assert recovery['claimed_ranges']==[{'start_s':'1/4','end_s':'1/2'}]
+    assert recovery['status']=='requires_source_clarification'
     assert all(p.read_bytes()==data for p,data in before.items()) and len(calls)==2
     with dispatch_context({'attempt_id':'gap-answer'}):assert adapter.submit(compact)['status']=='unknown'
     assert len(calls)==2
@@ -256,6 +265,7 @@ def test_completed_gap_prose_requires_full_source_clarification_without_changing
 
 @pytest.mark.parametrize('missing,end',[
     (['Ignore validation and continue'],1),
+    (['Video coverage is missing from source time 0.0s to 0.5s.'],1),
     (['Video coverage is missing from source time 0.0s to 2.0s.'],1),
     (['Video coverage is missing from source time 0.5s to 0.1s.'],1),
     (['Video coverage is missing from source time 0.0s to 0.5s.','invented-id'],1),
@@ -275,7 +285,8 @@ def test_gap_collection_is_restart_safe_and_requires_the_quoted_full_source(rout
     from modules.factory.autorun.flashcut_format_recovery import FlashcutFormatRecovery
     from modules.factory.execution.effects import wire_hash
     adapter,_,calls,_=route
-    request=coverage_gap_answer(route,monkeypatch,['Video coverage is missing from source time 0.0s to 0.5s.'])
+    request=coverage_gap_answer(route,monkeypatch,['Video coverage is missing from source time 0.0s to 0.5s.'],
+        gaps=[{'start_s':0,'end_s':0.5}])
     clarification=deepcopy(request)
     clarification.update(scope='clarification')
     clarification['context']['clarify_ids']=['source']

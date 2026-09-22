@@ -146,9 +146,13 @@ class FlashcutFormatRecovery:
     def _gap_result(self,run,request,jid,clarification):
         """Local format repair is provisional until the fixed clarification."""
         source=next((m for m in clarification['media'] if m['id']=='source'),{})
+        # A clock-aligned overview keeps the original source hash in
+        # source_sha256 while its file hash identifies the proxy bytes.
+        source_identity=source.get('source_sha256') or source.get('sha256')
         if (clarification.get('scope')!='clarification' or clarification['binding']!=request['binding']
                 or 'source' not in clarification['context'].get('clarify_ids',[])
-                or source.get('kind')!='video' or source.get('sha256')!=request['binding']['source_sha256']
+                or source.get('kind')!='video' or source_identity!=request['binding']['source_sha256']
+                or not isinstance(source.get('sha256'),str) or len(source['sha256'])!=64
                 or Fraction(source.get('source_start','-1'))!=0
                 or Fraction(source.get('source_end','-1'))!=Fraction(request['context']['source_duration'])):
             raise ContractError('flashcut_gap_clarification_unavailable','quoted_source')
@@ -223,9 +227,9 @@ class FlashcutFormatRecovery:
             if len(ids)==1 and self.s.db.uow().jobs.get(ids[0])['status']=='failed':
                 try:
                     provisional[ids[0]]=self._gap_result(run,request,ids[0],plan['requests'][-1])
-                except (ContractError,ProviderError):
+                except (ContractError,ProviderError) as error:
                     return ('pause','flashcut_format_recovery_failed',
-                        'The completed correction did not pass evidence validation. Its saved answer and cost hold are preserved.',
+                        f'{getattr(error, "code", "correction_invalid")}: The completed correction did not pass evidence validation. Its saved answer and cost hold are preserved.',
                         'Inspect the bound response; this recovery cannot add requests, discard missing evidence or replay unknown submissions.'),[]
                 correction_jobs.extend(ids)
                 continue

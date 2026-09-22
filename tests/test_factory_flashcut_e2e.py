@@ -69,6 +69,7 @@ def test_new_flashcut_profile_reaches_native_compare_and_verified_delivery(appli
                     'role_ids':[],'text_role':'none','confidence':'observed'}])
             elif gap_window:
                 response['essential_missing']=['Video coverage is missing from source time 0.0s to 0.5s.'] if compact else ['malformed legacy gap']
+                if compact:response['coverage_gaps']=[{'start_s':0,'end_s':0.5}]
             elif recover_truncated in ('format_missing','format_gap_prose','format_remote_error'):
                 if compact:
                     response['observations']=[{'id':'context','kind':'action','start_s':0,'end_s':1,

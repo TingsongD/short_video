@@ -92,8 +92,26 @@ def test_flashcut_route_uses_local_fallback_only_for_completed_invalid_editorial
         'task': 'plan_flashcut_edits', 'editorial_input': inputs,
         'editorial_binding': {'input_sha256': 'fixture'}})
     assert payload is None and extra == {}
+    assert result['plan_origin'] == 'local_conservative'
     assert result['editorial_recovery'] == {
         'kind': 'deterministic_conservative.v1',
         'reason': 'invalid_editorial_response',
     }
     assert result['editorial']['variants']['A']['events'][0]['id'] == 'fallback-o1'
+
+
+def test_valid_editorial_response_records_provider_origin():
+    from modules.factory.analysis.flashcut_vertex import FlashcutAnalyzer
+    inputs, response = case()
+    adapter = FlashcutAnalyzer.__new__(FlashcutAnalyzer)
+    adapter.live = False
+    adapter.prepared = lambda request: ([], {'payload_bytes': 1})
+    adapter._output_settings = lambda request: (100, 'LOW')
+    adapter._response_schema = lambda request: None
+    adapter._generate = lambda *args, **kwargs: response
+    result, payload, extra = adapter.execute({
+        'task': 'plan_flashcut_edits', 'editorial_input': inputs,
+        'editorial_binding': {'input_sha256': 'fixture'}})
+    assert payload is None and extra == {}
+    assert result['plan_origin'] == 'provider'
+    assert 'editorial_recovery' not in result

@@ -40,7 +40,13 @@ candidate retains full half-second lead/trail context where source bounds allow.
 All measured audio events remain in the manifest; optional acoustic stills use
 one representative per second, not three PNGs for every energy spike. Mandatory
 visual/quiet/callback coverage is never removed by this rule or by Jev shadow
-advice. Source-resolution selected PNGs remain separate from 384px PE inputs.
+advice. Legacy runs keep source-resolution selected PNGs. Future v3 runs
+register timestamp-exact, original-dimension JPEG evidence frames, bounded
+clock-verified MP4 windows and a 1280-pixel-maximum overview. JPEG and MP4
+compression change picture pixels; the original source remains hash-bound and
+unchanged. The overview has a 14 MiB hard cap before submission. Its smaller
+representation is for whole-story context; selected frames/windows carry
+brief-event detail.
 
 The disk watchdog covers both evidence and selected registered media. It stops
 on inspection failure, less than 10 GiB free, or more than 32 GiB across those
@@ -57,10 +63,24 @@ authority. Its output includes exact source evidence and a bounded analysis
 quote, including two clarification rounds and a separate maximum editorial
 planning request after final TTS. It does not pretend that footage/TTS quantities
 are known before the new script and production plan exist.
+Use `--resume` only for an interrupted workspace with the identical source,
+transcript and saved policy and no completed `quote.json`; the tool checks the
+existing binding before reusing completed local evidence chunks. A changed
+policy requires a new workspace.
 
 `scripts/flashcut-benchmark.py` similarly creates a new isolated synthetic
 benchmark directory. Neither script is a production job or a substitute for
 the worker's fencing/capacity lifecycle. Keep preflight outputs for diagnosis;
 do not promote them by editing historical run records.
+
+`scripts/flashcut-jev-benchmark.py INPUT OUTPUT` scores a sanitized shadow-case
+matrix without loading credentials, opening the production database or calling
+Jev. Active selection remains disabled unless the retained report covers every
+required labeled case, loses no mandatory or relevant evidence, contains one
+recorded provider observation per case, stays inside the frozen latency bound,
+and shows estimated downstream savings greater than Jev's recorded/estimated
+cost. A hand-written `qualified: true` flag is not accepted. Observed usage is
+still not an invoice-confirmed charge, and benchmark cost fields must retain that
+distinction.
 
 Evidence is stored under the factory data root's `source_evidence/` directory and included in recovery backups. Do not delete it while any run refers to it. Selected media will use the normal artifact registry; embedding arrays never go through dashboard media APIs.
