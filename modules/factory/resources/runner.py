@@ -13,8 +13,11 @@ from ...batch.local import process_table, same_process
 
 
 class OwnedRunner:
-    def __init__(self,db,root,owner,attempt=0):
+    def __init__(self,db,root,owner,attempt=0,environment=None):
         self.db,self.root,self.owner,self.attempt=db,Path(root).resolve(),owner,attempt
+        self.environment = environment
+        if environment is not None and set(environment) - {'PATH', 'LANG', 'OMP_NUM_THREADS', 'MKL_NUM_THREADS', 'OPENBLAS_NUM_THREADS', 'HF_HUB_OFFLINE', 'HF_DATASETS_OFFLINE'}:
+            raise ContractError('unsafe_child_environment', 'environment')
         self.root.mkdir(parents=True,exist_ok=True)
 
     def _live_prior(self,argv,cwd):
@@ -33,11 +36,15 @@ class OwnedRunner:
     def __call__(self,argv,timeout=120,cwd=None):
         argv=list(map(str,argv)); cwd=str(Path(cwd or self.root).resolve())
         identity=hashlib.sha256(json.dumps([argv,cwd,self.owner,self.attempt]).encode()).hexdigest()
+        if self.environment is not None:
+            identity=hashlib.sha256(json.dumps([identity,self.environment],sort_keys=True).encode()).hexdigest()
         file=self.root/(identity+'.json'); state=DurableState(file)
         if not state:
             prior=self._live_prior(argv,cwd)
             if prior:raise ContractError('local_process_unresolved','process',prior['resource_id'])
             state.update(argv=argv,cwd=cwd,owner=self.owner,timeout=timeout,status='prepared',resource_id='process-'+identity)
+            if self.environment is not None:
+                state['environment'] = self.environment
             state.flush()
         if state.get('status')=='prepared':
             # The supervisor claims the prepared intent atomically under flock.
@@ -78,7 +85,7 @@ def supervise(db_path,state_path):
         identity=process_table()[os.getpid()]
         registry.register(state['resource_id'],identity['pid'],identity['birth'],identity['command'],state['owner'],workspace=state['cwd'])
         state.update(status='running',identity=identity);state.flush()
-        proc=subprocess.Popen(state['argv'],cwd=state['cwd'],stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+        proc=subprocess.Popen(state['argv'],cwd=state['cwd'],stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,env=state.get('environment'))
         child=process_table().get(proc.pid)
         if child:
             registry.register(state['resource_id']+'-child',child['pid'],child['birth'],child['command'],state['owner'],workspace=state['cwd'])

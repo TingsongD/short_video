@@ -22,8 +22,11 @@ class TemplateService:
     def __init__(self, db):
         self.db = db
 
-    def author(self, blueprint, template_id, validate=True):
+    def author(self, blueprint, template_id, validate=True, *, renderer_policy=None):
         tpl = author_from_blueprint(blueprint, template_id)
+        if renderer_policy is not None:
+            capability_report(tpl.slots, renderer_policy=renderer_policy)
+            tpl.constraints['renderer_policy'] = renderer_policy
         if validate:
             problems = validate_template(
                 tpl, total_frames=blueprint.target_frames)
@@ -105,7 +108,7 @@ class TemplateService:
         """Readable inspection view + a fixture-style composition spec
         a renderer could consume (F13 checklist 6)."""
         tpl = self.get(template_id)
-        cap = capability_report(tpl.slots)
+        cap = capability_report(tpl.slots, renderer_policy=tpl.constraints.get('renderer_policy'))
         spec = {"template": tpl.id, "revision": tpl.revision,
                 "renderer": cap["preferred"],
                 "slots": [{"id": s.id, "kind": s.kind,

@@ -35,7 +35,7 @@ STAGES = ("intake", "evidence", "video_analysis", "sections",
 STAGE_LABELS = {
     "intake": "Seed intake", "evidence": "Reference evidence",
     "video_analysis": "Video analysis", "sections": "Analysis write-up",
-    "analysis_review": "Analysis review", "blueprint": "Blueprint",
+    "analysis_review": "Analysis checks", "blueprint": "Blueprint",
     "template": "Format template", "script": "Script adaptation",
     "music": "Music", "draft": "Experiment draft", "tts": "Narration",
     "quote": "Footage quote", "authorize": "Authorization",
@@ -68,6 +68,19 @@ class AutoRunService:
     # ------------------------------------------------------------ API
 
     def create(self, body):
+        body=dict(body)
+        if 'spending_policy' in body:
+            raise ContractError('server_managed_policy', 'spending_policy')
+        profile=body.get('profile_id','legacy')
+        if profile not in ('legacy','flashcut_hypit.v1'):
+            raise ContractError('unsupported_profile','profile_id')
+        if profile=='flashcut_hypit.v1':
+            if body.get('reference_policy','disabled')!='disabled':
+                raise ContractError('reference_route_disabled','profile_id')
+            from .policies import new_policies
+            body['policies']=new_policies(body.get('policies') or {},authorized_destination=bool(self.s.config.get('drive_folder_id')))
+            if body['policies']['captions']!='phrases.v1' or body.get('visual_reviews',True) is not True:
+                raise ContractError('flashcut_quality_policy_required','profile_id')
         seed_id = str(body.get("seed_id") or "").strip()
         if not seed_id:
             raise ContractError("seed_required", "seed_id")
@@ -81,8 +94,12 @@ class AutoRunService:
             raise ContractError("budgets_required", "budget_ids",
                                 "select the spending authority this run "
                                 "may draw from")
-        for bid in budget_ids:
-            self.budgets.available(bid)            # raises unknown_budget
+        self.budgets.require_selection(budget_ids)
+        from .readiness import runtime_ready
+        runtime_ready(self.s)
+        reference_policy = body.get('reference_policy', 'disabled')
+        if reference_policy not in ('disabled', 'first_clip.v1'):
+            raise ContractError('invalid_reference_policy', 'reference_policy')
         limits = {str(k): int(v) for k, v in
                   (body.get("limits") or {}).items() if v is not None}
         for unit, cap in limits.items():
@@ -94,13 +111,22 @@ class AutoRunService:
             from datetime import datetime, timedelta, timezone
             valid_until = (datetime.now(timezone.utc)
                            + timedelta(hours=24)).isoformat()
+        run_id = "auto-" + uuid.uuid4().hex[:16]
+        from .policies import new_spending_policy
+        spending_policy = new_spending_policy(run_id)
+        budget_ids.append(spending_policy['budget_id'])
         run = AutoRun(
             schema_version="autorun.v1",
-            id="auto-" + uuid.uuid4().hex[:16], created_at=utcnow(),
+            id=run_id, created_at=utcnow(),
             seed_id=seed_id,
             params={
+                "workflow": {"version": 2, "prompt_policy": "scene.v2", "qc_policy": "visual.v2",
+                             "visual_qc": bool(body.get('visual_reviews', True)), 'reference_policy': reference_policy},
+                "source_timing_policy": "source_timing.v1",
+                "delivery_tracking": "verified_receipts.v1",
                 "voice_id": voice, "language": language,
                 "budget_ids": budget_ids, "limits": limits,
+                "spending_policy": spending_policy,
                 "generate_music": bool(body.get("generate_music")),
                 "visual_reviews": bool(body.get("visual_reviews", True)),
                 "script_mode": str(body.get("script_mode") or "auto"),
@@ -111,7 +137,33 @@ class AutoRunService:
                 "account": str(body.get("account") or ""),
                 "valid_until": valid_until,
             })
-        self._put(run)
+        if 'policies' in body:
+            from .policies import new_policies
+            run.params['policies'] = new_policies(body['policies'],
+                authorized_destination=bool(self.s.config.get('drive_folder_id')))
+            if run.params['policies']['delivery'] == 'after_qc':
+                if not self.s.config.get('drive_folder_id'):
+                    raise ContractError('destination_not_authorized', 'drive_folder_id')
+                if not run.params['visual_reviews']:
+                    raise ContractError('visual_qc_required', 'visual_reviews')
+                run.params['delivery_folder_id'] = self.s.config['drive_folder_id']
+                account = getattr(getattr(self.s.delivery, 'drive', None), 'expected_account', '')
+                if not account and self.s.config.get('mode') == 'offline':
+                    account = 'fixture-drive'
+                if not account:
+                    raise ContractError('delivery_account_required', 'account')
+                run.params['delivery_account'] = account
+        if profile=='flashcut_hypit.v1':
+            from ..analysis.evidence_policy import new_flashcut_policy
+            run.params.update(profile_id=profile,flashcut_policy=new_flashcut_policy())
+        # The server-issued guardrail and its run record must either both
+        # exist or neither exist. Nested unit-of-work calls use savepoints
+        # beneath this outer transaction.
+        with self.s.db.uow():
+            self.budgets.create_budget(
+                spending_policy['budget_id'], spending_policy['unit'],
+                'experiment', run.id, spending_policy['cap_amount'])
+            self._put(run)
         self._enqueue_step(run)
         return run.to_dict()
 
@@ -125,11 +177,40 @@ class AutoRunService:
         rows = self.s.db.conn.execute(
             "SELECT body FROM records WHERE kind='autorun' "
             "ORDER BY created_at DESC LIMIT 50").fetchall()
-        return [json.loads(r["body"]) for r in rows]
+        return [self._recovery_view(self._load(r)) for r in rows]
+
+    def _recovery_view(self, run):
+        from .recovery import AnalysisRecovery
+        from .scene_review import SceneReview
+        out = run.to_dict()
+        from .policies import run_spending_policy
+        spending = run_spending_policy(run.params)
+        if spending:
+            remaining = self.budgets.available(spending['budget_id'])
+            out['spending_policy'] = {
+                **spending,
+                'committed': spending['cap_amount'] - remaining,
+                'remaining': remaining,
+            }
+        if run.params.get('flashcut_policy'):
+            from .flashcut import FlashcutAnalysis
+            out['source_analysis']=FlashcutAnalysis(self).status(run)
+        out['recovery'] = AnalysisRecovery(self.s).describe(run)
+        if run.status == 'paused' and (run.pause.get('code', '').startswith('ai_scene_review_')
+                                      or run.pause.get('code') == 'blueprint_flags'):
+            unknown = SceneReview(self.s).unfinished(run)
+            out['recovery'] = {
+                'title': 'Earlier provider request needs reconciliation' if unknown else 'Ready to continue',
+                'message': ('Resolve the earlier paid request before continuing. No automatic retry will run.'
+                            if unknown else 'The scene-review step has been removed. Resume to continue with technical validation.'),
+                'can_resume': not unknown,
+            }
+            out['pause'] = {**out['pause'], 'action': out['recovery']['message']}
+        return out
 
     def detail(self, run_id):
         run = self.get(run_id)
-        out = run.to_dict()
+        out = self._recovery_view(run)
         out["stage_label"] = STAGE_LABELS.get(run.stage, run.stage)
         out["stages"] = [{"stage": s, "label": STAGE_LABELS[s],
                           "done": any(p["stage"] == s and
@@ -207,11 +288,41 @@ class AutoRunService:
             state[key] = entry
         return state
 
+    def recover_analysis_response(self, run_id, body):
+        from .recovery import AnalysisRecovery
+        return AnalysisRecovery(self.s).recover(run_id, body)
+
     def resume(self, run_id, body=None):
+        with self.s.db.uow():
+            return self._resume(run_id, body)
+
+    def _resume(self, run_id, body=None):
         run = self.get(run_id)
         if run.status != "paused":
             return run.to_dict()
         body = body or {}
+        for selection in ('budget_ids', 'add_budget_ids'):
+            if selection in body:
+                self.budgets.require_selection(body[selection])
+        from .recovery import AnalysisRecovery
+        retry_approval = AnalysisRecovery(self.s).guard_resume(run, body)
+        from .scene_review import SceneReview
+        scene_review = SceneReview(self.s)
+        if body.get('scene_review_action') is not None:
+            raise ContractError('scene_review_removed', 'scene_review_action',
+                                'Scene review was removed. Use Resume without a review action.')
+        scene_review.guard_resume(run)
+        from .readiness import runtime_ready
+        runtime_ready(self.s)
+        if body.get('approve_flashcut_response_recovery') is True:
+            from .flashcut_recovery import FlashcutResponseRecovery
+            FlashcutResponseRecovery(self).enable(run, body.get('reviewer'))
+        if body.get('approve_flashcut_format_recovery') is not None:
+            from .flashcut_format_recovery import FlashcutFormatRecovery
+            FlashcutFormatRecovery(self).enable(run,body['approve_flashcut_format_recovery'],body.get('reviewer'))
+        if body.get('approve_flashcut_evidence_reuse') is True:
+            from .flashcut_format_recovery import FlashcutFormatRecovery
+            FlashcutFormatRecovery(self).enable_context_reuse(run,body)
         replacement = body.get("budget_ids")
         if replacement is not None:
             replacement = [str(b) for b in replacement]
@@ -219,6 +330,10 @@ class AutoRunService:
                 raise ContractError("budgets_required", "budget_ids")
             for bid in replacement:
                 self.budgets.available(bid)       # raises unknown_budget
+            from .policies import run_spending_policy
+            spending = run_spending_policy(run.params)
+            if spending:
+                replacement.append(spending['budget_id'])
             run.params["budget_ids"] = replacement
             run.notes.append(
                 "spending authority re-scoped by operator at resume: "
@@ -244,10 +359,24 @@ class AutoRunService:
         # recovery action can be acted on. Restricted to keys whose
         # change is safe mid-run; every change is audited in notes.
         settable = {"limits", "valid_until", "visual_reviews",
-                    "generate_music"}
+                    "generate_music", "account"}
         for key, value in (body.get("set_params") or {}).items():
             if key not in settable:
                 raise ContractError("param_not_resumable", key)
+            if key == 'visual_reviews' and run.params.get('workflow') and value != run.params.get(key):
+                raise ContractError('new_draft_required', key,
+                                    'QC requirements are frozen with this workflow; start a new run to change them.')
+            if key == "account":
+                choice, _ = self._generation_route(run)
+                adapter = self.s.providers.get(self._provider_name(choice))
+                if not value or value != getattr(adapter, 'account', None):
+                    raise ContractError('provider_account_mismatch', 'account',
+                                        'Use the configured generation provider account.')
+                if (run.state.get('plan_id') and value != run.params.get('account')
+                        and self.s._current(run.state['experiment_id']).revision ==
+                        run.state.get('experiment_revision')):
+                    raise ContractError('new_draft_required', 'account',
+                                        'Save a new draft revision before changing production authority.')
             if key == "valid_until":
                 text = str(value or "")
                 if text and text <= utcnow():
@@ -264,9 +393,15 @@ class AutoRunService:
                 f"operator updated {key} at resume")
         self._rebind_current_revision(run)
         self._reset_budget_blocked_effect(run)
+        if run.params.get('workflow') and run.pause.get('code') == 'delivery_failed':
+            run.state['delivery_recovery_requested'] = True
         run.status = "running"
         run.pause = {}
         run.state["step_seq"] = run.state.get("step_seq", 0) + 1
+        if retry_approval:
+            run.progress.append({'stage':run.stage, 'at':utcnow(), 'outcome':'paid_retry_approved',
+                **retry_approval, 'budget_ids':list(run.params.get('budget_ids') or []),
+                'limits':dict(run.params.get('limits') or {})})
         run.progress.append({"stage": run.stage, "at": utcnow(),
                              "outcome": "resumed"})
         self._put(run)
@@ -292,8 +427,15 @@ class AutoRunService:
         # before a fresh paid scope can be created — otherwise the old
         # plan keeps billing in parallel.
         job_refs = list(run.state.get("production_jobs") or [])
+        if run.state.get('plan_id'):
+            job_refs += [r['id'] for r in self.s.db.conn.execute(
+                'SELECT id FROM jobs WHERE id LIKE ?', (run.state['plan_id'] + ':%',))]
         for tag in run.state.get("tts_batch_tags") or ["tts"]:
             job_refs += run.state.get(f"{tag}_jobs") or []
+        if run.params.get('workflow'):
+            for key, value in run.state.items():
+                if key.startswith(('reference_clip_', 'reference_overlay_', 'reference_check_')) and key.endswith('_jobs'):
+                    job_refs += value or []
         pending = [jid for jid in job_refs
                    if (self.s.db.uow().jobs.get(jid) or {})
                    .get("status") not in
@@ -307,6 +449,9 @@ class AutoRunService:
                                    "cancel_requested")]
         if stage in ("tts", "quote", "authorize", "run", "footage",
                      "compose", "final_qc") and pending:
+            if run.params.get('workflow'):
+                raise ContractError('prior_revision_inflight', 'attempts',
+                    'Resolve the original revision’s pending or unknown operations before adopting this edit. No replacement work was submitted.')
             run.notes.append(
                 f"draft revision changed {prior}→{current.revision} but "
                 f"the prior revision still has in-flight work "
@@ -329,7 +474,7 @@ class AutoRunService:
                 f"{current.revision}; narration will be regenerated")
         elif stage in ("quote", "authorize", "run", "footage",
                        "compose", "final_qc"):
-            for key in ("quote_job", "plan_id", "authorize_job",
+            for key in ("quote_job", "plan_id", "authorize_job", "run_job",
                         "production_jobs", "qc_submitted",
                         "qc_resubmitted", "qc_rechecks", "qc_flagged",
                         "qc_human_accepted"):
@@ -356,7 +501,9 @@ class AutoRunService:
         settled; the next step will quote and authorize a new plan against
         the operator's current budget selection.
         """
-        if run.pause.get("code") not in (
+        safe_qc_recovery = (run.params.get('workflow', {}).get('version') == 2 and run.stage == 'final_qc'
+                            and run.pause.get('code') in ('capability_unavailable', 'final_qc_failed'))
+        if not safe_qc_recovery and run.pause.get("code") not in (
                 "budget_exhausted", "analysis_failed", "analysis_invalid",
                 "analysis_unavailable"):
             return
@@ -364,7 +511,7 @@ class AutoRunService:
             "video_analysis": ["analysis"],
             "sections": ["analysis"],
             "blueprint": ["analysis"],
-            "script": ["script"],
+            "script": ["script", "script_repair"],
             "music": ["music"],
             "tts": run.state.get("tts_batch_tags") or ["tts"],
             "final_qc": [f"qc_{k}" for k in "ABCD"],
@@ -481,6 +628,9 @@ class AutoRunService:
                 run.state[f"qc_{key}_plan_seq"] = \
                     run.state.get(f"qc_{key}_plan_seq", 0) + 1
             run.state.pop("qc_flagged", None)
+            if run.params.get('workflow'):
+                for key in flagged:
+                    self._begin_visual(run, key, self._finals(run)[key])
             run.notes.append(
                 "flagged finals resubmitted for a fresh paid visual "
                 "review at the operator's request")
@@ -496,12 +646,18 @@ class AutoRunService:
         try:
             outcome = self._drive(run)
         except ContractError as e:
-            detail = f"{e.code}: {e.detail}"
-            trace = traceback.format_exc(limit=12).strip().splitlines()
-            if trace:
-                detail = detail + " | " + " | ".join(trace[-8:])
-            outcome = self._pause(run, "stage_error", detail,
-                                  "Resolve the cause, then Resume")
+            from ..diagnostics import event
+            from ..events.redact import redact
+            event("run_contract_error", run_id=run.id, stage=run.stage,
+                  code=e.code, error_type=type(e).__name__)
+            detail = redact(f"{e.code}: {e.detail}")[:800]
+            action = "Correct the reported validation problem, then Resume; completed work is preserved."
+            if e.code.startswith("review_proxy_"):
+                detail = ("The final video's analysis copy could not be prepared or verified. "
+                          "The original final video is preserved; no new footage is needed.")
+                action = ("Repair the local review copy preparation and verify its size, timeline and audio, "
+                          "then Resume final quality checks.")
+            outcome = self._pause(run, e.code, detail, action)
         except Exception as e:                       # noqa: BLE001
             detail = type(e).__name__
             # Keep the compact traceback in the durable pause record so an
@@ -572,6 +728,8 @@ class AutoRunService:
         self._put(run)
 
     def _pause(self, run, code, detail, action):
+        from ..diagnostics import event
+        event("run_paused", run_id=run.id, stage=run.stage, code=code)
         run.status = "paused"
         run.pause = {"code": code, "detail": detail, "action": action,
                      "stage": run.stage, "at": utcnow()}
@@ -584,12 +742,29 @@ class AutoRunService:
     def _jobs(self, run, ids, fail_code="job_failed"):
         """'next' when every job succeeded; 'wait' while any run;
         pause tuple on the first terminal failure."""
+        if (run.state.get('provider_wait') or {}).get('job_id') in ids:
+            run.state.pop('provider_wait', None)
         for jid in ids:
             j = self.s.db.uow().jobs.get(jid)
             if j is None:
                 continue
+            if j['status'] == 'ready' and j.get('blocked_reason') in ('analysis_throttled', 'retry_backoff', 'remote_unfinished', 'capacity_full'):
+                run.state['provider_wait'] = {'job_id': jid, 'reason': j['blocked_reason'],
+                                              'next_attempt_at': j.get('next_attempt_at')}
             if j["status"] in ("failed", "blocked", "cancelled"):
                 reason = str(j["blocked_reason"] or j["status"])
+                if reason == 'analysis_http_error' and self.s.effect_work.resume_throttled_job(jid):
+                    return 'wait'
+                from ..providers.recovery import credential_recovery, analysis_recovery
+                recovery = credential_recovery(reason) or analysis_recovery(reason)
+                if recovery:
+                    return ("pause", fail_code, f"job {jid}: {reason}", recovery)
+                if any(t in reason for t in ('authority_required', 'provider_account_mismatch',
+                                             'reservation_identity_conflict')):
+                    return ("pause", fail_code, f"job {jid}: {reason}",
+                            "Verify the provider account and exact plan authorization, then "
+                            "reconcile failed attempts before recovery. Raising a budget "
+                            "does not fix an identity mismatch.")
                 if any(t in reason for t in
                        ("reservation", "budget", "cap_exceeded",
                         "spend_", "authority")):
@@ -705,6 +880,9 @@ class AutoRunService:
         plan is reused, and queue identities are deterministic per
         plan+operation — so a crash at any point re-lands on the same
         paid work instead of minting duplicates."""
+        if run.params.get('workflow') and provider not in ('audiovisual_analysis_flashcut','jev_decisions'):
+            requests = [{**request, 'workflow_version': 2, 'autorun_id': run.id, 'workflow_effect': tag}
+                        for request in requests]
         state_key = f"{tag}_jobs"
         if run.state.get(state_key):
             return "wait"
@@ -713,6 +891,10 @@ class AutoRunService:
             return ("pause", "route_unavailable",
                     f"provider {provider} is not configured",
                     "Configure the provider route, then Resume")
+        from .readiness import provider_ready
+        blocked = provider_ready(self.s, provider, run_id=run.id)
+        if blocked:
+            return blocked
         plan_id = run.state.get(f"{tag}_plan")
         if plan_id:
             plan = self.s.effect_work.get(plan_id)
@@ -730,7 +912,7 @@ class AutoRunService:
             plan = self.s.effect_work.prepare(
                 kind, provider, model, requests,
                 experiment_id=experiment_id, revision=revision,
-                plan_id=plan_id)
+                plan_id=plan_id, valid_until=run.params.get('valid_until', ''))
             run.state[f"{tag}_plan"] = plan["id"]
             self._put(run)
         auth_id = run.state.get(f"{tag}_auth")
@@ -788,11 +970,15 @@ class AutoRunService:
     def _stage_evidence(self, run):
         jid = run.state.get("evidence_job")
         if not jid:
-            self.s.ref_analysis.start(run.seed_id, AUTO_REVIEWER)
+            self.s.ref_analysis.start(run.seed_id, AUTO_REVIEWER,
+                                      evidence_policy='immutable.v2' if run.params.get('workflow') else 'legacy')
+            seq = run.state.get("evidence_seq", 0)
+            ident = f"auto:{run.id}:evidence" if seq == 0 else \
+                f"auto:{run.id}:evidence:{seq}"
             jid = self.s.commands.enqueue(
                 "analysis_evidence", {"seed_id": run.seed_id},
                 phase="analyze",
-                identity=f"auto:{run.id}:evidence")["job_id"]
+                identity=ident)["job_id"]
             run.state["evidence_job"] = jid
             self._put(run)
             return "wait"
@@ -808,10 +994,23 @@ class AutoRunService:
             return ("pause", "analysis_blocked", detail,
                     "Resolve the analysis blocker (see Analysis tab), "
                     "then Resume")
+        # A recovered transcript (import/declare) pops the evidence
+        # stage so grids can be rebuilt against the new words. The
+        # original evidence job already succeeded — enqueue a new
+        # identity instead of treating that old success as current.
+        evidence_done = (a.stages or {}).get("evidence", {}).get("done")
+        if a.status == "in_progress" and not evidence_done:
+            run.state["evidence_seq"] = run.state.get("evidence_seq", 0) + 1
+            run.state.pop("evidence_job", None)
+            self._put(run)
+            return "next"
         self._advance(run, "video_analysis")
         return "next"
 
     def _stage_video_analysis(self, run):
+        if run.params.get('flashcut_policy'):
+            from .flashcut import FlashcutAnalysis
+            return FlashcutAnalysis(self).advance(run)
         if run.state.get("analysis") is not None:
             self._advance(run, "sections")
             return "next"
@@ -842,10 +1041,12 @@ class AutoRunService:
                 f" — the production master remains "
                 f"{seed.source_asset_id}")
         art = self.s.db.uow().artifacts.get(asset_id)
+        run.state['analysis_source_sha'] = self.s.db.uow().artifacts.get(seed.source_asset_id)['sha256']
         out = self._run_effect(
             run, "analysis", "audiovisual_analysis", adapter.model,
             [{"task": "analyze", "artifact_id": asset_id,
-              "artifact_sha256": art["sha256"], "model": adapter.model}],
+              "artifact_sha256": art["sha256"], "model": adapter.model,
+              **({'creative_policy': 'scene.v2', 'workflow_version': 2} if run.params.get('workflow') else {})}],
             "analysis")
         if out != "wait":
             return out
@@ -878,10 +1079,23 @@ class AutoRunService:
         an *aligned* transcript of the current source is not evidence —
         it is never silently substituted for one."""
         a = self.s.ref_analysis.get(run.seed_id)
+        from .scene_review import SceneReview
+        review=SceneReview(self.s)
+        if review.verified(run,a.source_sha256) or review.manual_verified(run,a.source_sha256):
+            transcript=copy.deepcopy(run.state['analysis']['transcript'])
+            prior=run.state.get('analysis_before_manual_review') if review.manual_verified(run,a.source_sha256) else run.state.get('analysis_before_ai_review')
+            # Corrected audible words can reveal that the old language label
+            # described translated subtitles instead of speech. Do not label
+            # new words with stale metadata: the existing explicit translation
+            # stage will detect their language and produce the requested one.
+            changed_words=([t['text'] for t in transcript] !=
+                [t.get('text','') for t in (prior or {}).get('transcript',[])])
+            run.state['source_language'] = 'auto' if changed_words else self.s.ref_analysis.source_language(a)
+            return transcript
         if a.transcript.get("status") == "aligned" and \
                 a.transcript.get("source_sha256") in (None, "",
                                                       a.source_sha256):
-            path = self.s.ref_analysis._doc_paths(a)["transcript_json"]
+            path = self.s.ref_analysis.verified_transcript(a)
             if path.exists():
                 data = json.loads(path.read_text())
                 passages = data.get("passages") or data.get("segments") \
@@ -896,7 +1110,7 @@ class AutoRunService:
                             "end_s": float(
                                 p.get("end_s", p.get("end_seconds",
                                                      p.get("end", 0)))),
-                            "text": text})
+                            "text": text, "words": copy.deepcopy(p.get("words") or [])})
                 if out:
                     # Source language provenance travels with the words —
                     # script adaptation decides whether translation is an
@@ -972,23 +1186,66 @@ class AutoRunService:
 
     def _stage_blueprint(self, run):
         from ..analysis.service import blueprint_id_for
+        from .scene_review import SceneReview
+        scene_review = SceneReview(self.s)
+        # Retired reviews are never replayed, and removing the feature must
+        # not erase an unknown paid operation's recovery requirement.
+        scene_review.guard_resume(run)
         bp_id = blueprint_id_for(run.seed_id)
+        payload, _, _ = self._beats(run)
+        seed = self.s.seeds.get(run.seed_id)
+        source = self.s.db.uow().artifacts.get(seed.source_asset_id)
+        if not source:
+            raise ContractError('source_not_ready', 'artifact_id')
+        if run.state.get('analysis_source_sha') and run.state['analysis_source_sha'] != source['sha256']:
+            return ('pause', 'analysis_source_changed', 'The source bytes changed after analysis.',
+                    'Start a new run for the changed source; previous analysis and approvals cannot be reused.')
+        binding = content_hash({'source_sha256': source['sha256'], 'analysis': payload})
+        run.state['scene_review_policy'] = 'removed'
+        note = 'Scene review is disabled: scene descriptions were not independently reviewed; technical checks remain enforced.'
+        if note not in run.notes:
+            run.notes.append(note)
+        bp = None
         try:
             bp = self.s.analysis.get(bp_id)
-            if bp.status == "accepted" and \
-                    not run.state.get("analysis_reset"):
+            prior_binding = bp.provenance.get('autorun_analysis_hash')
+            manual_bound=(scene_review.manual_verified(run,source['sha256'])
+                and run.state['manual_scene_review']['blueprint_hash']==bp.content_hash
+                and bp.status=='accepted')
+            if not manual_bound and prior_binding != binding and not (not prior_binding and
+                    checks.legacy_observations_match(bp, payload, source['sha256'])):
+                bp = None
+            if bp is not None and bp.status == "accepted":
+                if manual_bound:
+                    # Refresh only the derived-analysis revision link. The
+                    # user already accepted these exact unchanged bytes.
+                    self.s.blueprints.accept(bp.id,bp.content_hash,
+                        run.state['manual_scene_review']['reviewer'],allow_flags=True,
+                        notes='Rebound unchanged manually accepted blueprint after derived-analysis refresh.')
+                else:
+                    # Identical observations can outlive their derived
+                    # analysis revision when another run uses the seed.
+                    # Revalidate the current evidence and refresh its link;
+                    # content equality alone does not prove that link current.
+                    self.s.blueprints.prepare_automatically(bp.id, bp.content_hash)
+                run.state.pop('analysis_reset', None)
                 run.state["blueprint_id"] = bp_id
                 self._advance(run, "template")
                 return "next"
         except ContractError:
             pass
-        payload, _, _ = self._beats(run)
-        a = self.s.ref_analysis.get(run.seed_id)
-        payload = checks.auto_review_beats(
-            payload, evidence=a.evidence or {})
+        payload = copy.deepcopy(payload)
         try:
-            bp = self.s.analysis.import_observations(
-                run.seed_id, payload, AUTO_REVIEWER)
+            if bp is None:
+                bp = self.s.analysis.import_observations(
+                    run.seed_id, payload, AUTO_REVIEWER,
+                    provenance={'autorun_analysis_hash': binding, 'autorun_id': run.id,
+                                'scene_review_policy': 'removed', 'review_performed': False})
+            # Building the new draft fulfils the reset. Acceptance is a
+            # separate durable decision and must survive a worker restart.
+            run.state.pop('analysis_reset', None)
+            run.state['blueprint_id'] = bp.id
+            self._put(run)
         except ContractError as e:
             return ("pause", "analysis_invalid",
                     f"blueprint construction refused the analysis: "
@@ -996,17 +1253,8 @@ class AutoRunService:
                     "Correct the beats/observations in the Analysis "
                     "tab, then Resume — or settle the analysis hold and "
                     "Resume to buy a fresh analysis")
-        try:
-            self.s.blueprints.accept(bp.id, bp.content_hash,
-                                     AUTO_REVIEWER)
-            run.state.pop("analysis_reset", None)
-        except ContractError as e:
-            if e.code == "unresolved_flags":
-                return ("pause", "blueprint_flags",
-                        json.dumps(self.s.blueprints.flags(bp.id)),
-                        "Review the flagged beats in the Analysis tab, "
-                        "accept the blueprint, then Resume")
-            raise
+        self.s.blueprints.prepare_automatically(bp.id, bp.content_hash)
+        run.state.pop('analysis_reset', None)
         run.state["blueprint_id"] = bp.id
         self._advance(run, "template")
         return "next"
@@ -1017,7 +1265,7 @@ class AutoRunService:
             tpl = self.s.templates.get(tpl_id)
         except ContractError:
             bp = self.s.analysis.get(run.state["blueprint_id"])
-            tpl = self.s.templates.author(bp, tpl_id)
+            tpl = self.s.templates.author(bp, tpl_id, renderer_policy=(run.params.get('flashcut_policy') or {}).get('renderer'))
         run.state["template_id"] = tpl.id
         self._advance(run, "script")
         return "next"
@@ -1037,6 +1285,34 @@ class AutoRunService:
                   "visual_event": b.visual_event}
                  for b in bp.beats]
         transcript = self._transcript(run)
+        if run.params.get('source_timing_policy') == 'source_timing.v1':
+            from .source_timing import LocalTimingRepair, SourceTimingService
+            source = self.s.seeds.get(run.seed_id)
+            path = self.s.artifacts.verified_path(source.source_asset_id)
+            artifact = self.s.db.uow().artifacts.get(source.source_asset_id)
+            repair = LocalTimingRepair(path, self.s.config.get('source_timing_local_url', 'http://127.0.0.1:8765'))
+            if self.s.config.get('mode', 'offline') != 'live':
+                # Offline execution never reaches a real local model or port.
+                repair = getattr(self.s, 'source_timing_repair', lambda *args: [])
+            def progress(receipt):
+                run.state['source_timing'] = receipt
+                self._put(run)
+            timing = SourceTimingService(self.s.db, repair, progress)
+            try:
+                result = timing.review(run.id, artifact['sha256'], transcript, beats,
+                    self.s.ref_analysis.get(run.seed_id).acquisition['duration_s'],
+                    run.state.get('source_language') or 'en')
+                run.state['source_timing'] = result
+                transcript = result['transcript']
+                self._put(run)
+            except ContractError as error:
+                if error.code != 'source_timing_unreliable': raise
+                from .source_timing import POLICY
+                binding = content_hash({'source':artifact['sha256'], 'transcript':transcript,
+                    'policy':POLICY, 'language':run.state.get('source_language') or 'en'})
+                run.state['source_timing'] = timing.receipt(run.id, binding)
+                self._put(run)
+                return ('pause', error.code, error.detail, 'Restore reliable source transcript timing, then Resume. No scene review or paid retry will run.')
         src_lang = (run.state.get("source_language") or
                     "").split("-")[0].lower()
         out_lang = (run.params.get("language") or "en") \
@@ -1092,6 +1368,9 @@ class AutoRunService:
                            "text": run.state["translation"][str(i)]}
                           for i, t in enumerate(transcript)]
         base = scripts.adapt(beats, transcript)
+        for warning in base.get('timing_warnings') or []:
+            if warning not in run.notes:
+                run.notes.append(warning)
         if base.get("unplaced"):
             run.notes.append(
                 f"{len(base['unplaced'])} transcript passage(s) could "
@@ -1117,7 +1396,7 @@ class AutoRunService:
             res = self._jobs(run, run.state["script_jobs"],
                              "script_failed")
             if res != "next":
-                if isinstance(res, tuple):
+                if isinstance(res, tuple) and not run.params.get('workflow'):
                     # A Resume after this pause uses the deterministic
                     # adaptation instead of re-dispatching the dead job.
                     run.state["script_llm_failed"] = True
@@ -1125,13 +1404,46 @@ class AutoRunService:
                 return res
             cmd = self.s.commands.get(run.state["script_jobs"][0])
             llm = cmd["command"]["result"]["result"].get("script")
+            if run.params.get('workflow'):
+                from ..analysis.scripts import validate_script_response
+                validate_script_response(llm, [b['id'] for b in beats], base['changed'])
             merged, over = self._merge_llm_scripts(base, llm, beats)
+            if merged is None and any(n[-1] == "rewrite_required" for n in over):
+                # The first request completed; this is a separately quoted
+                # bounded copy rewrite, never a replay of an unknown attempt.
+                repair = scripts.llm_request(adapter.model, beats, transcript,
+                                             base["A"], base["changed"])
+                repair["script_input"]["previous_script"] = llm
+                repair["script_input"]["rewrite_feedback"] = [
+                    {"variant": key, "beat": bid, "max_words": budget,
+                     "instruction": "Rewrite as a complete shorter sentence."}
+                    for key, bid, words, budget, action in over
+                    if action == "rewrite_required"]
+                out = self._run_effect(run, "analysis", "audiovisual_analysis",
+                                       adapter.model, [repair], "script_repair")
+                if out != "wait":
+                    return out
+                result = self._jobs(run, run.state["script_repair_jobs"],
+                                    "script_repair_failed")
+                if result != "next":
+                    return result
+                cmd = self.s.commands.get(run.state["script_repair_jobs"][0])
+                merged, over = self._merge_llm_scripts(
+                    base, cmd["command"]["result"]["result"].get("script"), beats)
+                if merged is None:
+                    return ("pause", "script_repair_failed",
+                            "The bounded rewrite did not produce complete in-budget copy",
+                            "Correct the script adaptation before narration; no automatic repeat request")
             for key, beat_id, words, budget, action in over:
                 run.notes.append(
                     f"variant {key} beat {beat_id}: generated copy "
                     f"({words} words) exceeds the beat's word budget "
                     f"({budget}); {action}")
             if merged is None:
+                if run.params.get('workflow'):
+                    return ('pause', 'invalid_script_response',
+                            'Script copy is incomplete or malformed. No draft or narration was created.',
+                            'Correct the saved script response and reconcile its original operation; Resume never silently selects fallback copy.')
                 run.state["script_llm_failed"] = True
                 self._put(run)
                 return ("pause", "script_failed",
@@ -1171,7 +1483,10 @@ class AutoRunService:
     def _merge_llm_scripts(self, base, llm, beats):
         """Apply an LLM adaptation only where it stays inside the
         declared treatment shape; anything else is rejected wholesale."""
-        if not isinstance(llm, dict):
+        from ..analysis.scripts import validate_script_response
+        try:
+            validate_script_response(llm, [b['id'] for b in beats], base['changed'])
+        except ContractError:
             return None, []
         variants = llm.get("variants") or {}
         a = variants.get("A")
@@ -1189,27 +1504,29 @@ class AutoRunService:
             words = str(text).split()
             if len(words) <= budget:
                 return str(text)
-            # A with real source copy reverts to it — the closest
-            # adaptation. Everywhere else, deleting the line would
-            # silently collapse a declared variation (B/C/D) or leave a
-            # beat speechless (A with no source words): trim the
-            # generated copy to the budget instead. A trim that ends up
-            # normalization-equivalent to A is still caught by
-            # validate_variations — the limitation is reported, never
-            # shipped as an identical variant.
+            # Never purchase a waveform for a mid-sentence word slice.
             if key == "A" and str(fallback).strip():
                 over.append((key, beat_id, len(words), budget,
                              "source-derived copy used instead"))
                 return fallback
-            trimmed = " ".join(words[:budget])
-            if trimmed.strip():
+            sentences = re.findall(r'[^.!?]+[.!?]+(?:["\u201d\u2019])?', str(text))
+            retained = []
+            for sentence in sentences:
+                if len(" ".join(retained + [sentence.strip()]).split()) > budget:
+                    break
+                retained.append(sentence.strip())
+            if retained:
                 over.append((key, beat_id, len(words), budget,
-                             f"trimmed to {budget} words to keep the "
-                             "line inside its beat"))
-                return trimmed
+                             "retained complete sentences within word budget"))
+                return " ".join(retained)
+            if (str(fallback).strip() and len(str(fallback).split()) <= budget
+                    and scripts._norm_words(fallback) != scripts._norm_words(base["A"].get(beat_id, ""))):
+                over.append((key, beat_id, len(words), budget,
+                             "source-derived treatment used instead"))
+                return fallback
             over.append((key, beat_id, len(words), budget,
-                         "no in-budget copy could be derived"))
-            return fallback
+                         "rewrite_required"))
+            return ""
         out = {"A": {b["id"]: bounded("A", b["id"], a.get(b["id"], ""),
                                       base["A"].get(b["id"], ""))
                      for b in beats},
@@ -1226,7 +1543,7 @@ class AutoRunService:
                 if str(diff or "").strip() else base[key][beat_id]
             if str(hypotheses.get(key) or "").strip():
                 out["hypotheses"][key] = str(hypotheses[key])
-        return out, over
+        return (None if any(n[-1] == "rewrite_required" for n in over) else out), over
 
     def _stage_music(self, run):
         if run.state.get("music") is not None:
@@ -1284,9 +1601,29 @@ class AutoRunService:
             self._advance(run, "tts")
             return "next"
         bp = self.s.analysis.get(run.state["blueprint_id"])
+        from ..analysis.deep import bound_gate
+        try:
+            bound_gate(self.s.db, bp.seed_id,
+                       bp.provenance.get('artifact_sha256', ''), bp.analysis)
+        except ContractError as error:
+            if error.code != 'analysis_stale':
+                raise
+            # Resume an already-paused repeat-seed run without buying its
+            # analysis or script again. Blueprint preparation retains the
+            # source/hash guards and validates current structural evidence.
+            self._advance(run, 'blueprint')
+            return 'next'
         sc = run.state["scripts"]
         provider, model = self._generation_route(run)
         gen_settings = self._generation_settings(provider, model)
+        from .policies import run_policies
+        policies = run_policies(run.params)
+        full_video = policies['variation'] == 'full_video'
+        continuity = ' Continuity reference for this entire video: ' + ' | '.join(str(b.visual_event) for b in bp.beats)
+        context = None
+        if run.params.get('workflow'):
+            from ..creative.context import from_analysis, scene_request
+            context = from_analysis(run.state.get('analysis') or {}, bp.beats)
         segments = []
         for b in bp.beats:
             segments.append({
@@ -1297,7 +1634,15 @@ class AutoRunService:
                     {"visual_event": b.visual_event, "role": b.role},
                     "control", gen_settings)},
                 "captions": []})
+        if 'policies' in run.params:
+            for seg in segments:
+                seg['picture']['request']['prompt'] += (
+                    ' No subtitles, captions, title cards, decorative lettering, logos or watermarks.'
+                    ' Text will be added separately after footage checks.' + continuity)
         variants = []
+        if context:
+            for seg in segments:
+                seg['picture']['request'] = scene_request(context, seg['id'], 'A', gen_settings)
         for key in ("B", "C", "D"):
             changed_id = sc["changed"][key]
             branch_segments = []
@@ -1315,9 +1660,19 @@ class AutoRunService:
                          "role": next(b.role for b in bp.beats
                                       if b.id == changed_id)},
                         sc["factors"][key], gen_settings)
+                if full_video:
+                    beat = next(b for b in bp.beats if b.id == seg['id'])
+                    s2['picture']['request'] = scripts.variant_picture_request(
+                        {'visual_event': beat.visual_event, 'role': beat.role},
+                        key, gen_settings)
+                    s2['picture']['request']['prompt'] += continuity
+                if context:
+                    s2['picture']['request'] = scene_request(context, seg['id'], key if full_video or seg['id'] == changed_id else 'A', gen_settings)
                 branch_segments.append(s2)
             region = next(b.target.to_dict() for b in bp.beats
                           if b.id == changed_id)
+            if full_video:
+                region = {'start_frame': 0, 'end_frame': bp.target_frames}
             variants.append({
                 "key": key, "factor": sc["factors"][key],
                 "regions": [region],
@@ -1357,6 +1712,19 @@ class AutoRunService:
                                 {self._provider_name(provider): [model]}
                                 if model else {}},
             "product_ids": []}
+        if 'policies' in run.params:
+            body['run_policies'] = policies
+        if 'workflow' in run.params:
+            body['workflow'] = run.params['workflow']
+            body['creative_context'] = context
+        if run.state.get('source_timing'):
+            body['source_timing'] = {key:run.state['source_timing'][key] for key in
+                ('policy','binding','source_sha256','transcript_hash')}
+        if run.params.get('flashcut_policy'):
+            body['flashcut_policy'] = run.params['flashcut_policy']
+            body['flashcut_editorial'] = {'version': 'flashcut_editorial.v1',
+                'evidence_sha256': self.s.source_evidence.get(run.state['source_evidence_id'])['manifest']['sha256'],
+                'understanding': run.state['flashcut_understanding']}
         try:
             self.s.create_experiment_draft(eid, body)
         except ContractError as e:
@@ -1501,7 +1869,18 @@ class AutoRunService:
             for key, seg_id, _text in needed[norm]:
                 fkey = f"{key}:{seg_id}:{norm}"
                 if fkey in fits:
-                    continue
+                    prior = self.s.db.uow().jobs.get(fits[fkey]) or {}
+                    if prior.get("status") == "succeeded":
+                        continue
+                    retried = run.state.setdefault("tts_fit_retried", [])
+                    if prior.get("status") in ("failed", "blocked") \
+                            and fkey not in retried:
+                        # One retry after a fit-policy fix, reusing the
+                        # paid waveform. A second failure pauses.
+                        retried.append(fkey)
+                        fits.pop(fkey, None)
+                    else:
+                        continue
                 queued = self.s.audio_work.queue_fit(
                     eid, rev, {"variant_key": key, "segment_id": seg_id,
                                "job_id": jid})
@@ -1516,6 +1895,10 @@ class AutoRunService:
                 return "next"
             if repaired:
                 return repaired
+            if any(code in str(res[2]) for code in ('caption_', 'alignment', 'word_times_not_monotonic')):
+                return ('pause', 'caption_timing_unreliable', res[2],
+                        'Restore reliable word timing for the final replacement narration and verify complete text coverage within this beat. '
+                        'For an overlong caption word, revise that word instead of shrinking the text. Then Resume; existing audio is retained.')
             return ("pause", res[1], res[2],
                     "Edit the draft copy so it fits its beat, then "
                     "Resume — the run continues on the new revision")
@@ -1561,11 +1944,28 @@ class AutoRunService:
         every identity input — text, voice, model, language — not merely
         the same normalized key."""
         from ..execution.effects import wire_hash
-        want = wire_hash({"text": text,
+        request = {"text": text,
                           "voice_id": run.params["voice_id"],
                           "model": "eleven_v3",
                           "language": run.params["language"],
-                          "settings": {}})
+                          "settings": {}}
+        if run.params.get('workflow'):
+            # Future effects carry audit identity too. Recover the original
+            # batch tag; it is not necessarily the current batch's tag after
+            # one line is repaired. Never drop it from the receipt hash.
+            command = self.s.commands.get(jid)['command']['input']
+            plan = self.s.effect_work.get(command['plan_id'])
+            operation = next((op for op in plan['operations']
+                              if op['key'] == command['operation']), None)
+            tag = (operation or {}).get('request', {}).get('workflow_effect', '')
+            if (plan['kind'] != 'tts' or plan['provider'] != 'elevenlabs'
+                    or plan['account'] != self.s.providers['elevenlabs'].account
+                    or not re.fullmatch(r'tts(?:_\d+)?', tag)):
+                return False
+            request.update(workflow_version=2, autorun_id=run.id, workflow_effect=tag)
+            if operation['request'] != request:
+                return False
+        want = wire_hash(request)
         rows = self.s.db.conn.execute(
             "SELECT request_hash FROM attempts WHERE job_id=?",
             (jid,)).fetchall()
@@ -1594,9 +1994,23 @@ class AutoRunService:
                         "Edit the draft copy or lengthen the beat, "
                         "then Resume")
             targets.append((key, seg_id, fallback))
+        from .policies import run_policies
+        maximum = run_policies(run.params)['speech_repairs']
+        if maximum:
+            counts = run.state.setdefault('speech_repair_attempts', {})
+            for key, seg_id, _ in targets:
+                if counts.get(f'{key}:{seg_id}', 0) >= maximum:
+                    return ('pause', 'speech_repair_exhausted', f'{key}:{seg_id}: repair limit reached.',
+                            'Edit this segment’s complete copy or beat duration, then Resume.')
+            with self.s.db.uow():
+                for key, seg_id, _ in targets:
+                    identity = f'{key}:{seg_id}'
+                    counts[identity] = counts.get(identity, 0) + 1
+                self._put(run)
+                return self._patch_speech(run, targets, base, measured_repair=True)
         return self._patch_speech(run, targets, base)
 
-    def _patch_speech(self, run, targets, base):
+    def _patch_speech(self, run, targets, base, measured_repair=False):
         """Swap copy on targeted segments to their fallback text on a new
         revision bound to the LATEST draft, then rewind the TTS stage so
         only the changed lines resynthesize. A repair that would erase a
@@ -1606,7 +2020,7 @@ class AutoRunService:
         control = copy.deepcopy(exp.packaging["segments"])
         a_copy = {s["id"]: s.get("copy", "") for s in control}
         for key, seg_id, fallback in targets:
-            if key != "A" and \
+            if key != "A" and base['changed'].get(key) == seg_id and \
                     scripts._norm_words(fallback) == \
                     scripts._norm_words(a_copy.get(seg_id, "")):
                 return ("pause", "variation_lost",
@@ -1628,7 +2042,7 @@ class AutoRunService:
                 "dependent_fields": list(v.dependent_fields)})
         repairs = run.state.setdefault("tts_repairs", [])
         for key, seg_id, fallback in targets:
-            if f"{key}:{seg_id}" in repairs:
+            if not measured_repair and f"{key}:{seg_id}" in repairs:
                 return ("pause", "speech_fit_failed",
                         f"variant {key} segment {seg_id}: copy still "
                         "does not fit after one automatic repair",
@@ -1637,19 +2051,28 @@ class AutoRunService:
                 for seg in control:
                     if seg["id"] == seg_id:
                         seg["copy"] = fallback
+                        seg.pop('speech', None)
+                        seg['captions'] = []
                 for br in branches:
                     if base["changed"].get(br["key"]) != seg_id:
                         for seg in br["segments"]:
                             if seg["id"] == seg_id:
                                 seg["copy"] = fallback
+                                seg.pop('speech', None)
+                                seg['captions'] = []
             else:
                 for br in branches:
                     if br["key"] == key:
                         for seg in br["segments"]:
                             if seg["id"] == seg_id:
                                 seg["copy"] = fallback
+                                seg.pop('speech', None)
+                                seg['captions'] = []
             repairs.append(f"{key}:{seg_id}")
-            run.notes.append(
+            if measured_repair:
+                run.notes.append(f'{key}:{seg_id}: measured-duration rewrite applied; unchanged speech is reused.')
+            else:
+                run.notes.append(
                 f"variant {key} segment {seg_id}: generated copy did "
                 "not fit its beat; reverted to source-derived copy and "
                 "resynthesized that line only")
@@ -1683,6 +2106,10 @@ class AutoRunService:
         that stays an honest pause. One repair per segment, ever.
         Returns 'next' after a repair, a pause tuple, or None to fall
         through to the caller's pause."""
+        from .policies import run_policies
+        if run_policies(run.params)['speech_repairs']:
+            from .speech_repair import repair
+            return repair(self, run, fits)
         base = run.state.get("scripts_base")
         if not base:
             return None
@@ -1713,9 +2140,20 @@ class AutoRunService:
     def _stage_quote(self, run):
         eid = run.state["experiment_id"]
         rev = run.state["experiment_revision"]
+        if run.params.get('flashcut_policy'):
+            from .editorial import prepare
+            result = prepare(self, run)
+            if result is not None:
+                return result
+        if run.params.get('workflow', {}).get('reference_policy') == 'first_clip.v1':
+            from ..creative.references import prepare
+            result = prepare(self, run)
+            if result is not None:
+                return result
         if not run.state.get("quote_job"):
             jid = self.s.commands.enqueue(
-                "quote", {"experiment_id": eid, "revision": rev},
+                "quote", {"experiment_id": eid, "revision": rev,
+                          **({'reference_bindings': run.state['reference_bindings']} if run.params.get('workflow', {}).get('reference_policy') == 'first_clip.v1' else {})},
                 experiment_id=eid, revision=rev, phase="plan",
                 identity=f"quote-{eid}-r{rev}")["job_id"]
             run.state["quote_job"] = jid
@@ -1766,6 +2204,11 @@ class AutoRunService:
                 if adapter is not None and getattr(adapter, "account", ""):
                     account = adapter.account
                     break
+        if not account:
+            return ("pause", "account_required",
+                    "generation account is not configured on the "
+                    "selected provider route",
+                    "Enter the provider account, then Resume")
         limits = run.params.get("limits") or {}
         ceilings = {}
         for unit, total in need.items():
@@ -1776,6 +2219,11 @@ class AutoRunService:
                         f"{total} reserve requirement",
                         "Raise the limit, then Resume")
             ceilings[unit] = cap if cap is not None else total
+        from .readiness import provider_ready
+        for provider in sorted(providers):
+            blocked = provider_ready(self.s, provider)
+            if blocked:
+                return blocked
         body = {"plan_hash": plan["plan_hash"], "reviewer": AUTO_REVIEWER,
                 "budget_ids": run.params["budget_ids"],
                 "ceilings": ceilings,
@@ -1822,6 +2270,27 @@ class AutoRunService:
     def _stage_footage(self, run):
         plan = self.s.plan_for(run.state["experiment_id"])
         nodes = self.s.production._nodes(plan["id"])
+        # Paid failures stay terminal until explicit evidence-backed recovery.
+        # A missing remote id does not prove that a request was never sent.
+        for k, n in nodes.items():
+            if n["kind"] != "download":
+                continue
+            jid = f"{plan['id']}:{k}"
+            j = self.s.db.uow().jobs.get(jid)
+            if not (j and j["status"] == "failed" and
+                    "incomplete_submission_set" in str(
+                        j["blocked_reason"] or "")):
+                continue
+            with self.s.db.uow() as u:
+                u.conn.execute(
+                    "UPDATE jobs SET status='ready',blocked_reason=NULL,"
+                    "lease_owner=NULL,lease_expires=NULL WHERE id=?",
+                    (jid,))
+                u.conn.execute(
+                    "UPDATE jobs SET status='waiting_dependencies',"
+                    "blocked_reason=NULL WHERE blocked_reason LIKE ? "
+                    "AND status='blocked'",
+                    (f"%{jid}%",))
         work = [f"{plan['id']}:{k}" for k, n in nodes.items()
                 if n["kind"] in ("picture", "download", "review")]
         for k, n in nodes.items():
@@ -1879,6 +2348,13 @@ class AutoRunService:
                     missing.append(f"{dep}: artifact {aid} not "
                                    "registered")
                     continue
+                # A zero repair allowance disables regeneration, not QC.
+                # Records without a policy keep the legacy review path.
+                if run.params.get('policies'):
+                    from .overlay import inspect
+                    overlay = inspect(self, run, plan, pic, download, index, art)
+                    if overlay:
+                        return overlay
                 existing = self.s.db.conn.execute(
                     "SELECT id FROM records WHERE kind='review' AND "
                     "json_extract(body,'$.check_type')='asset' AND "
@@ -1959,6 +2435,124 @@ class AutoRunService:
             "Drive delivery")
         self._advance(run, "done")
 
+    def _finish_or_deliver(self, run):
+        from .policies import run_policies
+        if run_policies(run.params)['delivery'] != 'after_qc':
+            self._finish(run)
+            return 'next'
+        if not run.params.get('visual_reviews', True):
+            return ('pause', 'visual_qc_required', 'Automatic delivery requires final visual QC.',
+                    'Enable final visual QC and Resume; delivery cannot bypass it.')
+        if self.s.config.get('drive_folder_id') != run.params.get('delivery_folder_id'):
+            return ('pause', 'destination_changed', 'The authorized Drive destination changed.',
+                    'Restore the run’s authorized destination before resuming.')
+        account = getattr(self.s.delivery.drive, 'expected_account', '') or ('fixture-drive' if self.s.config.get('mode','offline') == 'offline' else '')
+        if run.params.get('workflow') and account != run.params.get('delivery_account'):
+            return ('pause', 'delivery_account_changed', 'The authorized Drive account changed.',
+                    'Reconnect the original authorized account; no replacement upload will be attempted.')
+        run.state['completion_phases'] = {'generation': 'complete', 'qc': 'complete', 'delivery': 'running'}
+        self._put(run)
+        finals = self._finals(run)
+        jobs = run.state.setdefault('delivery_jobs', {})
+        recovery = run.state.pop('delivery_recovery_requested', False)
+        for key, final in finals.items():
+            if key in jobs:
+                old_job = self.s.db.uow().jobs.get(jobs[key].get('job_id', ''))
+                if not recovery or not old_job or old_job['status'] not in ('failed','blocked'):
+                    continue
+            checks = [r['id'] for r in self.s._final_checks(final)
+                      if r.get('binding') == final.get('binding') and not r.get('invalidated_by')]
+            result = self.s.deliver_variant(run.experiment_id + ':' + key.lower(), {
+                'artifact_id': final['artifact_id'], 'target_hash': final['sha256'],
+                'folder_id': run.params['delivery_folder_id'],
+                'account': run.params['delivery_account'], 'reviewer': 'automatic-policy.v1',
+                'valid_until': run.params['valid_until'], 'check_ids': checks,
+            }, run.state['experiment_revision'])
+            jobs[key] = result
+            self._put(run)
+        pending = [r['job_id'] for r in jobs.values() if r.get('job_id')]
+        if pending:
+            result = self._jobs(run, pending, 'delivery_failed')
+            if result != 'next':
+                return result
+        for key, final in finals.items():
+            rows = self.s.db.conn.execute("SELECT body FROM records WHERE kind='delivery' AND json_extract(body,'$.file_sha256')=? AND json_extract(body,'$.variant_plan_id')=?", (final['sha256'], run.experiment_id + ':' + key.lower())).fetchall()
+            verified = []
+            for row in rows:
+                record = json.loads(row[0])
+                try:
+                    clean = json.loads(record.get('cleanup_receipt', '{}')).get('state') == 'verified'
+                except (ValueError, TypeError):
+                    clean = False
+                if record['status'] == 'verified' and clean and record['parent_folder_id'] == run.params['delivery_folder_id']:
+                    if run.params.get('workflow'):
+                        self.s.delivery._account_binding(record)
+                    verified.append(record)
+            if len(verified) != 1:
+                return ('pause', 'delivery_unverified', f'{key}: verified upload and cleanup receipt unavailable.',
+                        'Reconcile the existing delivery; do not upload a duplicate.')
+        run.state['completion_phases']['delivery'] = 'complete'
+        run.notes.append('All four finals verified on Drive and video-owned resources cleaned up. Nothing published.')
+        self._advance(run, 'done')
+        return 'next'
+
+    def _recompute_failed_region_checks(self, run, plan, finals):
+        """Re-run automated changed-region checks that failed, so a
+        QC-policy fix can take effect without regenerating paid footage."""
+        control = finals.get("A")
+        if not control:
+            return
+        try:
+            apath = self.s.artifacts.verified_path(control["artifact_id"])
+        except (ContractError, KeyError, TypeError):
+            return
+        a_mix_id = (control.get("mix") or {}).get("artifact_id")
+        a_audio = self.s.artifacts.verified_path(a_mix_id) if a_mix_id else None
+        fps = 30
+        clock = (plan.get("output_clock") if isinstance(plan, dict) else None) \
+            or {}
+        if clock.get("num") and clock.get("den"):
+            fps = clock["num"] / clock["den"]
+        eid = run.state["experiment_id"]
+        for key in "BCD":
+            f = finals.get(key)
+            if not f:
+                continue
+            check = next((c for c in f.get("check_ids") or []
+                          if str(c).startswith("regions-")), None)
+            if not check:
+                continue
+            rev = self.s.quality._get(check)
+            if not rev or rev.get("verdict") == "pass" or \
+                    rev.get("reviewer_type") != "automated":
+                continue
+            variant = self.s.experiments._variant(eid, key)
+            regions, cursor = [], 0
+            for region in sorted(variant.allowed_regions,
+                                 key=lambda r: r.start):
+                if region.start > cursor:
+                    regions.append({"start_frame": cursor,
+                                    "end_frame": region.start})
+                cursor = max(cursor, region.end)
+            if cursor < variant.target_frames:
+                regions.append({"start_frame": cursor,
+                                "end_frame": variant.target_frames})
+            full_video = None
+            if self.s._current(eid).packaging.get('run_policies', {}).get('variation') == 'full_video':
+                from ..quality.variation import full_video_evidence
+                full_video, regions = full_video_evidence(self.s, plan, variant)
+            try:
+                path = self.s.artifacts.verified_path(f["artifact_id"])
+            except (ContractError, KeyError, TypeError):
+                continue
+            b_mix_id = (f.get("mix") or {}).get("artifact_id")
+            b_audio = self.s.artifacts.verified_path(b_mix_id) \
+                if b_mix_id else None
+            self.s.quality.check_regions(
+                check, apath, path, regions, fps,
+                binding=f.get("binding"), a_audio=a_audio,
+                b_audio=b_audio, full_video=full_video)
+
     def _mandatory_qc(self, run, plan, finals):
         """Every check recorded against a final must pass against the
         CURRENT bytes, composition and plan. Missing, stale, failed or
@@ -1984,7 +2578,7 @@ class AutoRunService:
         they simply stop being the run's answer."""
         for key in ("quote_job", "plan_id", "authorize_job", "run_job",
                     "production_jobs", "qc_submitted", "qc_resubmitted",
-                    "qc_rechecks", "qc_flagged", "qc_human_accepted"):
+                    "qc_rechecks", "qc_flagged", "qc_human_accepted", "delivery_jobs", "completion_phases"):
             run.state.pop(key, None)
         for key in list(run.state):
             if key.startswith("qc_verdict_") or (
@@ -2025,6 +2619,7 @@ class AutoRunService:
             return ("pause", "final_qc_blocked",
                     f"no current production plan: {e.code}",
                     "Resume to re-quote the current draft")
+        self._recompute_failed_region_checks(run, plan, finals)
         problems = self._mandatory_qc(run, plan, finals)
         if problems:
             current = [m for m, sup in problems if not sup]
@@ -2049,11 +2644,9 @@ class AutoRunService:
                 "automated visual QC was disabled for this run — finals "
                 "passed technical checks only (mandatory technical and "
                 "unchanged-region checks, no creative review)")
-            self._finish(run)
-            return "next"
+            return self._finish_or_deliver(run)
         if run.state.get("qc_human_accepted"):
-            self._finish(run)
-            return "next"
+            return self._finish_or_deliver(run)
         adapter = self.s.providers.get("audiovisual_analysis")
         if adapter is None or not getattr(adapter, "account", ""):
             # Visual QC was requested — an unavailable route is a missing
@@ -2061,9 +2654,8 @@ class AutoRunService:
             return ("pause", "capability_unavailable",
                     "visual QC was requested but the audiovisual "
                     "analysis route is not configured",
-                    "Configure the provider, or Resume with "
-                    "set_params visual_reviews=false to finish on "
-                    "technical checks only")
+                    ("Restore the configured visual-QC provider, then Resume. This run’s QC policy cannot be downgraded."
+                     if run.params.get('workflow') else "Configure the provider, or Resume with set_params visual_reviews=false to finish on technical checks only"))
         eid = run.state["experiment_id"]
         finals = self._finals(run)
         if len(finals) < 4:
@@ -2090,7 +2682,7 @@ class AutoRunService:
                             "Stabilize the final, then Resume")
                 resubmitted.append(key)
                 for k in (f"qc_{key}_jobs", f"qc_{key}_plan",
-                          f"qc_{key}_auth"):
+                          f"qc_{key}_auth", f"qc_verdict_{key}"):
                     run.state.pop(k, None)
                 run.state[f"qc_{key}_plan_seq"] = \
                     run.state.get(f"qc_{key}_plan_seq", 0) + 1
@@ -2104,6 +2696,8 @@ class AutoRunService:
             for key in pending:
                 variant = self.s.experiments._variant(eid, key)
                 f = finals[key]
+                if run.params.get('workflow'):
+                    self._begin_visual(run, key, f)
                 out = self._run_effect(
                     run, "analysis", "audiovisual_analysis",
                     adapter.model, [{
@@ -2111,6 +2705,8 @@ class AutoRunService:
                         "artifact_id": f["artifact_id"],
                         "artifact_sha256": f["sha256"],
                         "expected": {
+                            **self._scene_qc_intent(run, variant),
+                            **({'variation': run.params['policies']['variation']} if 'policies' in run.params else {}),
                             "variant": key,
                             "script": [{"segment": s["id"],
                                         "copy": s.get("copy", "")}
@@ -2143,7 +2739,17 @@ class AutoRunService:
             if verdict not in ("pass", "uncertain", "fail"):
                 verdict = "uncertain"
             recorded = run.state.get(f"qc_verdict_{key}")
-            if recorded is None:
+            if run.params.get('workflow'):
+                binding, scope, request = self._visual_identity(run, key, f)
+                if scope:
+                    with self.s.db.uow():
+                        result = self.s.quality.complete_visual(binding, scope, request, verdict,
+                            notes=review.get('notes') or [], job_id=sub['job_id'],
+                            review_evidence={k: review[k] for k in ('issues', 'review_media') if k in review})
+                        verdict = result['verdict']
+                        run.state[f'qc_verdict_{key}'] = verdict
+                        self._put(run)
+            elif recorded is None:
                 # Verdicts are durable evidence — a resume that re-reads
                 # the same jobs must not write duplicate review rows.
                 path = self.s.artifacts.verified_path(f["artifact_id"])
@@ -2172,11 +2778,51 @@ class AutoRunService:
                     "Review the flagged finals in Compare, then Resume "
                     "with resolve_qc=accept (human acceptance) or "
                     "resolve_qc=recheck (a fresh paid review)")
-        self._finish(run)
-        return "next"
+        return self._finish_or_deliver(run)
 
     def _stage_done(self, run):
         return "done"
+
+    def _scene_qc_intent(self, run, variant):
+        if not run.params.get('workflow'):
+            return {}
+        from ..creative.context import qc_intent
+        experiment = self.s._current(run.experiment_id, run.state['experiment_revision'], True)
+        context = experiment.packaging.get('creative_context')
+        if not context:
+            return {'policy': 'visual.v2', 'creative_context': {'evidence_quality': 'unavailable'}}
+        clock = experiment.output_clock
+        intent=qc_intent(context, variant.segments, clock['num'] / clock['den'])
+        if experiment.packaging.get('flashcut_policy'):
+            from ..analysis.editorial_events import EditorialService
+            final=self._finals(run)[variant.variant_key]
+            record=self.s.db.uow().records.get('editorialplan',final.get('editorial_plan_id',''))
+            if not record:raise ContractError('editorial_intent_required','final_qc')
+            saved=json.loads(record['body'])
+            if (saved['experiment_revision']!=experiment.revision or saved['variant_key']!=variant.variant_key
+                    or saved['manifest']!=final.get('editorial_manifest')):
+                raise ContractError('stale_editorial_plan','final_qc')
+            resolved=EditorialService(self.s.db,self.s.source_evidence.blobs.root).load(saved['id'])
+            intent['editorial']={'policy':'semantic_edits.v1','manifest_sha256':saved['manifest']['sha256'],
+                'final_artifact_id':final['artifact_id'],'final_sha256':final['sha256'],
+                'events':[{**e,'start_s':e['start_frame']*clock['den']/clock['num'],
+                           'end_s':e['end_frame']*clock['den']/clock['num']} for e in resolved['events']]}
+        return intent
+
+    def _visual_identity(self, run, key, final):
+        path = self.s.artifacts.verified_path(final['artifact_id'])
+        binding = self.s.quality.binding(path, final['composition_id'], final['artifact_id'])
+        scope = self.s.quality.visual_scope(binding)
+        request = content_hash({'run': run.id, 'variant': key, 'binding': binding,
+                                'scope': scope, 'seq': run.state.get(f'qc_{key}_plan_seq', 0)})
+        return binding, scope, request
+
+    def _begin_visual(self, run, key, final):
+        binding, scope, request = self._visual_identity(run, key, final)
+        if scope:
+            with self.s.db.uow():
+                self.s.quality.begin_visual(binding, scope, request)
+                self._put(run)
 
     def _finals(self, run):
         eid = run.state["experiment_id"]

@@ -150,6 +150,25 @@ class TestUsdCaps:
 
 
 class TestAmbiguousAndSettlement:
+    def test_usage_evidence_view_preserves_unresolved_holds(self, svc):
+        svc.create_budget('b', 'usd_micros', 'aggregate', cap=1000)
+        ambiguous = svc.reserve('historical-unknown', [('b', 100)])
+        svc.mark_ambiguous(ambiguous)
+        svc.reserve('pending', [('b', 20)])
+        for kind, amount in [('usage_estimate', 30), ('reported_usage', 40), ('invoice_confirmed', 50), ('native_quote', 60)]:
+            rid = svc.reserve(kind, [('b', amount)])
+            svc.settle(rid, kind, {'b': amount}, evidence=kind + ':fixture')
+        before = svc.reservations_for('historical-unknown')
+        report = svc.spend_breakdown()[0]
+        assert report['unresolved_holds'] == 100
+        assert report['pending_estimates'] == 20
+        assert report['estimated_usage'] == 30
+        assert report['confirmed_usage'] == 90
+        assert report['quoted_usage'] == 60
+        assert report['held'] == 120 and report['settled'] == 180
+        assert svc.reservations_for('historical-unknown') == before
+        assert svc.available('b') == 700
+
     def test_ambiguous_hold_survives_restart(self, svc, tmp_path):
         svc.create_budget("b", "usd_micros", "aggregate", cap=1000)
         rid = svc.reserve("rh-lost", [("b", 400)])

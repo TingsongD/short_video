@@ -70,17 +70,20 @@ class GdriveCLI(DriveAdapter):
         maximum = 1000
         while maximum <= 128000:
             r = self.runner([self.binary, "files", "list", "--parent", parent_id,
-                "--max", str(maximum), "--skip-header", "--full-name", "--field-separator", "\t"])
+                "--max", str(maximum), "--skip-header", "--full-name", "--field-separator", "|"])
             if r.returncode:
                 raise RuntimeError("drive_list_failed")
             files = []
             for line in r.stdout.splitlines():
                 if not line.strip():
                     continue
-                parts = line.split("\t")
-                if len(parts) < 2 or not re.fullmatch(r"[A-Za-z0-9_-]+", parts[0]):
+                # Tabs invoke gdrive's aligned table printer rather than a
+                # machine-readable delimiter. The last three fields are
+                # type, size and created time; preserve pipes inside names.
+                parts = line.split("|")
+                if len(parts) < 5 or not re.fullmatch(r"[A-Za-z0-9_-]+", parts[0]):
                     raise RuntimeError("drive_listing_malformed")
-                files.append({"id": parts[0], "name": parts[1]})
+                files.append({"id": parts[0], "name": "|".join(parts[1:-3])})
             if len({f["id"] for f in files}) != len(files):
                 raise RuntimeError("drive_listing_duplicates")
             if len(files) < maximum:

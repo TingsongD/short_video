@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../../api/client";
 import { Blocked, Empty, ErrorBox } from "../../components/States";
 
@@ -22,9 +22,7 @@ const TREATMENT: [string, string][] = [
 ];
 const STAGES = ["acquire", "transcript", "evidence", "documents"];
 
-/** Mandatory deep reference analysis: staged Hypit evidence, the
- * operator's semantic reading, and the human review that gates
- * blueprint acceptance and all downstream production. */
+/** Source evidence editor; automated runs do not require scene approval. */
 export function AnalysisScreen({ seeds, blueprints, reviewer, act, media }: {
   seeds: Row[]; blueprints: Row[]; reviewer: string;
   act: (fn: () => Promise<unknown>, message?: string) => Promise<unknown>;
@@ -38,10 +36,28 @@ export function AnalysisScreen({ seeds, blueprints, reviewer, act, media }: {
   const [t, setT] = useState<Row>({});
   const [note, setNote] = useState("");
   const [tx, setTx] = useState({ provider: "", provenance: "", words: "" });
+  const currentSeed = useRef(seedId); currentSeed.current = seedId;
+  const serial = useRef(0), dirty = useRef(false), pending = useRef(false);
+  const lastLoad = useRef(0), currentStatus = useRef('');
+  const [loading, setLoading] = useState(false);
+  const [newer, setNewer] = useState(false);
+  const loadedToken = useRef('');
 
-  const load = useCallback(async (id: string) => {
-    if (!id) { setA(null); return; }
+  const load = useCallback(async (id: string, force = true) => {
+    if (!id || id !== currentSeed.current || (!force && pending.current)) return;
+    const request = ++serial.current;
+    pending.current = true;
+    if (force) setLoading(true);
+    try {
     const doc = await api.getAnalysis(id) as Row | null;
+    if (id !== currentSeed.current || request !== serial.current) return;
+    lastLoad.current = Date.now(); currentStatus.current = doc?.status || '';
+    if (!force && dirty.current) {
+      if (doc?.edit_token !== loadedToken.current) setNewer(true);
+      return;
+    }
+    dirty.current = false; setNewer(false); setError(null);
+    loadedToken.current = doc?.edit_token || '';
     setA(doc);
     if (doc) {
       const und = doc.understanding || {};
@@ -52,8 +68,23 @@ export function AnalysisScreen({ seeds, blueprints, reviewer, act, media }: {
       setSections(doc.timeline || []);
       setT(doc.treatment || {});
     }
+    } finally {
+      if (request === serial.current) {pending.current = false; setLoading(false);}
+    }
   }, []);
-  useEffect(() => { load(seedId).catch(setError); }, [seedId, load, a?.revision]);
+  useEffect(() => {
+    const report = (e: unknown) => {if (currentSeed.current === seedId) setError(e);};
+    load(seedId).catch(report);
+    const refresh = () => {
+      if (document.visibilityState !== 'hidden') load(seedId, false).catch(report);
+    };
+    const timer = setInterval(() => {
+      const period = ['in_progress','evidence_ready'].includes(currentStatus.current) ? 5000 : 30000;
+      if (Date.now() - lastLoad.current >= period) refresh();
+    }, 5000);
+    document.addEventListener('visibilitychange', refresh);
+    return () => {serial.current++; pending.current=false; clearInterval(timer); document.removeEventListener('visibilitychange', refresh);};
+  }, [seedId, load]);
 
   const seed = seeds.find((x) => x.id === seedId);
   const bp = blueprints.find((x) => x.seed_id === seedId);
@@ -65,10 +96,10 @@ export function AnalysisScreen({ seeds, blueprints, reviewer, act, media }: {
   };
   const lines = (v: string) => v.split("\n").map((x) => x.trim()).filter(Boolean);
   const rerun = () => act(async () => {
-    await api.rerunAnalysis(seedId); await load(seedId);
+    await api.rerunAnalysis(seedId, a?.edit_token); await load(seedId);
   }, "Evidence stages re-queued");
   const save = (section: string, body: Row) => act(async () => {
-    await api.saveAnalysis(seedId, section, { ...body, reviewer: reviewerName() });
+    await api.saveAnalysis(seedId, section, { ...body, edit_token: a?.edit_token, reviewer: reviewerName() });
     await load(seedId);
   }, `${section} saved`);
 
@@ -79,20 +110,28 @@ export function AnalysisScreen({ seeds, blueprints, reviewer, act, media }: {
   const transcriptBlocked = blocking.some((b) =>
     String(b.code).startsWith("transcript"));
 
-  return <section aria-label="analysis">
+  return <section aria-label="analysis" onChangeCapture={() => {dirty.current = true;}}>
     <h2>Deep reference analysis</h2>
     <p>Production requires a reviewed analysis bound to the exact source
       bytes. Preliminary observations and captions stay visible but can
       never qualify a blueprint on their own.</p>
     <select aria-label="Analysis source" value={seedId}
-            onChange={(e) => { setSeed(e.target.value); setError(null); }}>
+            onChange={(e) => {
+              currentSeed.current = e.target.value; serial.current++; pending.current = false;
+              dirty.current = false; setNewer(false); setA(null); setU({}); setSections([]); setT({});
+              setNote(''); setTx({provider:'',provenance:'',words:''});
+              setLoading(Boolean(e.target.value)); setSeed(e.target.value); setError(null);
+            }}>
       <option value="">Select source</option>
       {seeds.map((x) => <option key={x.id} value={x.id}>
         {x.canonical_url || x.id}</option>)}
     </select>
     {error != null && <ErrorBox error={error} />}
+    {loading && <p role="status">Loading this source…</p>}
+    {newer && <p role="status">New analysis is available. Your edits have been kept.
+      <button onClick={() => load(seedId).catch(setError)}>Discard edits and reload</button></p>}
 
-    {seedId && !a && <>
+    {seedId && !a && !loading && <>
       {seed?.source_asset_id
         ? <button onClick={() => act(async () => {
             await api.startAnalysis(seedId, reviewerName());
@@ -103,7 +142,7 @@ export function AnalysisScreen({ seeds, blueprints, reviewer, act, media }: {
                  hint="Attach the verified download on the Seeds tab first." />}
     </>}
 
-    {a && <>
+    {a && <fieldset disabled={loading} style={{border:0,padding:0}}>
       <h3>Status</h3>
       <p><strong>{a.status}</strong> · revision {a.revision}
         {a.stage ? ` · last stage ${a.stage}` : ""}</p>
@@ -159,6 +198,7 @@ export function AnalysisScreen({ seeds, blueprints, reviewer, act, media }: {
             provider: tx.provider, provenance: tx.provenance,
             confidence: doc.confidence || "word-level",
             language: doc.language, words: doc.words,
+            edit_token: a.edit_token,
             reviewer: reviewerName() });
           await load(seedId);
         }, "Transcript imported")}>Import transcript</button>
@@ -169,6 +209,7 @@ export function AnalysisScreen({ seeds, blueprints, reviewer, act, media }: {
         <button onClick={() => act(async () => {
           await api.declareAnalysis(seedId, {
             status: "declared_nonverbal", note,
+            edit_token: a.edit_token,
             reviewer: reviewerName() });
           await load(seedId);
         }, "Declared non-verbal")}>Declare non-verbal</button>
@@ -225,11 +266,11 @@ export function AnalysisScreen({ seeds, blueprints, reviewer, act, media }: {
         <input aria-label="summary" value={s.summary} placeholder="what happens"
           onChange={(e) => setSections(sections.map((x, j) => j === i
             ? { ...x, summary: e.target.value } : x))} />
-        <button onClick={() => setSections(sections.filter((_, j) => j !== i))}>
+        <button onClick={() => {dirty.current=true; setSections(sections.filter((_, j) => j !== i));}}>
           Remove</button>
       </div>)}
-      <button onClick={() => setSections([...sections,
-        { start_s: 0, end_s: 0, phase: "", summary: "" }])}>
+      <button onClick={() => {dirty.current=true; setSections([...sections,
+        { start_s: 0, end_s: 0, phase: "", summary: "" }]);}}>
         Add section</button>
       <button onClick={() => save("timeline", { sections })}>
         Save timeline</button>
@@ -252,10 +293,11 @@ export function AnalysisScreen({ seeds, blueprints, reviewer, act, media }: {
       {a.status === "awaiting_review" &&
         <button onClick={() => act(async () => {
           await api.reviewAnalysis(seedId, {
+            edit_token: a.edit_token,
             reviewer: reviewerName(), verdict: "accept" });
           await load(seedId);
         }, "Analysis complete — blueprint can now be accepted")}>
           Mark analysis complete</button>}
-    </>}
+    </fieldset>}
   </section>;
 }

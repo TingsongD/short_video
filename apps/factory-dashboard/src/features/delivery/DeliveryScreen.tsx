@@ -1,4 +1,5 @@
-import React from "react";
+import React, {useState} from "react";
+import {call} from '../../api/client';
 import { Blocked } from "../../components/States";
 
 export interface DeliveryView {
@@ -46,4 +47,16 @@ export function DeliveryScreen({ items }: { items: DeliveryView[] }) {
       </ul>
     </section>
   );
+}
+
+export function ExternalDelivery({variant,revision,folder,account,act}:{variant:Record<string,any>;revision:number;folder:string;account:string;act:(fn:()=>Promise<unknown>,message?:string)=>Promise<unknown>}) {
+  const [file,setFile]=useState(''),[name,setName]=useState('');
+  return <details><summary>Verify an existing Drive file for {variant.variant_key}</summary>
+    <p>Checks the current final against this exact file. Does not upload or grant creative approval.</p>
+    <label>Drive file ID<input value={file} onChange={e=>setFile(e.target.value)}/></label>
+    <label>Exact remote filename<input value={name} onChange={e=>setName(e.target.value)}/></label>
+    <button disabled={!file.trim()||!name.trim()||!folder||!account} onClick={()=>act(()=>call('POST',`/api/variants/${variant.id}/delivery/reconcile`,{
+      rev:revision,body:{file_id:file.trim(),name:name.trim(),folder_id:folder,account,
+        artifact_id:variant.final.artifact_id,target_hash:variant.final.sha256}}),'Verification queued — no upload requested')}>Verify existing file</button>
+  </details>;
 }

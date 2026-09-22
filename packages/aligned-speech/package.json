@@ -1,0 +1,9 @@
+{
+  "name": "@factory/aligned-speech",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "files": ["src", "README.md"],
+  "exports": {".": "./src/activation.js"},
+  "hypit": {"activation": "./src/activation.js"}
+}

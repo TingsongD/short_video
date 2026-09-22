@@ -61,7 +61,8 @@ class FactoryServices:
         out = {name:{'installed':False,'authenticated':False,'catalog_visible':False,'contract_tested':False,'live_qualified':False,'tested':False,'qualified':False,'detail':{'reason':'Route not configured and currently qualified; use imports or complete the recorded qualification gate'}} for name in ('jimeng_canvas','google_vertex','elevenlabs','generated_music','audiovisual_analysis')}
         for name, adapter in self.providers.items():
             try:
-                ready = adapter.readiness()
+                recheck = getattr(adapter, 'refresh_readiness', None)
+                ready = recheck() if refresh and callable(recheck) else adapter.readiness()
             except Exception as error:
                 ready = {"error":type(error).__name__}
             out[name] = {k: ready.get(k) is True for k in ('installed','authenticated','catalog_visible','contract_tested','live_qualified')}
@@ -72,14 +73,19 @@ class FactoryServices:
         return out
 
     def collection(self, name):
+        if name == 'autoruns':
+            return self.autorun.list()
         if name=='budgets':
             from ..budget import BudgetService
             ledger=BudgetService(self.db)
-            return [{**dict(r),'retired':bool(self.db.conn.execute('SELECT 1 FROM meta WHERE key=?',('retired:budget:'+r['id'],)).fetchone()),'available':ledger.available(r['id'])} for r in self.db.conn.execute('SELECT * FROM budgets')]
+            totals = {r['id']: r for r in ledger.spend_breakdown()}
+            return [{**dict(r),**totals[r['id']],**ledger.selection_info(r['id']),'available':ledger.available(r['id'])} for r in self.db.conn.execute('SELECT * FROM budgets')]
         if name == 'reservations':
             return self.reservations()
         if name == 'queue':
-            return self.require('scheduler').status_snapshot()
+            from .history import DashboardHistory
+            return {**self.require('scheduler').status_snapshot(),
+                    'history': DashboardHistory(self.db).snapshot()}
         if name == 'assets':
             return [json.loads(r['body']) for r in self.db.conn.execute('SELECT body FROM artifacts ORDER BY created_at DESC')]
         kind = COLLECTIONS.get(name)
@@ -139,6 +145,10 @@ class FactoryServices:
             u.events.append('factory','reservation_settled_by_operator',
                             {'reservation_id':reservation_id,'kind':kind,'amounts':amounts,'reviewer':body['reviewer']})
         return {'reservation_id':reservation_id,'status':'settled','amounts':amounts}
+
+    def reconcile_invalid_analysis(self, attempt_id, body):
+        from ..autorun.recovery import AnalysisRecovery
+        return AnalysisRecovery(self).settle_unusable(attempt_id, body)
 
     def release_reservation(self, reservation_id, body):
         """Free a hold only when its attempt verifiably never charged: no
@@ -262,36 +272,63 @@ class FactoryServices:
 
     def start_analysis(self,seed_id,body):
         a=self.require('ref_analysis').start(seed_id,body.get('reviewer',''))
-        self.require('commands').enqueue('analysis_evidence',{'seed_id':seed_id},phase='analyze')
+        self._enqueue_analysis(seed_id)
         return a.to_dict()
 
+    def _enqueue_analysis(self, seed_id):
+        snapshot = self.analysis_for(seed_id)
+        request = {'seed_id': seed_id, 'edit_token': snapshot['edit_token'],
+                   'analysis_revision': snapshot['revision'], 'source_sha256': snapshot['source_sha256']}
+        return self.require('commands').enqueue('analysis_evidence', request, phase='analyze',
+            identity='analysis-evidence-' + content_hash(request)[:32])
+
     def analysis_for(self,seed_id):
-        try: return self.require('ref_analysis').get(seed_id).to_dict()
+        try:
+            with self.db.uow():
+                a = self.require('ref_analysis').get(seed_id)
+                from ..analysis.deep import edit_token
+                return {**a.to_dict(), 'edit_token': edit_token(a)}
         except ContractError as e:
             if e.code=='unknown_analysis': return None
             raise
 
+    def _analysis_edit(self, seed_id, body, action, *, queued=False):
+        # Keep validation and mutation in one transaction, including direct
+        # service callers. Revision alone misses edits within one revision.
+        with self.db.uow():
+            snapshot = self.analysis_for(seed_id)
+            if not body.get('edit_token'):
+                raise ContractError('analysis_edit_token_required', 'edit_token',
+                                    'Reload this source before saving.')
+            if not snapshot or body['edit_token'] != snapshot['edit_token']:
+                raise ContractError('stale_revision', 'edit_token',
+                                    'This source changed. Reload before saving.')
+            result = action()
+            return result if queued else self.analysis_for(seed_id)
+
     def save_analysis_section(self,seed_id,section,body,reviewer):
         svc=self.require('ref_analysis')
-        if section=='understanding': return svc.save_understanding(seed_id,body,reviewer).to_dict()
-        if section=='timeline': return svc.save_timeline(seed_id,body.get('sections',body),reviewer).to_dict()
-        if section=='treatment': return svc.save_treatment(seed_id,body,reviewer).to_dict()
+        if section=='understanding': return self._analysis_edit(seed_id,body,lambda:svc.save_understanding(seed_id,body,reviewer))
+        if section=='timeline': return self._analysis_edit(seed_id,body,lambda:svc.save_timeline(seed_id,body.get('sections',body),reviewer))
+        if section=='treatment': return self._analysis_edit(seed_id,body,lambda:svc.save_treatment(seed_id,body,reviewer))
         raise ContractError('unknown_section','section',section)
 
     def import_analysis_transcript(self,seed_id,body):
-        return self.require('ref_analysis').import_transcript(seed_id,body,body.get('reviewer','')).to_dict()
+        return self._analysis_edit(seed_id,body,lambda:self.require('ref_analysis').import_transcript(seed_id,body,body.get('reviewer','')))
 
     def declare_analysis(self,seed_id,body):
-        return self.require('ref_analysis').declare(seed_id,body.get('status',''),body.get('note',''),body.get('reviewer','')).to_dict()
+        return self._analysis_edit(seed_id,body,lambda:self.require('ref_analysis').declare(seed_id,body.get('status',''),body.get('note',''),body.get('reviewer','')))
 
     def rerun_analysis_stages(self,seed_id,body):
-        svc=self.require('ref_analysis'); svc.get(seed_id)
-        if body.get('rebuild_evidence'): svc.invalidate_evidence(seed_id)
-        return self.require('commands').enqueue('analysis_evidence',{'seed_id':seed_id},phase='analyze')
+        def enqueue():
+            svc=self.require('ref_analysis')
+            if body.get('rebuild_evidence'): svc.invalidate_evidence(seed_id)
+            return self._enqueue_analysis(seed_id)
+        return self._analysis_edit(seed_id,body,enqueue,queued=True)
 
     def review_analysis(self,seed_id,body):
         if not body.get('reviewer'): raise ContractError('reviewer_required','reviewer')
-        return self.require('ref_analysis').review(seed_id,body['reviewer'],body.get('verdict','accept'),body.get('notes','')).to_dict()
+        return self._analysis_edit(seed_id,body,lambda:self.require('ref_analysis').review(seed_id,body['reviewer'],body.get('verdict','accept'),body.get('notes','')))
 
     def author_template(self, body):
         bp = self.require('analysis').get(body['blueprint_id'])
@@ -325,7 +362,10 @@ class FactoryServices:
         with self.db.uow():
             self.require('experiments').create(experiment_id,bp.seed_id,bp,template,products,body['segments'],
                 voice=body.get('voice'),music=body.get('music'), provider_policy=ProviderPolicy(**body.get('provider_policy',{})),
-                output_profile=body.get('output_profile'))
+                output_profile=body.get('output_profile'), run_policies=body.get('run_policies'),
+                source_timing=body.get('source_timing'), workflow=body.get('workflow'),
+                creative_context=body.get('creative_context'), flashcut_policy=body.get('flashcut_policy'),
+                flashcut_editorial=body.get('flashcut_editorial'))
             for branch in branches:
                 self._branch(experiment_id,branch)
         return self.experiment_results(experiment_id)
@@ -378,7 +418,20 @@ class FactoryServices:
         for key in 'ABCD':
             if self.experiments._variant(eid,key).stale_reason:
                 raise ContractError('stale_variant','variant',key)
-        return self.require('commands').enqueue('quote',{'experiment_id':eid,'revision':exp.revision},
+        body = {'experiment_id':eid,'revision':exp.revision}
+        if exp.packaging.get('workflow', {}).get('reference_policy') == 'first_clip.v1':
+            runs = self.db.conn.execute("SELECT body FROM records WHERE kind='autorun' AND json_extract(body,'$.experiment_id')=? AND json_extract(body,'$.state.experiment_revision')=?", (eid, exp.revision)).fetchall()
+            if len(runs) != 1:
+                raise ContractError('reference_preparation_pending', 'quote', 'Wait for the automatic character-reference preparation to finish.')
+            bindings = json.loads(runs[0]['body']).get('state', {}).get('reference_bindings', {})
+            from ..creative.references import bound_request
+            for key in 'ABCD':
+                for segment in self.experiments._variant(eid, key).segments:
+                    if key + ':' + segment['id'] not in bindings:
+                        raise ContractError('reference_preparation_pending', 'quote', 'Character-conditioned clips are still being prepared.')
+                    bound_request(self, exp, key, segment, segment['picture']['request'], bindings)
+            body['reference_bindings'] = bindings
+        return self.require('commands').enqueue('quote',body,
             experiment_id=eid,revision=exp.revision,identity=f'quote-{eid}-r{exp.revision}')
 
     def plan_for(self,eid):
@@ -485,12 +538,18 @@ class FactoryServices:
         folder=self.config.get('drive_folder_id')
         if not folder or body.get('folder_id')!=folder:
             raise ContractError('destination_not_authorized','folder_id')
-        self.require('delivery'); accepted=self.quality.accept(path,body.get('check_ids',[]),binding)
+        self.require('delivery'); accepted=self.delivery_acceptance(variant,final,path,binding,body.get('check_ids',[]))
         from ..delivery.service import delivery_name
         from ..execution.effects import EffectService
         name=delivery_name(variant['experiment_id'],variant['variant_key'],variant.get('changed_factor') or 'control',variant['experiment_revision'],variant['target_frames']/self._current(variant['experiment_id']).output_clock['num'])
         did='delivery-'+content_hash([binding,folder,name])[:24]
         existing=self.delivery._get(did)
+        if self._current(variant['experiment_id']).packaging.get('workflow', {}).get('version') == 2:
+            account = getattr(self.delivery.drive, 'expected_account', '') or ('fixture-drive' if self.config.get('mode','offline') == 'offline' else '')
+            if body['account'] != account:
+                raise ContractError('delivery_account_changed', 'account', 'Reconnect the original authorized account before delivery recovery.')
+            if existing:
+                self.delivery._account_binding(existing)
         if existing and existing['status']=='verified':
             try: cleaned=json.loads(existing.get('cleanup_receipt','{}')).get('state')=='verified'
             except ValueError: cleaned=False
@@ -507,6 +566,15 @@ class FactoryServices:
                 return {'status':'conflict','delivery_id':did,
                         'detail':'remote name exists with different content — resolve or rename before retry'}
             n=(existing or {}).get('retry_count') or 0
+            if self._current(variant['experiment_id']).packaging.get('workflow', {}).get('version') == 2:
+                # A pre-upload failure need not increment transfer count.
+                # Reuse a live recovery command; number terminal commands,
+                # not uploads, when an operator explicitly requests recovery.
+                retries = self.db.conn.execute('SELECT id,status FROM jobs WHERE id LIKE ?',
+                                               (did + ':retry:%',)).fetchall()
+                live = next((r for r in retries if r['status'] not in ('failed','blocked','succeeded','cancelled')), None)
+                if live: return {'job_id':live['id'],'accepted':True}
+                n = len(retries)
             if existing:
                 return self.commands.enqueue('delivery_retry',
                     {'delivery_id':did,'variant_id':variant_id},
@@ -523,12 +591,48 @@ class FactoryServices:
         aid='auth-'+uuid.uuid4().hex
         auth=Authorization(schema_version='authorization.v1',id=aid,created_at=utcnow(),status='authorized',
              scope_hash=binding['composition_hash'],allowed_providers=['drive'],allowed_models={'drive':['files']},
-             valid_until=body['valid_until'],authorizing_action='operator '+body['reviewer'])
+             valid_until=body['valid_until'],authorizing_action=('run delivery policy: ' if self._current(variant['experiment_id']).packaging.get('run_policies', {}).get('delivery') == 'after_qc' else 'operator ') + body['reviewer'])
         EffectService(self.db,self.executor).approve(auth,'composition',binding['composition_id'],[
              {'key':'delivery','kind':'delivery','provider':'drive','model':'files','account':body['account'],'request':req}],[])
         command['authorization_id']=aid
         return self.commands.enqueue('delivery',command,experiment_id=variant['experiment_id'],revision=expected_revision,
              phase='deliver',identity=did)
+
+    def reconcile_external_delivery(self, variant_id, body, expected_revision):
+        variant, final, path, binding = self._final(variant_id)
+        exp = self._current(variant['experiment_id'], expected_revision, True)
+        if exp.packaging.get('delivery_tracking') != 'verified_receipts.v1':
+            raise ContractError('historical_delivery_unchanged', 'variant_id', 'Historical deliveries are outside this reconciliation rollout.')
+        if body.get('artifact_id') != final['artifact_id'] or body.get('target_hash') != binding['artifact_sha256']:
+            raise ContractError('stale_revision', 'artifact_id/target_hash')
+        folder = self.config.get('drive_folder_id')
+        account = getattr(self.delivery.drive, 'expected_account', '') or ('fixture-drive' if self.config.get('mode','offline') == 'offline' else '')
+        if not folder or body.get('folder_id') != folder or not account or body.get('account') != account:
+            raise ContractError('destination_not_authorized', 'folder_id/account')
+        name, fid = body.get('name'), body.get('file_id')
+        if not isinstance(name,str) or not name.strip() or '/' in name or not isinstance(fid,str) or not fid.strip():
+            raise ContractError('remote_identity_required', 'name/file_id')
+        self.external_delivery_acceptance(variant, final, path, binding)
+        did = 'external-delivery-' + content_hash([binding, folder, name, fid])[:24]
+        return self.commands.enqueue('delivery_reconcile', {'delivery_id':did, 'variant_id':variant_id,
+            'binding':binding, 'folder_id':folder, 'name':name, 'file_id':fid, 'account':account},
+            experiment_id=variant['experiment_id'],revision=exp.revision,phase='collect',identity=did)
+
+    def external_delivery_acceptance(self, variant, final, path, binding):
+        problems = self.final_problems(variant['variant_key'], final, final['plan_id'])
+        if problems: raise ContractError('acceptance_blocked', 'checks', str(problems))
+        checks = [r['id'] for r in self._final_checks(final)
+            if r.get('binding') == binding and not r.get('invalidated_by') and r['check_type'] != 'creative']
+        return self.quality.accept(path, checks, binding, automated_delivery=True)
+
+    def delivery_acceptance(self, variant, final, path, binding, check_ids):
+        exp = self._current(variant['experiment_id'], variant['experiment_revision'])
+        automated = exp.packaging.get('run_policies', {}).get('delivery') == 'after_qc'
+        if automated:
+            problems = self.final_problems(variant['variant_key'], final, final['plan_id'])
+            if problems:
+                raise ContractError('acceptance_blocked', 'checks', str(problems))
+        return self.quality.accept(path, check_ids, binding, automated_delivery=automated)
 
     def record_publication(self,variant_id,body,revision):
         return self.require('publication_work').plan(variant_id,body,revision)
@@ -578,6 +682,13 @@ class FactoryServices:
             "json_extract(body,'$.target_hash')=? "
             "ORDER BY created_at DESC",(final.get('sha256'),)).fetchall():
             checks.append(json.loads(r['body']))
+        if final.get('composition_id') and final.get('artifact_id'):
+            try:
+                binding = self.quality.binding(self.artifacts.verified_path(final['artifact_id']),
+                                               final['composition_id'], final['artifact_id'])
+                return self.quality.authoritative_checks(checks, binding)
+            except ContractError:
+                pass  # final_problems reports stale/broken binding separately.
         return checks
 
     def final_problems(self, variant_key, final, plan_id):
@@ -660,13 +771,20 @@ class FactoryServices:
         factor=v.get('changed_factor') or ''
         labels={'hook':'stronger opening hook','body':'clearer body section',
                 'ending':'stronger payoff and loop'}
-        return {'summary':v.get('hypothesis') or labels.get(factor,factor),
+        full_video = exp.packaging.get('run_policies', {}).get('variation') == 'full_video'
+        summary = v.get('hypothesis') or labels.get(factor,factor)
+        if full_video:
+            summary = 'Full-video multi-variable creative comparison — ' + summary
+        return {'summary':summary,
                 'factor':factor,'metric':v.get('primary_metric',''),
-                'label':labels.get(factor,factor),
+                'label':labels.get(factor,factor) + (' + full-video footage' if full_video else ''),
                 'regions':regions,'changed_segments':changed}
 
     def media_path(self,asset_id):
         return self.require('artifacts').verified_path(asset_id)
+
+    def media_info(self, asset_id):
+        return self.require('artifacts').verified_media(asset_id)
 
     def events_since(self,stream,seq=0,limit=500):
         if stream=='factory':

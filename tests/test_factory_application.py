@@ -49,6 +49,11 @@ class FakeHypit:
 def complete_deep_analysis(s, act, w, seed, seconds, hypit=None):
     """Drive the mandatory Hypit-directed analysis to 'complete' —
     machine stages via the worker, operator stages + review via API."""
+    original_action = act
+    def act(method, url, body=None):
+        if url.startswith('/api/analysis/') and method.lower() != 'get':
+            body = {'edit_token': s.analysis_for(seed)['edit_token'], **(body or {})}
+        return original_action(method, url, body)
     s.ref_analysis.hypit = hypit or FakeHypit()
     r = act('post', f'/api/seeds/{seed}/analysis', {'reviewer': 'fixture-operator'})
     assert r.status_code == 202, r.text
@@ -140,6 +145,10 @@ def application(tmp_path):
     seq=[0]
     def action(method,path,body=None,rev=None,**kwargs):
         seq[0]+=1
+        if path.startswith('/api/analysis/') and method.lower() != 'get' and isinstance(body, dict):
+            snapshot = client.get('/api/analysis/' + path.split('/')[3]).json()
+            if snapshot:
+                body = {'edit_token': snapshot['edit_token'], **body}
         headers={'x-csrf-token':'test-session','idempotency-key':kwargs.pop('key',f'action-{seq[0]}')}
         if rev is not None: headers['x-expected-revision']=str(rev)
         headers.update(kwargs.pop('headers',{}))
@@ -216,7 +225,7 @@ def test_application_four_outputs_review_delivery(application):
         checks=final['check_ids']
         for cid in checks:
             review=s.quality._get(cid); assert review['verdict']=='pass',review
-        delivery={'folder_id':'folder','reviewer':'fixture-operator','account':'offline-drive',
+        delivery={'folder_id':'folder','reviewer':'fixture-operator','account':'fixture-drive',
                   'valid_until':(datetime.now(timezone.utc)+timedelta(hours=1)).isoformat(),
                   'artifact_id':final['artifact_id'],'target_hash':final['sha256'],'check_ids':checks}
         r=act('post',f'/api/variants/{vid}/deliver',delivery,rev=1)

@@ -1,5 +1,5 @@
 """Release regressions through the application and real OS worker deaths."""
-import copy,json,subprocess,sys,time
+import copy,json,os,subprocess,sys,time
 from datetime import datetime,timedelta,timezone
 from pathlib import Path
 import pytest
@@ -51,7 +51,8 @@ def fund_generation(act,plan):
 
 def worker(root):
     stream=(root/'worker.log').open('a')
-    p=subprocess.Popen([sys.executable,'-m','modules.factory.testing.worker',str(root)],stdout=stream,stderr=stream)
+    env=dict(os.environ, PYTHONUNBUFFERED='1')
+    p=subprocess.Popen([sys.executable,'-m','modules.factory.testing.worker',str(root)],stdout=stream,stderr=stream,env=env)
     stream.close();return p
 
 
@@ -78,7 +79,7 @@ def test_actual_worker_death_reconciles_without_duplicate_effect(application,poi
                 if w.tick() is None:break
             v=s.experiment_results(eid)['variants'][0];final=v['final']
             rev=act('post',f"/api/variants/{v['id']}/reviews",{'check_type':'creative','verdict':'pass','target_hash':final['sha256'],'reviewer':'fixture'}).json()['review']
-            r=act('post',f"/api/variants/{v['id']}/deliver",{'folder_id':'folder','account':'offline-drive','reviewer':'fixture','valid_until':(datetime.now(timezone.utc)+timedelta(hours=1)).isoformat(),'artifact_id':final['artifact_id'],'target_hash':final['sha256'],'check_ids':final['check_ids']+[rev['id']]},rev=1);assert r.status_code==202,r.text
+            r=act('post',f"/api/variants/{v['id']}/deliver",{'folder_id':'folder','account':'fixture-drive','reviewer':'fixture','valid_until':(datetime.now(timezone.utc)+timedelta(hours=1)).isoformat(),'artifact_id':final['artifact_id'],'target_hash':final['sha256'],'check_ids':final['check_ids']+[rev['id']]},rev=1);assert r.status_code==202,r.text
     (root/'fault.json').write_text(json.dumps({'point':point}))
     p=worker(root)
     try:
@@ -105,6 +106,87 @@ def test_actual_worker_death_reconciles_without_duplicate_effect(application,poi
     finally:
         if p.poll() is None:p.terminate();p.wait(timeout=5)
         for v in s.experiment_results(eid)['variants']:s.cleanup.cleanup(v['id'])
+
+
+def test_picture_dispatching_without_remote_id_reconciles_not_resubmits(application):
+    """Crash after provider accept, before local remote_id attach:
+    recover the original attempt by request hash; do not mint a second
+    attempt_seq or a second remote op."""
+    s,c,act,w,root=application
+    result=generated_plan(application);plan=result['plan'];fund_generation(act,plan)
+    r=act('post','/api/experiments/generated/run',{},rev=1);assert r.status_code==202,r.text
+    submitted=None
+    for _ in range(20):
+        out=w.tick()
+        if out and out.get('status')=='submitted':
+            submitted=out;break
+    assert submitted, 'picture submit never ran'
+    att=s.db.conn.execute(
+        "SELECT id,job_id,remote_id FROM attempts WHERE remote_id IS NOT NULL "
+        "AND remote_id!=''").fetchone()
+    assert att and att['remote_id']
+    with s.db.uow() as u:
+        u.conn.execute(
+            "UPDATE attempts SET status='dispatching', remote_id=NULL WHERE id=?",
+            (att['id'],))
+        u.conn.execute(
+            "UPDATE jobs SET status='ready', lease_owner=NULL, lease_expires=NULL, "
+            "blocked_reason=NULL WHERE id=?", (att['job_id'],))
+    before=s.db.conn.execute(
+        "SELECT count(*) FROM attempts WHERE job_id=?", (att['job_id'],)
+        ).fetchone()[0]
+    recovered=None
+    for _ in range(20):
+        w.tick()
+        row=s.db.conn.execute(
+            "SELECT remote_id,status FROM attempts WHERE id=?", (att['id'],)
+            ).fetchone()
+        if row['remote_id']==att['remote_id']:
+            recovered=row;break
+    assert recovered is not None
+    after=s.db.conn.execute(
+        "SELECT count(*) FROM attempts WHERE job_id=?", (att['job_id'],)
+        ).fetchone()[0]
+    assert after==before
+
+
+def test_unknown_attempt_without_remote_id_is_reconciled_not_resubmitted(application):
+    """Ambiguous ack-lost (unknown, no remote_id) is not pre-acceptance."""
+    s,c,act,w,root=application
+    result=generated_plan(application);plan=result['plan'];fund_generation(act,plan)
+    r=act('post','/api/experiments/generated/run',{},rev=1);assert r.status_code==202,r.text
+    for _ in range(20):
+        out=w.tick()
+        if out and out.get('status')=='submitted':
+            break
+    else:
+        pytest.fail('picture submit never ran')
+    att=s.db.conn.execute(
+        "SELECT id,job_id,remote_id FROM attempts WHERE remote_id IS NOT NULL "
+        "AND remote_id!=''").fetchone()
+    with s.db.uow() as u:
+        u.conn.execute(
+            "UPDATE attempts SET status='unknown', remote_id=NULL WHERE id=?",
+            (att['id'],))
+        u.conn.execute(
+            "UPDATE jobs SET status='ready', lease_owner=NULL, lease_expires=NULL, "
+            "blocked_reason=NULL WHERE id=?", (att['job_id'],))
+    before=s.db.conn.execute(
+        "SELECT count(*) FROM attempts WHERE job_id=?", (att['job_id'],)
+        ).fetchone()[0]
+    recovered=None
+    for _ in range(20):
+        w.tick()
+        row=s.db.conn.execute(
+            "SELECT remote_id FROM attempts WHERE id=?", (att['id'],)
+            ).fetchone()
+        if row['remote_id']==att['remote_id']:
+            recovered=row;break
+    assert recovered is not None
+    after=s.db.conn.execute(
+        "SELECT count(*) FROM attempts WHERE job_id=?", (att['job_id'],)
+        ).fetchone()[0]
+    assert after==before
 
 
 def test_restore_activation_retires_old_funding_and_authority(application):

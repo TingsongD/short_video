@@ -129,6 +129,19 @@ class Executor:
             with dispatch_context(binding):
                 op = call()
         except ProviderError as e:
+            from ..providers.preflight import RequestNotSent
+            if isinstance(e, RequestNotSent):
+                if self._resolve_not_sent(attempt_id, e.receipt):
+                    raise
+                # Without a persisted, matching receipt, even a typed local
+                # error must not authorize a refund.
+                self._set_status(attempt_id, "unknown", "ack_lost",
+                                 {"cause": e.code, "class": "ambiguous"})
+                raise
+            if e.code == 'analysis_http_error' and e.http_status == 429 and self._resolve_throttle(attempt_id, getattr(e, 'receipt', None)):
+                # Commit rejection + released reservation together. A crash
+                # before this transaction is recovered from the adapter receipt.
+                raise
             cls = retry.classify(e.code, getattr(e, "http_status", None),
                                  where="submit")
             diag = {"cause": e.code, "class": cls}
@@ -160,6 +173,10 @@ class Executor:
         except Exception:
             self._set_status(attempt_id, "unknown", "ack_lost", {"cause": "unclassified_transport_failure"})
             raise
+        if self._resolve_not_sent(attempt_id, op):
+            return op
+        if self._resolve_throttle(attempt_id, op):
+            return op
         if not isinstance(op, dict) or "operation_id" not in op:
             self._set_status(attempt_id, "unknown", "ack_unparseable")
             raise ContractError("malformed_ack", attempt_id,
@@ -203,7 +220,8 @@ class Executor:
             if status in ("succeeded", "downloaded", "failed", "cancelled"):
                 u.conn.execute("DELETE FROM remote_holds WHERE attempt_id=?", (attempt_id,))
                 job_id = self._attempt(attempt_id)["job_id"]
-                u.conn.execute("""DELETE FROM capacity_holds WHERE job_id=? AND capacity IN ('jimeng_submit','vertex_submit')
+                u.conn.execute("""DELETE FROM capacity_holds WHERE job_id=?
+                    AND (capacity IN ('jimeng_submit','vertex_submit') OR retained_reason='unfinished_remote_op')
                     AND NOT EXISTS (SELECT 1 FROM attempts a WHERE a.job_id=? AND a.status IN ('prepared','dispatching','accepted','running','unknown','cancel_requested'))""", (job_id, job_id))
             u.events.append(f"attempt:{attempt_id}", event, body or {})
 
@@ -226,7 +244,9 @@ class Executor:
             op = self.provider.poll(row["remote_id"])
         except ProviderError as e:
             cls = retry.classify(e.code, where="observe")
-            self._bump_retry(attempt_id, cls)
+            self._observation_failure(attempt_id, cls)
+            if not self._future_observation(attempt_id):
+                self._bump_retry(attempt_id, cls)
             raise
         remote_status = op.get("status")
         if remote_status == "succeeded":
@@ -253,7 +273,9 @@ class Executor:
             out = self.provider.download(row["remote_id"], destination)
         except ProviderError as e:
             cls = retry.classify(e.code, where="collect")
-            self._bump_retry(attempt_id, cls)
+            self._observation_failure(attempt_id, cls)
+            if not self._future_observation(attempt_id):
+                self._bump_retry(attempt_id, cls)
             raise
         self._set_status(attempt_id, "downloaded", "downloaded",
                          {"sha256": out.get("sha256")})
@@ -261,19 +283,99 @@ class Executor:
 
     # -------------------------------------------------------- recovery
 
+    def _resolve_not_sent(self, attempt_id, op):
+        """Atomically close only a receipt bound to this exact unsent attempt.
+
+        Old unknown receipts have no such evidence and stay ambiguous. Replays
+        are idempotent; observation failures never erase a known remote id.
+        """
+        proof = op.get("not_sent") if isinstance(op, dict) else None
+        if not isinstance(proof, dict) or op.get("status") != "failed":
+            return False
+        with self.db.uow() as u:
+            row = self._attempt(attempt_id)
+            if (row["remote_id"] or row["status"] not in {"dispatching", "unknown", "failed"}
+                    or proof.get("phase") != "credential_preflight"
+                    or proof.get("attempt_id") != attempt_id
+                    or proof.get("request_hash") != row["request_hash"]):
+                raise ContractError("not_sent_evidence_mismatch", "attempt_id", attempt_id)
+            reservation = u.conn.execute("SELECT status FROM reservations WHERE id=?",
+                                         (row.get("reservation_id"),)).fetchone()
+            if reservation and reservation["status"] not in {"held", "ambiguous", "released"}:
+                raise ContractError("not_sent_evidence_mismatch", "reservation_id")
+            if reservation and reservation["status"] != "released":
+                from ..budget import BudgetService
+                BudgetService(self.db).release(row["reservation_id"],
+                    evidence=f"durable credential preflight; request not sent:{attempt_id}")
+            if row["status"] != "failed":
+                self._set_status(attempt_id, "failed", "request_not_sent", proof)
+            intent = u.conn.execute("SELECT intent_key FROM intents WHERE json_extract(body,'$.attempt_id')=?",
+                                    (attempt_id,)).fetchone()
+            if intent:
+                u.outbox.mark(intent["intent_key"], "done")
+        return True
+
+    def _resolve_throttle(self, attempt_id, op):
+        proof = op.get('rejected') if isinstance(op, dict) else None
+        if not isinstance(proof, dict) or op.get('status') != 'failed':
+            return False
+        with self.db.uow() as u:
+            row = self._attempt(attempt_id)
+            if (row['remote_id'] or row['status'] not in {'dispatching', 'unknown', 'failed'}
+                    or proof.get('attempt_id') != attempt_id
+                    or proof.get('request_hash') != row['request_hash']
+                    or proof.get('cause') != 'analysis_http_error'
+                    or proof.get('http_status') != 429 or proof.get('class') != 'pre_acceptance'):
+                raise ContractError('rejection_evidence_mismatch', 'attempt_id', attempt_id)
+            reservation = u.conn.execute('SELECT status FROM reservations WHERE id=?', (row.get('reservation_id'),)).fetchone()
+            if not reservation or reservation['status'] not in {'held', 'ambiguous', 'released'}:
+                raise ContractError('rejection_evidence_mismatch', 'reservation_id')
+            if reservation['status'] != 'released':
+                from ..budget import BudgetService
+                BudgetService(self.db).release(row['reservation_id'], evidence='durable explicit HTTP 429 rejection:' + attempt_id)
+            if row['status'] != 'failed':
+                self._set_status(attempt_id, 'failed', 'submit_failed', proof)
+            intent = u.conn.execute("SELECT intent_key FROM intents WHERE json_extract(body,'$.attempt_id')=?", (attempt_id,)).fetchone()
+            if intent:
+                u.outbox.mark(intent['intent_key'], 'done')
+        return True
+
     def reconcile(self, attempt_id):
         """Look the operation up by remote_id, else by request_hash.
         Updates status from provider truth; never creates a new op."""
         row = self._attempt(attempt_id)
+        # Older adapters left an unknown local receipt despite a durably
+        # recorded explicit rejection. Never downgrade that evidence on poll.
+        from .throttle import rejection
+        if rejection(self.db, row):
+            return {'status': 'failed', 'rejection': 'http_429', 'reused': True}
+        if row['status'] == 'failed':
+            resolved = self.db.conn.execute(
+                "SELECT 1 FROM events WHERE stream=? AND type='human_resolution' "
+                "AND json_extract(body,'$.outcome')='completed_unusable'",
+                ('attempt:' + attempt_id,)).fetchone()
+            if resolved:
+                return {'status': 'failed', 'resolution': 'completed_unusable',
+                        'reused': True}
         body = self._intent_body(attempt_id)
         from .context import dispatch_context
-        with dispatch_context({'attempt_id':attempt_id}):
-            op = self.provider.reconcile(
-                operation_id=row["remote_id"],
-                request_hash=row["request_hash"] or body.get("request_hash"))
+        if self._future_observation(attempt_id):
+            self._check_retry(attempt_id)
+        try:
+            with dispatch_context({'attempt_id':attempt_id}):
+                op = self.provider.reconcile(
+                    operation_id=row["remote_id"],
+                    request_hash=row["request_hash"] or body.get("request_hash"))
+        except ProviderError as error:
+            self._observation_failure(attempt_id, retry.classify(error.code, where='observe'))
+            raise
         if op is None:
             self._set_status(attempt_id, "unknown", "reconcile_miss")
             return None
+        if self._resolve_not_sent(attempt_id, op):
+            return op
+        if self._resolve_throttle(attempt_id, op):
+            return op
         self._attach_remote(attempt_id, op["operation_id"],
                             op.get("status", "accepted"), "reconciled")
         return op
@@ -289,7 +391,7 @@ class Executor:
                 continue
             try:
                 op = self.reconcile(r["id"])
-            except ProviderError:
+            except (ProviderError, ContractError):
                 op = None
             if op is None:
                 report["still_unknown"].append(r["id"])
@@ -326,21 +428,51 @@ class Executor:
         reservation = self.db.conn.execute("SELECT status FROM reservations WHERE id=?", (row["reservation_id"],)).fetchone()
         return not reservation or reservation["status"] in ("released", "settled")
 
-    def resolve_unknown(self, attempt_id, evidence, outcome):
+    def resolve_unknown(self, attempt_id, evidence, outcome, event_seq=None):
         """Human/operator resolution REQUIRES evidence; outcome is
-        terminal (confirmed_charged | confirmed_no_effect | cancelled) —
-        never a reset to ready."""
+        never a reset to ready. completed_unusable is restricted to a
+        settled, synchronous analysis whose returned content was rejected;
+        it does not assert a confirmed invoice or a no-charge failure."""
         if not evidence:
             raise ContractError("resolution_needs_evidence", "evidence")
         if outcome not in ("confirmed_charged", "confirmed_no_effect",
-                           "cancelled"):
+                           "cancelled", "completed_unusable"):
             raise ContractError("bad_resolution", "outcome", outcome)
+        if outcome == "completed_unusable":
+            row = self._attempt(attempt_id)
+            intent = self._intent_body(attempt_id)
+            record = self.db.conn.execute(
+                "SELECT body FROM events WHERE seq=? AND stream=? AND type='ack_lost'",
+                (event_seq, 'attempt:' + attempt_id)).fetchone()
+            diagnostic = json.loads(record[0]) if record else {}
+            reservation = self.db.conn.execute(
+                "SELECT status FROM reservations WHERE id=?",
+                (row.get('reservation_id'),)).fetchone()
+            lines = self.db.conn.execute(
+                "SELECT amount,settled_amount FROM reservation_lines WHERE reservation_id=?",
+                (row.get('reservation_id'),)).fetchall()
+            # These typed errors originate after this single synchronous
+            # response returns. Transport/auth/unknown failures cannot enter
+            # this operator path, even if someone settles their budget hold.
+            if (row['status'] != 'unknown' or row.get('remote_id')
+                    or row.get('provider') != 'audiovisual_analysis'
+                    or intent.get('request', {}).get('task') != 'analyze'
+                    or diagnostic.get('cause') not in
+                       ('malformed_analysis', 'invalid_analysis_timing')
+                    or not diagnostic.get('detail')
+                    or not reservation or reservation[0] != 'settled'
+                    or not lines or any(l['settled_amount'] is None
+                        or l['settled_amount'] < l['amount'] for l in lines)):
+                raise ContractError('analysis_resolution_unproven', 'attempt_id',
+                                    'Requires reviewed response-validation evidence and conservative settlement')
         self._set_status(attempt_id,
                          {"confirmed_charged": "unknown",
                           "confirmed_no_effect": "failed",
-                          "cancelled": "cancelled"}[outcome],
+                          "cancelled": "cancelled",
+                          "completed_unusable": "failed"}[outcome],
                          "human_resolution",
-                         {"evidence": evidence, "outcome": outcome})
+                         {"evidence": evidence, "outcome": outcome,
+                          **({'event_seq': event_seq} if outcome == 'completed_unusable' else {})})
 
     # ------------------------------------------------------------ misc
 
@@ -354,11 +486,42 @@ class Executor:
 
     def _check_retry(self, attempt_id):
         state = json.loads(self._attempt(attempt_id)["retry_state"] or "{}")
-        if state and retry.next_action(state)["action"] == "escalate":
+        exhausted = state.get('exhausted') if state.get('version') == 2 else state and retry.next_action(state)['action'] == 'escalate'
+        if exhausted:
             raise ContractError("retry_exhausted", "attempt_id", attempt_id)
         now = self.clock.now() if hasattr(self.clock, "now") else (self.clock() if self.clock else datetime.now(timezone.utc))
         if state.get("next_retry_at") and datetime.fromisoformat(state["next_retry_at"]) > now:
-            raise ContractError("retry_backoff", "attempt_id", attempt_id)
+            raise ContractError("retry_backoff", "attempt_id", state['next_retry_at'])
+
+    def _future_observation(self, attempt_id):
+        if self._intent_body(attempt_id).get('request', {}).get('workflow_version') == 2:
+            return True
+        row = self.db.conn.execute('SELECT experiment_id,revision FROM jobs WHERE id=?', (self._attempt(attempt_id)['job_id'],)).fetchone()
+        if row and row['experiment_id']:
+            experiment = self.db.uow().records.get('experimentrevision', 'exp:' + row['experiment_id'], row['revision'])
+            if experiment:
+                return json.loads(experiment['body']).get('packaging', {}).get('workflow', {}).get('version') == 2
+        return False
+
+    def _observation_failure(self, attempt_id, cause):
+        """One restart-safe budget for GET/collection, never for submission.
+
+        Five retries follow the first failed observation. Neither changing the
+        observation endpoint nor a successful poll resets this lifetime budget.
+        """
+        if cause not in {'retryable_read', 'retryable_transfer'} or not self._future_observation(attempt_id):
+            return
+        with self.db.uow() as u:
+            state = json.loads(self._attempt(attempt_id)['retry_state'] or '{}')
+            failures = int(state.get('failures', state.get('retries', 0))) + 1
+            exhausted = failures > 5
+            now = self.clock.now() if hasattr(self.clock, 'now') else (self.clock() if self.clock else datetime.now(timezone.utc))
+            due = (now + timedelta(seconds=(1, 2, 4, 8, 16)[min(failures - 1, 4)])).isoformat()
+            state = {'version': 2, 'cause': cause, 'failures': failures, 'exhausted': exhausted,
+                     'next_retry_at': None if exhausted else due}
+            u.conn.execute('UPDATE attempts SET retry_state=?,updated_at=? WHERE id=?', (json.dumps(state), utcnow(), attempt_id))
+            u.events.append('attempt:' + attempt_id, 'retry_decision', state)
+        raise ContractError('retry_exhausted' if exhausted else 'retry_backoff', 'attempt_id', attempt_id if exhausted else due)
 
     def _bump_retry(self, attempt_id, cause):
         with self.db.uow() as u:

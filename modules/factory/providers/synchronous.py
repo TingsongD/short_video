@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 
 from .state import DurableState
+from .preflight import RequestNotSent
 from ..execution.context import current_effect
 from ..events.redact import redact
 from ..testing.fakes import ProviderError
@@ -38,7 +39,27 @@ class SynchronousAdapter:
                 return self.poll(operation)
             state.update(operation_id=operation, request_hash=digest, request=redact(request), status="unknown")
             state.flush()
-            result, payload, extra = self.execute(request)
+            try:
+                result, payload, extra = self.execute(request)
+            except RequestNotSent as error:
+                state.update(status="failed", not_sent={
+                    "phase": "credential_preflight", "reason": error.code,
+                    "attempt_id": binding.get("attempt_id") if binding else None,
+                    "request_hash": digest})
+                state.flush()  # Recovery must see proof before releasing a hold.
+                error.receipt = dict(state)
+                raise
+            except ProviderError as error:
+                # Only the explicit analysis throttle response is repeatable.
+                # Timeouts, 5xx and malformed success payloads stay unknown.
+                if error.code == 'analysis_http_error' and error.http_status == 429:
+                    state.update(status='failed', rejected={
+                        'cause': error.code, 'class': 'pre_acceptance', 'http_status': 429,
+                        'attempt_id': binding.get('attempt_id') if binding else None,
+                        'request_hash': digest})
+                    state.flush()
+                    error.receipt = dict(state)
+                raise
             if payload is not None:
                 temporary = folder / "payload.tmp"
                 temporary.write_bytes(payload)

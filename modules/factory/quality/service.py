@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from ..domain.errors import ContractError
-from ..domain.records import Review
+from ..domain.records import Review, content_hash
 
 
 def _sha(path):
@@ -22,6 +22,85 @@ class QualityService:
         self.technical = technical
         self.gate = region_gate
         self.max_repairs = max_repairs
+
+    def visual_scope(self, binding):
+        row = self.db.uow().records.get('composition', binding.get('composition_id', ''), binding.get('composition_revision'))
+        if not row:
+            return None
+        comp = json.loads(row['body'])
+        plan = self.db.uow().records.get('productionplan', comp.get('plan_id', ''))
+        revision = json.loads(plan['body']).get('experiment_revision') if plan else None
+        exp = self.db.uow().records.get('experimentrevision', 'exp:' + comp['experiment_id'], revision)
+        packaging = json.loads(exp['body']).get('packaging', {}) if exp else {}
+        workflow = packaging.get('workflow', {})
+        if workflow.get('version') != 2 or not workflow.get('visual_qc', True):
+            return None
+        scope={'policy': 'visual.v2', 'workflow': workflow,
+               'creative_context': packaging.get('creative_context', {})}
+        if packaging.get('flashcut_policy'):
+            scope['flashcut_policy']=packaging['flashcut_policy']
+            scope['editorial_hash']=comp.get('clock',{}).get('editorial_hash')
+        return content_hash(scope)
+
+    @staticmethod
+    def _visual_key(binding, scope):
+        return 'qc-head:v2:' + content_hash({'binding': binding, 'scope': scope})
+
+    def visual_head(self, binding, scope):
+        row = self.db.conn.execute('SELECT value FROM meta WHERE key=?',
+                                   (self._visual_key(binding, scope),)).fetchone()
+        return json.loads(row[0]) if row else None
+
+    def begin_visual(self, binding, scope, request_id):
+        with self.db.uow() as u:
+            prior = self.visual_head(binding, scope)
+            if prior and prior['request_id'] == request_id:
+                return prior
+            if prior and request_id in prior.get('superseded_requests', []):
+                raise ContractError('qc_request_superseded', 'request_id')
+            # Never let an old completed request re-open an authoritative head.
+            if self._get('visual-v2-' + content_hash({'scope': scope, 'binding': binding, 'request': request_id})):
+                raise ContractError('qc_request_superseded', 'request_id')
+            head = {'binding': binding, 'scope': scope, 'request_id': request_id,
+                    'status': 'pending', 'review_id': None,
+                    'superseded_requests': ((prior or {}).get('superseded_requests', []) +
+                                            ([prior['request_id']] if prior else [])),
+                    'predecessor': (prior or {}).get('review_id') or (prior or {}).get('predecessor')}
+            u.conn.execute('INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)',
+                           (self._visual_key(binding, scope), json.dumps(head)))
+            return head
+
+    def complete_visual(self, binding, scope, request_id, verdict, *, notes=(), job_id='', review_evidence=None):
+        rid = 'visual-v2-' + content_hash({'scope': scope, 'binding': binding, 'request': request_id})
+        with self.db.uow() as u:
+            existing = self._get(rid)
+            if existing:
+                return existing
+            head = self.visual_head(binding, scope)
+            if not head or head['request_id'] != request_id:
+                raise ContractError('qc_request_superseded', 'request_id')
+            rev = Review(schema_version='review.v1', id=rid,
+                         created_at=datetime.now(timezone.utc).isoformat(),
+                         target_hash=binding['artifact_sha256'], check_type='automated_visual',
+                         binding=binding, reviewer_type='automated', reviewer='factory-ai',
+                         verdict=verdict, evidence_ids=[binding['artifact_id']], limitations=list(notes),
+                         evidence_data={'scope': scope, 'request_id': request_id,
+                                        'predecessor': head.get('predecessor'), 'job_id': job_id,
+                                        'review': review_evidence or {}})
+            rev.validate_or_raise()
+            u.records.put(rev)
+            head.update(status='complete', review_id=rid, verdict=verdict)
+            u.conn.execute('UPDATE meta SET value=? WHERE key=?',
+                           (json.dumps(head), self._visual_key(binding, scope)))
+            return rev.to_dict()
+
+    def authoritative_checks(self, checks, binding):
+        scope = self.visual_scope(binding)
+        if scope is None:
+            return checks
+        head = self.visual_head(binding, scope)
+        current = self._get(head['review_id']) if head and head.get('review_id') and head['status'] == 'complete' else None
+        return [r for r in checks if r['check_type'] != 'automated_visual'] + ([current] if current else [])
 
     # -------------------------------------------------- inspection --
 
@@ -64,8 +143,8 @@ class QualityService:
     # ---------------------------------------------- changed regions --
 
     def check_regions(self, check_id, a_path, b_path, unchanged_regions,
-                      fps, now="", binding=None, audio_rate=48000,
-                      a_audio=None, b_audio=None):
+                      fps, now="", binding=None, audio_rate=None,
+                      a_audio=None, b_audio=None, full_video=None):
         """a_path/b_path are the FINALS for picture comparison. Audio
         evidence defaults to the finals too, but callers should pass the
         variants' deterministic mix artifacts (a_audio/b_audio) when they
@@ -75,25 +154,36 @@ class QualityService:
         mix WAV is the authoritative substrate — unchanged regions are
         bit-identical there by construction."""
         now = now or datetime.now(timezone.utc).isoformat()
-        out = self.gate.compare_finals(a_path, b_path,
-                                       unchanged_regions, fps)
+        out = dict(full_video) if full_video is not None else self.gate.compare_finals(
+            a_path, b_path, unchanged_regions, fps)
+        if full_video is not None and (full_video.get('mode') != 'full_video' or not full_video.get('coverage')):
+            raise ContractError('full_video_coverage_invalid', 'evidence')
         if _sha(a_path)==_sha(b_path):
             out['ok']=False
             out['missing_treatment']='Treatment and control have identical final bytes'
         from ..audio import pcm
         a_src, b_src = a_audio or a_path, b_audio or b_path
+        # Mix WAVs are sample-exact at their native rate. Resampling them
+        # to a fixed 48 kHz smears a change at a beat boundary backward
+        # into the previous region (~34 samples) and false-fails QC.
+        if audio_rate is None and a_audio and b_audio:
+            ra, rb = pcm.wav_rate(a_src), pcm.wav_rate(b_src)
+            audio_rate = ra if ra == rb and ra > 0 else 48000
+        audio_rate = audio_rate or 48000
         out["audio_evidence"]={"a":str(a_src),"b":str(b_src),
                                "substrate":"mix" if (a_audio or b_audio)
-                               else "final_decode"}
+                               else "final_decode",
+                               "rate": audio_rate}
         try:
-            a_dec=pcm.decode(a_src,audio_rate); b_dec=pcm.decode(b_src,audio_rate)
+            a_dec=pcm.samples_at_rate(a_src,audio_rate)
+            b_dec=pcm.samples_at_rate(b_src,audio_rate)
             audio_checks=[self.gate.compare_audio_region(a_dec,b_dec,
                           {"start_s":r["start_frame"]/fps,"end_s":r["end_frame"]/fps},audio_rate)
                           for r in unchanged_regions]
         except (OSError,ValueError):
             audio_checks=[{"ok":False,"code":"missing_audio_evidence"}]
         out["audio"]=audio_checks
-        out["ok"]=out["ok"] and bool(audio_checks) and all(c["ok"] for c in audio_checks)
+        out["ok"]=out["ok"] and (bool(audio_checks) or full_video is not None and not unchanged_regions) and all(c["ok"] for c in audio_checks)
         verdict = "pass" if out["ok"] else "fail"
         rev = Review(schema_version="review.v1", id=check_id,
                      created_at=now,
@@ -109,12 +199,19 @@ class QualityService:
 
     # ------------------------------------------------- acceptance ---
 
-    def accept(self, final_path, check_ids, binding=None):
+    def accept(self, final_path, check_ids, binding=None, *, automated_delivery=False):
         """Acceptance requires every bound review to pass against the
         CURRENT bytes — a review on old bytes is stale."""
         current = _sha(final_path)
         problems = [] if check_ids else ["missing_required_reviews"]
         kinds=set()
+        scope = self.visual_scope(binding or {})
+        if scope:
+            head = self.visual_head(binding, scope)
+            if not head or head['status'] != 'complete':
+                problems.append('visual_qc_pending')
+            elif head['review_id'] not in check_ids:
+                problems.append('authoritative_visual_review_required')
         if not binding:
             problems.append("missing_plan_composition_binding")
         else:
@@ -130,6 +227,8 @@ class QualityService:
                 problems.append(f"missing_review:{cid}")
                 continue
             kinds.add(rev["check_type"])
+            if scope and rev['check_type'] == 'automated_visual' and (not head or head.get('review_id') != cid):
+                problems.append(f'superseded_review:{cid}')
             if rev['check_type']=='creative':
                 newer=self.db.conn.execute("SELECT body FROM records WHERE kind='review' AND json_extract(body,'$.check_type')='creative' AND json_extract(body,'$.target_hash')=? ORDER BY created_at DESC,rowid DESC",(current,)).fetchall()
                 latest=next((json.loads(r[0]) for r in newer if json.loads(r[0]).get('binding')==binding),None)
@@ -145,7 +244,12 @@ class QualityService:
                 problems.append(f"stale_review:{cid}")
             elif rev["verdict"] != "pass":
                 problems.append(f"{rev['check_type']}:{rev['verdict']}")
-        required={"technical","creative"}
+        required={"technical", "automated_visual" if automated_delivery else "creative"}
+        if automated_delivery:
+            for cid in check_ids:
+                review = self._get(cid)
+                if review and review['check_type'] == 'automated_visual' and review['reviewer_type'] != 'automated':
+                    problems.append('automated_visual_review_required')
         if binding and binding.get("variant_key") not in (None,"A"):
             required.add("changed_region")
         problems += [f"missing_required_review:{kind}" for kind in required-kinds]
@@ -221,6 +325,9 @@ class QualityService:
 
     def _put(self, rev):
         with self.db.uow() as u:
+            existing = u.records.get("review", rev.id)
+            if existing:
+                rev.revision = existing["revision"] + 1
             u.records.put(rev)
 
     def _update(self, cid, **fields):

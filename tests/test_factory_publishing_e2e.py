@@ -131,6 +131,10 @@ def _publish_all(app):
                     lambda t=s.scheduler.clock() +
                     timedelta(seconds=3): t)
                 continue
+            # A later horizon claimed against a different clock is
+            # deferred observation, not a publication failure.
+            if out_tick.get("error") == "horizon_not_due":
+                continue
             assert out_tick.get("status") not in ("blocked", "failed"), \
                 out_tick
             deadline -= 1
@@ -184,6 +188,34 @@ def _collect_all(app, pubs, horizon="24h"):
         snap = s.checkpoints.collect(p["id"], horizon, now=observe_at)
         assert snap.completeness == "complete", (
             p["platform"], snap.availability)
+
+
+def test_readback_not_due_on_observation_clock_defers(app):
+    """A scheduler clock past 72h must not fail the job when the
+    readback clock is still before that horizon."""
+    s, c, act, w, root = app
+    s.fixture_remote.plant_post("yt-deferred", published_at=PUB_AT)
+    s.publishing.register_manual(
+        "pub-deferred", variant_plan_id="vp-1",
+        final_sha256="ab" * 32, platform="youtube",
+        account_id="acct-main", remote_post_id="yt-deferred",
+        published_at=PUB_AT, verify=True)
+    s.checkpoints.schedule_for(s.publishing.get("pub-deferred"))
+    s.scheduler.clock = lambda: datetime.fromisoformat(
+        "2026-09-21T00:00:00+00:00")
+    seen = None
+    for _ in range(20):
+        out = w.tick()
+        if out is None:
+            break
+        if out.get("error") == "horizon_not_due":
+            seen = out
+            break
+    assert seen is not None, "72h readback was never claimed"
+    assert seen.get("status") == "pending"
+    job = s.db.uow().jobs.get(seen["job_id"])
+    assert job["status"] != "failed"
+    assert job.get("next_attempt_at")
 
 
 def test_full_publish_learn_next_round_journey(app):

@@ -26,11 +26,12 @@ import math
 import re
 import shutil
 import subprocess
+import tempfile
 from collections import Counter
 from pathlib import Path
 
 from ..domain.errors import ContractError
-from ..domain.records import ReferenceAnalysis
+from ..domain.records import ReferenceAnalysis, content_hash
 from ..media.probe import probe
 from ..media.audio import audio_characteristics
 from ..store.uow import utcnow
@@ -42,6 +43,11 @@ UNDERSTANDING_FIELDS = ("premise", "progression", "hook", "setups",
 TREATMENT_FIELDS = ("summary", "preserves", "redesigns",
                     "script_direction")
 TRANSCRIPT_OK = {"aligned", "not_applicable", "declared_nonverbal"}
+# Import/declare recovery must clear every transcript block, including
+# a WhisperX loop flagged as transcript_suspect — otherwise Resume still
+# sees the old blocker after a valid replacement transcript is stored.
+TRANSCRIPT_BLOCK_CODES = (
+    "transcript_unavailable", "transcript_failed", "transcript_suspect")
 
 
 def analysis_id_for(seed_id):
@@ -49,7 +55,16 @@ def analysis_id_for(seed_id):
 
 
 def load_analysis(row):
-    return ReferenceAnalysis(**json.loads(row["body"]))
+    analysis = ReferenceAnalysis(**json.loads(row["body"]))
+    analysis._record_version = row['version']
+    return analysis
+
+
+def edit_token(analysis):
+    return content_hash({'seed_id': analysis.seed_id,
+                         'source_sha256': analysis.source_sha256,
+                         'revision': analysis.revision,
+                         'version': analysis._record_version})
 
 
 def _hash(a):
@@ -222,7 +237,7 @@ class ReferenceAnalysisService:
 
     # -------------------------------------------------- lifecycle
 
-    def start(self, seed_id, reviewer=""):
+    def start(self, seed_id, reviewer="", *, evidence_policy="immutable.v2"):
         """Create or resume the analysis for a seed. A changed source
         supersedes the old record and opens a new revision — history
         is preserved, never rewritten."""
@@ -239,8 +254,26 @@ class ReferenceAnalysisService:
         if row:
             a = load_analysis(row)
             if a.source_sha256 == sha:
+                if evidence_policy == 'immutable.v2' and not self._immutable(a):
+                    # Copy on write: a future run must never rewrite legacy
+                    # evidence or its historical record while reusing a seed.
+                    transcript = self.verified_transcript(a)
+                    for key, recorded in a.documents.get('hashes', {}).items():
+                        path = Path(a.documents.get('files', {}).get(key, ''))
+                        if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != recorded:
+                            raise ContractError('analysis_evidence_unavailable', key)
+                    a.capabilities = {**a.capabilities, 'evidence_policy': evidence_policy}
+                    a = self._new_revision(a, 'immutable evidence for future run')
+                    if transcript.is_file():
+                        target = self._staging(a) / 'transcript.json'
+                        shutil.copyfile(transcript, target)
+                        path = self._publish_file(a, target)
+                        a.transcript = {**a.transcript, 'file': str(path),
+                                        'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
+                    self._write_docs(a, self._doc_paths(a))
+                    return self._save(a)
                 return a                       # resume, idempotent
-            self._supersede(a, f"source changed to {sha[:12]}")
+            self._supersede(a, f"source changed to {sha[:12]}", preserve=evidence_policy == 'immutable.v2')
         now = utcnow()
         a = ReferenceAnalysis(
             schema_version="referenceanalysis.v1",
@@ -248,7 +281,7 @@ class ReferenceAnalysisService:
             revision=(row["revision"] + 1) if row else 1,
             status="in_progress", source_asset_id=seed.source_asset_id,
             source_sha256=sha,
-            capabilities=self._capabilities())
+            capabilities={**self._capabilities(), 'evidence_policy': evidence_policy})
         a.content_hash = _hash(a)
         a.validate_or_raise()
         with self.db.uow() as u:
@@ -256,6 +289,7 @@ class ReferenceAnalysisService:
             u.events.append(f"analysis:{a.id}", "started",
                             {"revision": a.revision, "reviewer": reviewer,
                              "source": sha[:12]})
+        a._record_version = 1
         return a
 
     def get(self, seed_id, revision=None):
@@ -290,11 +324,30 @@ class ReferenceAnalysisService:
                 "language": self.source_language(a),
                 "source_sha256": a.source_sha256}
 
-    def run_machine_stages(self, seed_id):
+    def run_machine_stages(self, seed_id, *, expected_binding=None, job_id=None):
         """Durable stage runner — each stage checkpoints into the
         record, so an interrupted run resumes after the last completed
         stage and never repeats finished (potentially paid) work."""
-        a = self.get(seed_id)
+        # Validate the very snapshot that will execute, not a separate read
+        # in the worker. Own checkpoints can advance its token on restart;
+        # an intervening editor write cannot. No transaction spans subprocesses.
+        with self.db.uow() as u:
+            a = self.get(seed_id)
+            if expected_binding is not None:
+                key = 'analysis-checkpoint:' + str(job_id)
+                row = u.conn.execute('SELECT value FROM meta WHERE key=?', (key,)).fetchone()
+                checkpoint = json.loads(row[0]) if row else {}
+                identity = content_hash(expected_binding)
+                expected_token = (checkpoint.get('edit_token')
+                                  if checkpoint.get('binding') == identity
+                                  else expected_binding.get('edit_token'))
+                if (not job_id or expected_binding.get('seed_id') != seed_id
+                        or expected_binding.get('analysis_revision') != a.revision
+                        or expected_binding.get('source_sha256') != a.source_sha256
+                        or expected_token != edit_token(a)):
+                    raise ContractError('stale_revision', 'analysis_evidence',
+                        'Queued analysis belongs to an older editor snapshot. Reload before requesting another rerun.')
+                a._machine_checkpoint = (key, identity)
         if a.status in ("complete", "awaiting_review"):
             return a
         if a.status == "blocked":
@@ -348,7 +401,8 @@ class ReferenceAnalysisService:
 
     def _stage_transcript(self, a):
         project = self._project(a)
-        dest = project / "references" / a.seed_id / "transcript.json"
+        dest = (self._staging(a) / 'transcript.json' if self._immutable(a)
+                else project / "references" / a.seed_id / "transcript.json")
         if not a.acquisition.get("audio_present"):
             a.transcript = {"status": "not_applicable",
                             "provider": "none", "word_count": 0,
@@ -357,7 +411,7 @@ class ReferenceAnalysisService:
             a.stages["transcript"] = {"done": True, "at": utcnow()}
             return self._save(a, stage="transcript")
         caps = self._capabilities()
-        a.capabilities = caps
+        a.capabilities = {**a.capabilities, **caps}
         if caps.get("whisperx") and self.hypit.available():
             dest.parent.mkdir(parents=True, exist_ok=True)
             # Hypit's transcribe command deliberately refuses to overwrite
@@ -365,7 +419,8 @@ class ReferenceAnalysisService:
             # same project path, so a transcript left by an earlier run must
             # be replaced before retrying the stage; otherwise a clean rerun
             # is incorrectly reported as a provider/CLI failure.
-            dest.unlink(missing_ok=True)
+            if not self._immutable(a):
+                dest.unlink(missing_ok=True)
             # The SOURCE's language drives transcription — never the
             # requested output language. A Chinese seed transcribed as
             # English yields phonetic gibberish that alignment accepts.
@@ -378,7 +433,8 @@ class ReferenceAnalysisService:
                     doc = json.loads(dest.read_text())
                 except (json.JSONDecodeError, OSError):
                     doc = {}
-                problems = transcript_problems(doc, dur, language)
+                problems = transcript_problems(doc, dur, language,
+                                               require_words=not self._immutable(a))
                 if problems:
                     # A clean exit code is not proof of usable text —
                     # repetition loops, empty passages, bad timing and a
@@ -395,6 +451,8 @@ class ReferenceAnalysisService:
                     return self._save(a, status="blocked",
                                       stage="transcript")
                 words = self._transcript_words(dest)
+                if self._immutable(a):
+                    dest = self._publish_file(a, dest)
                 a.transcript = {
                     "status": "aligned", "provider": "whisperx",
                     "confidence": "word-level",
@@ -403,7 +461,12 @@ class ReferenceAnalysisService:
                     "settings": self._transcript_settings(a),
                     "source_sha256": a.source_sha256,
                     "word_count": len(words), "file": str(dest),
+                    "sha256": hashlib.sha256(dest.read_bytes()).hexdigest(),
                     "preliminary": False}
+                from ..autorun.source_timing import words_ok
+                if self._immutable(a) and any(not words_ok(p.get('words'), p) for p in doc.get('passages', [])):
+                    a.transcript.update(confidence='passage-level',
+                                        word_timing_available=False, timing_repair_needed=True)
                 a.stages["transcript"] = {"done": True, "at": utcnow()}
                 return self._save(a, stage="transcript")
             a.blocking = [{"code": "transcript_failed",
@@ -443,10 +506,12 @@ class ReferenceAnalysisService:
         src = self.artifacts.verified_path(a.source_asset_id)
         dur = a.acquisition.get("duration_s") or probe(src).duration_s
         project = self._project(a)
-        ev_dir = project / "references" / a.seed_id / "evidence"
+        ev_dir = (self._staging(a) / 'evidence' if self._immutable(a)
+                  else project / "references" / a.seed_id / "evidence")
         ev_dir.mkdir(parents=True, exist_ok=True)
-        transcript = a.transcript.get("file") \
-            if a.transcript.get("status") == "aligned" else None
+        transcript = self.verified_transcript(a) if (
+            a.transcript.get('status') == 'aligned' and
+            a.transcript.get('word_timing_available', True)) else None
         bounds = self.hypit.boundaries(src)
         cuts = self._parse_boundaries(bounds)
         grids, coverage = [], 0.0
@@ -498,6 +563,10 @@ class ReferenceAnalysisService:
         return self._save(a, stage="evidence")
 
     def _stage_documents(self, a):
+        if self._immutable(a):
+            a.stages['documents'] = {'done': True, 'at': utcnow()}
+            self._write_docs(a, {})
+            return self._save(a, stage='documents')
         project = self._project(a)
         ref = project / "references" / a.seed_id
         prod = project / "productions" / a.seed_id
@@ -624,7 +693,8 @@ class ReferenceAnalysisService:
                                     "inside the source duration")
             last = e
         project = self._project(a)
-        dest = project / "references" / a.seed_id / "transcript.json"
+        dest = (self._staging(a) / 'transcript.json' if self._immutable(a)
+                else project / "references" / a.seed_id / "transcript.json")
         dest.parent.mkdir(parents=True, exist_ok=True)
         language = str(payload.get("language") or
                        self.source_language(a))
@@ -637,6 +707,8 @@ class ReferenceAnalysisService:
             raise ContractError("transcript_suspect", "words",
                                 "; ".join(problems[:4]))
         dest.write_text(json.dumps(doc, indent=1))
+        if self._immutable(a):
+            dest = self._publish_file(a, dest)
         a.transcript = {"status": "aligned", "provider": provider,
                         "confidence": payload.get("confidence",
                                                   "imported"),
@@ -647,10 +719,10 @@ class ReferenceAnalysisService:
                                      "source_sha256": a.source_sha256},
                         "source_sha256": a.source_sha256,
                         "word_count": len(words), "file": str(dest),
+                        "sha256": hashlib.sha256(dest.read_bytes()).hexdigest(),
                         "preliminary": False}
         a.blocking = [b for b in a.blocking
-                      if b.get("code") not in ("transcript_unavailable",
-                                          "transcript_failed")]
+                      if b.get("code") not in TRANSCRIPT_BLOCK_CODES]
         a.stages["transcript"] = {"done": True, "at": utcnow()}
         # regenerate grids — they can now be transcript-linked
         a.stages.pop("evidence", None)
@@ -672,8 +744,7 @@ class ReferenceAnalysisService:
                         "confidence": "declared", "provenance": note.strip(),
                         "word_count": 0, "preliminary": False}
         a.blocking = [b for b in a.blocking
-                      if b.get("code") not in ("transcript_unavailable",
-                                          "transcript_failed")]
+                      if b.get("code") not in TRANSCRIPT_BLOCK_CODES]
         a.stages["transcript"] = {"done": True, "at": utcnow()}
         self._write_docs(a, self._doc_paths(a))
         return self._save(a, status="in_progress"
@@ -707,9 +778,9 @@ class ReferenceAnalysisService:
             raise ContractError("unsupported_verdict", "verdict")
         a.review = {"reviewer": reviewer, "at": utcnow(),
                     "verdict": "accept", "notes": notes}
-        a = self._save(a, status="complete", stage="review")
+        a.status, a.stage = 'complete', 'review'
         self._write_docs(a, self._doc_paths(a))
-        return a
+        return self._save(a)
 
     # --------------------------------------------------- internals
 
@@ -721,6 +792,38 @@ class ReferenceAnalysisService:
 
     def _project(self, a):
         return self.project_root / a.seed_id
+
+    @staticmethod
+    def _immutable(a):
+        return a.capabilities.get('evidence_policy') == 'immutable.v2'
+
+    def _staging(self, a):
+        root = self._project(a) / 'evidence-v2' / a.source_sha256 / f'r{a.revision}'
+        root.mkdir(parents=True, exist_ok=True)
+        return Path(tempfile.mkdtemp(prefix='.stage-', dir=root))
+
+    def _publish_file(self, a, path):
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        target = path.parent.parent / digest
+        if target.exists():
+            existing = target / path.name
+            if not existing.exists() or hashlib.sha256(existing.read_bytes()).hexdigest() != digest:
+                raise ContractError('analysis_evidence_unavailable', 'sha256')
+            return existing
+        path.parent.rename(target)
+        return target / path.name
+
+    def verified_transcript(self, a):
+        path = Path(a.transcript.get('file') or self._doc_paths(a)['transcript_json'])
+        expected = a.transcript.get('sha256') or a.documents.get('hashes', {}).get('transcript_json')
+        if not self._immutable(a) and not expected and not a.transcript.get('file'):
+            return path  # Legacy records may carry no local transcript evidence.
+        if not path.is_file() or (expected and hashlib.sha256(path.read_bytes()).hexdigest() != expected):
+            raise ContractError('analysis_evidence_unavailable', 'transcript',
+                                'Recorded transcript bytes are missing or changed; restore the exact evidence.')
+        if self._immutable(a) and not expected:
+            raise ContractError('analysis_evidence_unavailable', 'transcript_sha256')
+        return path
 
     def _doc_paths(self, a):
         project = self._project(a)
@@ -748,24 +851,21 @@ class ReferenceAnalysisService:
         prior = self.db.uow().records.get(
             "referenceanalysis", a.id, revision=a.revision)
         body = json.loads(prior["body"])
-        body["status"] = "superseded"
-        with self.db.uow() as u:
-            u.conn.execute(
-                "UPDATE records SET body=? WHERE kind='referenceanalysis'"
-                " AND id=? AND revision=?",
-                (json.dumps(body), a.id, a.revision))
+        self._supersede(a, reason)
         a.revision += 1
+        a._record_version = None
         a.status = "evidence_ready"
         a.review = {}
         a.created_at = utcnow()
         return a
 
-    def _supersede(self, a, reason):
+    def _supersede(self, a, reason, *, preserve=False):
         with self.db.uow() as u:
-            u.conn.execute(
-                "UPDATE records SET body=json_replace(body,'$.status',"
-                "'superseded') WHERE kind='referenceanalysis' AND id=?"
-                " AND revision=?", (a.id, a.revision))
+            if not preserve and not self._immutable(a):
+                u.conn.execute(
+                    "UPDATE records SET body=json_replace(body,'$.status',"
+                    "'superseded') WHERE kind='referenceanalysis' AND id=?"
+                    " AND revision=?", (a.id, a.revision))
             u.events.append(f"analysis:{a.id}", "superseded",
                             {"reason": reason, "revision": a.revision})
 
@@ -773,9 +873,9 @@ class ReferenceAnalysisService:
         a.stages[section] = {"done": True, "at": utcnow()}
         missing = self._completeness(a)
         status = "awaiting_review" if not missing else a.status
-        a = self._save(a, status=status, stage=section)
+        a.status, a.stage = status, section
         self._write_docs(a, self._doc_paths(a))
-        return a
+        return self._save(a)
 
     def _completeness(self, a):
         return completeness_missing(a)
@@ -789,17 +889,50 @@ class ReferenceAnalysisService:
         with self.db.uow() as u:
             existing = u.records.get("referenceanalysis", a.id,
                                      revision=a.revision)
-            u.records.put(a, expected_version=None if existing is None
-                          else existing["version"])
+            if self._immutable(a):
+                latest = u.records.get('referenceanalysis', a.id)
+                if latest and latest['revision'] > a.revision:
+                    raise ContractError('stale_revision', 'analysis_evidence')
+            expected = (getattr(a, '_record_version', None) if self._immutable(a)
+                        else (existing['version'] if existing else None))
+            u.records.put(a, expected_version=expected)
+            a._record_version = u.records.get('referenceanalysis', a.id, revision=a.revision)['version']
+            if getattr(a, '_machine_checkpoint', None):
+                key, identity = a._machine_checkpoint
+                u.conn.execute('INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)',
+                    (key, json.dumps({'binding': identity, 'edit_token': edit_token(a)})))
         return a
 
     # --------------------------------------------------- documents
 
     def _write_docs(self, a, files):
-        ref = self._project(a) / "references" / a.seed_id
-        prod = self._project(a) / "productions" / a.seed_id
-        (ref / "evidence").mkdir(parents=True, exist_ok=True)
-        prod.mkdir(parents=True, exist_ok=True)
+        if self._immutable(a):
+            stage = self._staging(a)
+            files = {key: stage / name for key, name in {
+                'analysis_md': 'ANALYSIS.md', 'timeline_md': 'TIMELINE.md',
+                'brief_md': 'BRIEF.md', 'treatment_md': 'TREATMENT.md',
+                'progress_md': 'PROGRESS.md', 'manifest': 'manifest.json'}.items()}
+            if a.transcript.get('file'):
+                files['transcript_json'] = stage / 'transcript.json'
+                shutil.copyfile(self.verified_transcript(a), files['transcript_json'])
+            self._render_docs(a, files)
+            hashes = {key: hashlib.sha256(p.read_bytes()).hexdigest() for key, p in files.items()}
+            digest = hashlib.sha256(json.dumps(hashes, sort_keys=True).encode()).hexdigest()
+            target = stage.parent / digest
+            if not target.exists():
+                stage.rename(target)
+            else:
+                for key, p in files.items():
+                    if hashlib.sha256((target / p.name).read_bytes()).hexdigest() != hashes[key]:
+                        raise ContractError('analysis_evidence_unavailable', key)
+            a.documents = {'root': str(target), 'files': {k: str(target / p.name) for k, p in files.items()},
+                           'hashes': hashes, 'bundle_sha256': digest}
+            return
+        self._render_docs(a, files)
+
+    def _render_docs(self, a, files):
+        for path in files.values():
+            path.parent.mkdir(parents=True, exist_ok=True)
         acq = a.acquisition
         t = a.transcript
         files["analysis_md"].write_text(self._analysis_md(a, acq, t))
@@ -906,7 +1039,8 @@ class ReferenceAnalysisService:
         if isinstance(doc, dict):
             if isinstance(doc.get("passages"), list):
                 return [w for p in doc["passages"]
-                        for w in (p.get("words") or [])]
+                        if isinstance(p, dict) and isinstance(p.get('words'), list)
+                        for w in p['words']]
             return doc.get("words") or doc.get("segments") or []
         return doc if isinstance(doc, list) else []
 
@@ -914,7 +1048,7 @@ class ReferenceAnalysisService:
 _CJK = r"[一-鿿㐀-䶿]"
 
 
-def transcript_problems(doc, duration_s, language):
+def transcript_problems(doc, duration_s, language, *, require_words=True):
     """Structural + semantic validation of a hypit.transcript@1 doc.
     A successful transcribe exit code and word alignment are not proof of
     usable text — this catches empty output, bad timing, gross decoder
@@ -922,14 +1056,19 @@ def transcript_problems(doc, duration_s, language):
     can build on them. → [problem strings]; empty means usable."""
     problems = []
     passages = doc.get("passages") if isinstance(doc, dict) else None
-    if not passages:
+    if not isinstance(passages, list) or not passages:
         return ["empty transcript — no passages"]
     texts = []
     prev_end = None
     for i, p in enumerate(passages):
-        text = str(p.get("text") or "").strip()
+        if not isinstance(p, dict) or not isinstance(p.get('text'), str):
+            problems.append(f'passage {i}: invalid spoken text or passage structure')
+            continue
+        text = p['text'].strip()
         if text:
             texts.append(re.sub(r"\s+", " ", text.lower()))
+        else:
+            problems.append(f'passage {i}: empty spoken text')
         s, e = p.get("start_seconds"), p.get("end_seconds")
         try:
             s, e = float(s), float(e)
@@ -946,7 +1085,7 @@ def transcript_problems(doc, duration_s, language):
             problems.append(f"passage {i}: ends {e - duration_s:.1f}s "
                             "beyond the media duration")
         prev_end = e if prev_end is None else max(prev_end, e)
-        if not (p.get("words") or []):
+        if require_words and not (p.get("words") or []):
             problems.append(f"passage {i}: no word-level timing")
     if not texts:
         problems.append("empty transcript — passages carry no text")

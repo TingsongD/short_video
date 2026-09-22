@@ -658,3 +658,45 @@ Short-duration support now derives narration fitting, captions, assembly, frame 
 Tested `gemini-omni-1.1-flash-preview` through Vertex's global Interactions API after the user refreshed the existing Google Cloud OAuth login. A four-second portrait text-to-video test produced 720×1280 H.264 at 24 fps with AAC stereo audio in 48.79 seconds (submission to downloaded response). Full decode and sampled visual checks passed. Usage-derived cost estimate: US$0.409384; Cloud billing not independently verified. One earlier URI-delivery request failed validation before model submission, with empty usage; its receipt is retained and reservation released. The corrected successful job was polled by its original ID.
 
 Final uploaded and verified by parent/name/bytes/MD5: https://drive.google.com/file/d/1TXAztF8J3y1kWtdtIUXjW8_ThYSHzfUd/view . 3,153,441 bytes, MD5 `bcac38390b11dd02b4894fdda4e9cf9e`. Owned workers stopped, ports 5184–5188 free, 69% memory free. No preview server started. Evidence: `data/production/v-vertex-video-pilot-20260916/`; findings: `docs/vertex-video-test.md`. This was a generic text prompt, not a Shopify-reference or seed-imitation quality test. Production adapters/defaults and frozen contracts unchanged; Veo catalog access checked but no Veo generation tested.
+
+### 2026-09-21 — Remaining factory QA issues patched safely
+
+Implemented private rotating/redacted logs and repository-owned WhisperX startup,
+one-shot shared CSRF recovery, restart-safe local source-timing repair with honest
+passage fallback, scoped visibility-aware polling and waiting labels, future-only
+external delivery reconciliation with transactional stale-revision protection,
+and backend-enforced reusable budget selection. Test-driven regressions cover
+the public boundaries; browser checks used inert fixtures and read-only live UI.
+
+Final offline backend suite: **1,349 passed in 924.18s**. Frontend: **64 passed**,
+production build passed. Drained the empty queue and restarted only the owned
+API, worker and WhisperX helper; all are healthy and original dispatch state is
+restored. Shared media/render helpers were not stopped. Private log cleanup
+sanitized 13 helper lines and 7,235 API lines without raw secret backups; live
+query-redaction checks passed. Before/after fingerprints of eight historical
+tables, twelve final bindings and twelve final files are identical. The twelve
+historical delivery jobs remain unchanged. No paid work, publishing, ceiling
+increase or historical settlement. Hypit/Node compatibility warning remains
+deferred; live paid acceptance needs fresh authorization.
+
+Evidence: `docs/factory-reports/QA-REMAINING-ISSUES-PATCH.md`.
+
+### 2026-09-21 — Future-run safety and character continuity patch
+
+Implemented revision-bound analysis editors and immutable evidence, complete
+script validation and timing-repair routing, authoritative revision-bound QC,
+bounded observation retries and allocation-safe recovery, future delivery
+recovery, dashboard stale-state fixes, scene-local creative context, and a
+separately gated Google image-reference route. Final checks also fixed
+restart-safe analysis checkpoints and unchanged-speech reuse after repairs.
+
+Final offline backend suite: **1,419 passed in 1,085.30s**; actual FFmpeg/Hypit
+renderers: **2 passed**, visually checked; frontend: **69 passed**, production
+build passed. Mocked browser walkthrough passed. Idle rollout restarted only the
+owned API and one worker; health and private logs verified. Before/after hashes
+match for eight protected tables and all sixteen final videos. The current run
+remains paused; no generation, publishing, budget changes, reconciliation or job
+resumption occurred. Reference mode remains disabled/unqualified for live use;
+fresh live acceptance and the Hypit/Node compatibility warning remain separate.
+
+Evidence: `docs/factory-reports/FUTURE-RUN-SAFETY-2026-09-21.md`.

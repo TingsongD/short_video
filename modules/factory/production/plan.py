@@ -36,10 +36,13 @@ class ProductionService:
     # ---------------------------------------------------------- build
 
     def plan(self, plan_id, experiment_id, revision, takes, provider,
-             model, durations, variants=None, now=""):
+             model, durations, variants=None, now="", *, output_binding=None):
         """takes: [{variant,slot,duration_s,request,handle_s?}].
         request is the canonical dict {prompt,settings,refs,audio}."""
         g = build_graph(plan_id, takes, provider, model, durations)
+        if output_binding is not None:
+            for node in g['nodes'].values():
+                if node['kind']=='compose':node.setdefault('request',{})['output_binding']=output_binding
         plan = ProductionPlan(
             schema_version="production_plan.v1", id=plan_id,
             created_at=now, experiment_id=experiment_id,
@@ -48,10 +51,33 @@ class ProductionService:
                 {t["variant"] for t in takes}))
         # price each unique picture once, whatever its consumer count
         totals = {}
+        reused = []
         for n in g["nodes"].values():
             if n["kind"] != "picture" or n["status"] == "needs_manual":
                 continue
             imported = n["request"].get("artifact_id")
+            imported_many = n['request'].get('artifact_ids')
+            if imported_many:
+                pinned = n['request'].get('reference_clip_bindings', {}).get('allocations')
+                if pinned:
+                    need = max(t['duration_s'] + t.get('handle_s', 0) for t in n['takes'])
+                    offset = 0
+                    for allocation in pinned:
+                        if (allocation['offset_s'] != offset or not 0 < allocation['covers_s'] <= allocation['duration_s']):
+                            raise ContractError('reference_coverage_mismatch', 'allocations')
+                        offset += allocation['covers_s']
+                    if abs(offset - need) > 1e-6:
+                        raise ContractError('reference_coverage_mismatch', 'allocations')
+                    n['allocations'] = pinned
+                if len(imported_many) != len(n['allocations']):
+                    raise ContractError('reference_coverage_mismatch', 'artifact_ids')
+                for aid, allocation in zip(imported_many, n['allocations']):
+                    self.artifacts.verified_path(aid)
+                    artifact = self.db.uow().artifacts.get(aid)
+                    if artifact['kind'] != 'video' or (json.loads(artifact['probe']).get('duration_s') or 0) + .0001 < allocation['covers_s']:
+                        raise ContractError('insufficient_coverage', 'artifact_id', aid)
+                n.update(status='manual', artifact_ids=imported_many, price={})
+                continue
             if imported:
                 self.artifacts.verified_path(imported)
                 artifact = self.db.uow().artifacts.get(imported)
@@ -60,6 +86,13 @@ class ProductionService:
                     raise ContractError("insufficient_coverage","artifact_id",imported)
                 n.update(status="manual",artifact_ids=[imported],price={})
                 continue
+            if output_binding is not None:
+                from .reuse import reusable_picture
+                cached=reusable_picture(self,experiment_id,n)
+                if cached:
+                    n.update(status='manual',artifact_ids=cached['artifact_ids'],price={})
+                    reused.append({'node_key':n['node_key'],**cached})
+                    continue
             amount = 0
             unit = ""
             if self.adapter is not None:
@@ -93,6 +126,8 @@ class ProductionService:
             u.events.append(f"plan:{plan_id}", "planned",
                             {"stats": plan.stats,
                              "total_price": totals})
+            for cached in reused:
+                u.events.append(f'plan:{plan_id}','verified_footage_reused',cached)
         return {"plan": plan.to_dict(),
                 "nodes": {k: v for k, v in g["nodes"].items()}}
 
@@ -123,6 +158,11 @@ class ProductionService:
         for key, node in self._nodes(plan_id).items():
             if node["kind"] != "picture" or node["status"] in ("needs_manual", "manual"):
                 continue
+            adapters = getattr(self.router, 'adapters', {})
+            configured = getattr(adapters.get(node['provider']), 'account', '')
+            if configured and account != configured:
+                raise ContractError('provider_account_mismatch', 'account',
+                                    'Use the configured account for ' + node['provider'])
             for i, allocation in enumerate(node["allocations"]):
                 req = dict(node["request"], duration_s=allocation["duration_s"], model=node["model"])
                 price = allocation.get("price")
@@ -172,7 +212,15 @@ class ProductionService:
                 else "transfer" if n["kind"] == "download" else "none"))
         # A is the comparison reference; branch QC depends on its final.
         ids = {j.id for j in jobs}
+        exp = self.db.uow().records.get('experimentrevision', 'exp:' + self._plan(plan_id)['experiment_id'])
+        policy = json.loads(exp['body']).get('packaging', {}).get('run_policies', {}) if exp else {}
+        full = bool(policy)
         for job in jobs:
+            if ':cmp:' in job.id and full:
+                # Provenance checks cover every branch; no render may outrun
+                # another branch's download or pre-caption overlay review.
+                job.depends_on = sorted(set(job.depends_on) | {
+                    f'{plan_id}:{key}' for key, node in nodes.items() if node['kind'] == 'review'})
             if ':cmp:' in job.id and not job.id.endswith(':cmp:A') and f'{plan_id}:cmp:A' in ids:
                 job.depends_on.append(f'{plan_id}:cmp:A')
             job.revision = self._plan(plan_id)["experiment_revision"]
@@ -180,6 +228,35 @@ class ProductionService:
         return self.scheduler.submit_plan(new) if new else [j.id for j in jobs]
 
     # -------------------------------------------------------- execute
+
+    def _future_workflow(self, plan_id):
+        plan = self._plan(plan_id)
+        row = self.db.uow().records.get('experimentrevision', 'exp:' + plan['experiment_id'], plan['experiment_revision'])
+        return bool(row and json.loads(row['body']).get('packaging', {}).get('workflow', {}).get('version') == 2)
+
+    def _allocation_attempt(self, plan_id, node, index):
+        """Resolve a logical allocation, not its incidental retry sequence."""
+        from ..execution.effects import wire_hash
+        rows = self.db.conn.execute("SELECT a.*,i.body AS intent FROM attempts a LEFT JOIN intents i ON json_extract(i.body,'$.attempt_id')=a.id WHERE a.job_id=? ORDER BY a.attempt_seq", (f"{plan_id}:{node['node_key']}",)).fetchall()
+        candidates = []
+        expected = wire_hash(dict(node['request'], duration_s=node['allocations'][index]['duration_s'], model=node['model']))
+        for row in rows:
+            intent = json.loads(row['intent'] or '{}')
+            key = intent.get('extra', {}).get('operation_key')
+            if not key:
+                raise ContractError('allocation_identity_missing', 'attempt_id', row['id'])
+            if key != f"{node['node_key']}:{index}":
+                continue
+            if (row['request_hash'] != expected or intent.get('provider') != node['provider'] or intent.get('model') != node['model']):
+                raise ContractError('allocation_identity_mismatch', 'attempt_id', row['id'])
+            if row['status'] in {'failed', 'cancelled'} and not row['remote_id']:
+                proof = self.db.conn.execute("SELECT 1 FROM events WHERE stream=? AND (type='request_not_sent' OR (type='submit_failed' AND json_extract(body,'$.class')='pre_acceptance'))", ('attempt:' + row['id'],)).fetchone()
+                if proof and self.executor.fallback_allowed(row['id']):
+                    continue
+            candidates.append(row)
+        if len(candidates) > 1:
+            raise ContractError('allocation_identity_ambiguous', 'operation_key', f"{node['node_key']}:{index}")
+        return candidates[0] if candidates else None
 
     def run_next(self):
         """Claim one ready dispatch job and execute its node handler.
@@ -197,8 +274,15 @@ class ProductionService:
             with self.scheduler.heartbeat(job["id"], job["fencing_token"]):
                 outcome = self._execute(plan_id, node, job)
         except ContractError as e:
-            if e.code in {"remote_unfinished", "capacity_full"}:
-                self.scheduler.defer(job["id"], job["fencing_token"], e.code)
+            if e.code in {"remote_unfinished", "capacity_full", "retry_backoff"}:
+                delay = 2
+                if e.code == 'retry_backoff':
+                    from datetime import datetime
+                    try:
+                        delay = max(1, (datetime.fromisoformat(e.detail) - self.scheduler.clock()).total_seconds())
+                    except (ValueError, TypeError):
+                        pass
+                self.scheduler.defer(job["id"], job["fencing_token"], e.code, delay)
                 return {"node": key, "outcome": "waiting", "error": e.code}
             self.scheduler.fail(job["id"], job["fencing_token"], e.code)
             return {"node": key, "outcome": "failed", "error": e.code}
@@ -227,21 +311,61 @@ class ProductionService:
             authority_id = None
             for i, a in enumerate(node["allocations"]):
                 req = dict(node["request"], duration_s=a["duration_s"], model=node["model"])
-                prior=self.db.conn.execute('SELECT id,status FROM attempts WHERE job_id=? AND attempt_seq=?',(job['id'],i+1)).fetchone()
-                if prior and prior['status']!='prepared':
+                future = self._future_workflow(plan_id)
+                prior = self._allocation_attempt(plan_id, node, i) if future else self.db.conn.execute('SELECT id,status,remote_id FROM attempts WHERE job_id=? AND attempt_seq=?',(job['id'],i+1)).fetchone()
+                if prior and prior['status']!='prepared' and prior['remote_id']:
                     att=prior['id']
                     if prior['status'] in ('dispatching','unknown'):
                         op=self.executor.reconcile(att)
                     else:op=self.executor.poll(att)
                     if not op or op.get('status')=='unknown':raise ContractError('remote_unfinished','attempt',att)
                     if op.get('status') in ('failed','cancelled'):raise ContractError('remote_terminal_failure','attempt',att)
-                else:
+                elif prior and prior['status'] not in ('prepared',) and not prior['remote_id'] \
+                        and prior['status'] in ('failed','cancelled'):
+                    if future:
+                        # The resolver already discarded proven, released
+                        # failures. A remaining terminal label is not proof.
+                        raise ContractError('pre_acceptance_evidence_required', 'attempt_id', prior['id'])
+                    # Pre-acceptance only: never reached the provider
+                    # (failed/cancelled, no remote_id). unknown without
+                    # remote_id is ambiguous — the provider may have
+                    # accepted — and must be reconciled, never resubmitted.
                     authority_id=authority_id or self._authority(plan_id)
                     if self.router:
                         self.router.preflight(node['provider'],node['model'],req,a['duration_s'],
                             self._plan(plan_id)['experiment_id'],effects._scope(authority_id))
+                    mx=self.db.conn.execute(
+                        "SELECT MAX(attempt_seq) FROM attempts WHERE job_id=?",
+                        (job['id'],)).fetchone()[0] or i
                     att = effects.prepare(authority_id, f"{node['node_key']}:{i}",
-                        job['id'], job['fencing_token'], self.scheduler.worker_id, i + 1)
+                        job['id'], job['fencing_token'], self.scheduler.worker_id, mx + 1)
+                    price = Money(**a['price'])
+                    op = self.executor.submit(att, lambda: self.adapter.submit(req, price=price))
+                elif prior and prior['status']!='prepared':
+                    # Crash after provider accept, before local remote_id
+                    # attach (dispatching/unknown, no remote_id). Poll
+                    # requires remote_id; reconcile by request_hash.
+                    att=prior['id']
+                    if not prior['remote_id'] or prior['status'] in (
+                            'dispatching','unknown'):
+                        op=self.executor.reconcile(att)
+                    else:
+                        op=self.executor.poll(att)
+                    if not op or op.get('status')=='unknown':raise ContractError('remote_unfinished','attempt',att)
+                    if op.get('status') in ('failed','cancelled'):raise ContractError('remote_terminal_failure','attempt',att)
+                else:
+                    original = (json.loads(prior['intent']).get('extra', {}).get('authorization_id')
+                                if future and prior else None)
+                    if future and prior and not original:
+                        raise ContractError('allocation_identity_missing', 'authorization_id', prior['id'])
+                    authority_id=original or authority_id or self._authority(plan_id)
+                    if self.router:
+                        self.router.preflight(node['provider'],node['model'],req,a['duration_s'],
+                            self._plan(plan_id)['experiment_id'],effects._scope(authority_id))
+                    att = effects.prepare(authority_id, f"{node['node_key']}:{i}",
+                        job['id'], job['fencing_token'], self.scheduler.worker_id, None if future else i + 1)
+                    if future and prior and att != prior['id']:
+                        raise ContractError('allocation_identity_mismatch', 'attempt_id', att)
                     price = Money(**a['price'])
                     op = self.executor.submit(att, lambda: self.adapter.submit(req, price=price))
                 op_ids.append(op["operation_id"])
@@ -259,11 +383,16 @@ class ProductionService:
                 return "downloaded"
             artifact_ids = []
             atts = self.db.conn.execute(
-                "SELECT id FROM attempts WHERE job_id=? ORDER BY attempt_seq",
+                "SELECT id FROM attempts WHERE job_id=? AND "
+                "IFNULL(remote_id,'') != '' ORDER BY attempt_seq",
                 (f"{plan_id}:{pic_key}",)).fetchall()
-            if len(atts) != len(pic["allocations"]):
+            if self._future_workflow(plan_id):
+                atts = [self._allocation_attempt(plan_id, pic, i) for i in range(len(pic['allocations']))]
+            if len(atts) != len(pic["allocations"]) or any(a is None for a in atts):
                 raise ContractError("incomplete_submission_set", "node", pic_key)
             for allocation,a in zip(pic["allocations"],atts):
+                if 'remote_id' in a.keys() and not a['remote_id']:
+                    raise ContractError('remote_unfinished', 'attempt', a['id'])
                 op = self.executor.poll(a["id"])
                 if op.get("status") in {"failed", "cancelled"}:
                     raise ContractError("remote_terminal_failure", "attempt", a["id"])

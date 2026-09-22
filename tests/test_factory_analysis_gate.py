@@ -174,6 +174,70 @@ def test_preliminary_captions_cannot_satisfy_transcript(env):
     assert e.value.code == "analysis_blocked"
 
 
+class LoopingHypit(FakeHypit):
+    """WhisperX-shaped transport that returns a decoder loop: five
+    identical passages with varying word timings (a sung/music clip
+    hallucinating the same line)."""
+    def transcribe(self, src, language, dest):
+        Path(dest).parent.mkdir(parents=True, exist_ok=True)
+        passages = []
+        for i in range(5):
+            s = float(i)
+            passages.append({
+                "text": "it's not mine.",
+                "start_seconds": s,
+                "end_seconds": s + 0.8 + i * 0.05,
+                "words": [
+                    {"text": "it's", "start_seconds": s,
+                     "end_seconds": s + 0.2},
+                    {"text": "not", "start_seconds": s + 0.25,
+                     "end_seconds": s + 0.5 + i * 0.02},
+                    {"text": "mine.", "start_seconds": s + 0.55,
+                     "end_seconds": s + 0.8 + i * 0.05},
+                ]})
+        Path(dest).write_text(json.dumps({
+            "format": "hypit.transcript@1", "source": str(src),
+            "language": language, "audio_seconds": 8.0,
+            "passages": passages}))
+        return type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+
+def test_imported_transcript_recovers_whisperx_loop(env):
+    """A clean WhisperX exit that looped on singing still blocks as
+    transcript_suspect; importing a distinct aligned transcript must
+    clear that blocker so Resume can continue."""
+    seed, _ = _seed(env, seconds=8)
+    svc = env["s"].ref_analysis
+    svc.hypit = LoopingHypit()
+    svc.start(seed.id, "qa")
+    a = svc.run_machine_stages(seed.id)
+    assert a.status == "blocked"
+    assert any(b.get("code") == "transcript_suspect" for b in a.blocking)
+    svc.import_transcript(seed.id, {
+        "provider": "youtube_auto_captions",
+        "provenance": "platform word-timed captions on the verified "
+        "source, used after whisperx looped on sung audio",
+        "confidence": "word-level",
+        "language": "en",
+        "words": [
+            {"word": "and", "start_s": 0.0, "end_s": 0.2},
+            {"word": "these", "start_s": 0.2, "end_s": 0.5},
+            {"word": "are", "start_s": 0.5, "end_s": 0.7},
+            {"word": "two", "start_s": 0.7, "end_s": 1.0},
+            {"word": "of", "start_s": 1.0, "end_s": 1.2},
+            {"word": "my", "start_s": 1.2, "end_s": 1.5},
+            {"word": "favorite", "start_s": 1.5, "end_s": 2.0},
+            {"word": "things", "start_s": 2.0, "end_s": 2.5},
+        ],
+        "reviewer": "qa"}, "qa")
+    a = svc.get(seed.id)
+    assert not any(b.get("code", "").startswith("transcript")
+                   for b in a.blocking)
+    assert a.transcript["status"] == "aligned"
+    a = svc.run_machine_stages(seed.id)
+    assert a.status == "evidence_ready"
+
+
 def test_imported_transcript_recovers_blocked(env):
     seed, _ = _seed(env, captions="auto caption text")
     svc = env["s"].ref_analysis
@@ -226,7 +290,7 @@ def test_transcribe_available_reads_programs_status():
     assert h2.transcribe_available() is False
 
 
-def test_transcript_retry_replaces_stale_destination(env):
+def test_transcript_retry_preserves_stale_destination(env):
     """A fresh analysis revision must be able to replace a prior
     transcript.json.  The pinned Hypit CLI refuses an existing destination,
     so leaving the old file in place makes a normal rerun look like a failed
@@ -252,7 +316,8 @@ def test_transcript_retry_replaces_stale_destination(env):
     a = svc.run_machine_stages(seed.id)
     assert a.status == "evidence_ready"
     assert a.transcript["status"] == "aligned"
-    assert json.loads(stale.read_text())["format"] == "hypit.transcript@1"
+    assert stale.read_text() == 'stale transcript'
+    assert json.loads(Path(a.transcript['file']).read_text())["format"] == "hypit.transcript@1"
 
 
 def test_imported_transcript_file_is_hypit_readable(env):

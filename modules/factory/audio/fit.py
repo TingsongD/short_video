@@ -7,7 +7,8 @@ from ..domain.errors import ContractError
 
 # Documented limits (seconds at the output clock):
 TRIM_MAX_S = 0.9        # per edge
-PAD_MAX_S = 2.0         # trailing pad inside the interval
+PAD_MAX_S = 2.0         # trailing pad that is still "dense" narration;
+                        # longer visual-led beats pad freely (sparse=True)
 RATE_MIN, RATE_MAX = 0.90, 1.10
 
 
@@ -27,15 +28,13 @@ def fit_plan(duration_s, target_s, trim_s=0.0):
     if spoken <= 0:
         raise ContractError("speech_too_short", "duration_s",
                             "silence trim would consume the segment")
-    # 1) fits with room → pad
+    # 1) fits with room → pad. Visual-led beats (a 2s punchline on a
+    # 9s gag) are valid: silence after speech is not a copy failure.
     if spoken <= target_s:
         pad = target_s - spoken
-        if pad > PAD_MAX_S:
-            return {"fits": False, "reason": "pad_exceeds_limit",
-                    "pad_s": pad, "limit": PAD_MAX_S,
-                    "action": "lengthen copy or accept shorter speech"}
         return {"fits": True, "rate": 1.0, "pad_s": pad,
-                "trim_s": trim_s, "spoken_s": spoken}
+                "trim_s": trim_s, "spoken_s": spoken,
+                "sparse": pad > PAD_MAX_S}
     # 2) modest rate adjustment
     rate = spoken / target_s
     if rate <= RATE_MAX:

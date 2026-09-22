@@ -37,6 +37,7 @@ export interface Quote {
 }
 
 let csrfToken: string | null = null;
+let sessionPending: Promise<string> | null = null;
 export async function actionKey(method: string, path: string, body: unknown, rev?: number): Promise<string> {
   const canonical = (v: unknown): unknown => Array.isArray(v) ? v.map(canonical) :
     v !== null && typeof v === "object" ? Object.fromEntries(Object.entries(v).sort(([a],[b])=>a.localeCompare(b)).map(([k,x])=>[k,canonical(x)])) : v;
@@ -59,11 +60,45 @@ function acknowledge(key: string) {
 }
 
 export async function session(): Promise<string> {
-  const r = await fetch("/api/session", { method: "POST" });
-  if (!r.ok) throw new ApiError(r.status, "session_failed", undefined,
-                              "could not establish local session");
-  csrfToken = (await r.json()).session_token as string;
-  return csrfToken as string;
+  if (sessionPending) return sessionPending;
+  sessionPending = (async () => {
+    const r = await fetch("/api/session", { method: "POST" });
+    if (!r.ok) throw new ApiError(r.status, "session_failed", undefined,
+      "Cannot reconnect to the dashboard. Check the API service, then retry the same action.");
+    const token = (await r.json()).session_token;
+    if (typeof token !== 'string' || !token) throw new Error('Invalid dashboard session response');
+    csrfToken = token;
+    return token;
+  })().catch((error:unknown)=>{
+    csrfToken=null;
+    if(error instanceof ApiError)throw error;
+    throw new ApiError(0,'session_failed',undefined,
+      'Cannot reconnect to the dashboard. Check the API service, then retry the same action.');
+  });
+  try { return await sessionPending; } finally { sessionPending = null; }
+}
+
+// Only this middleware rejection proves the command never reached a handler.
+// A network failure or any other response must not replay a mutation.
+async function request<T>(path: string, init: RequestInit, mutation: boolean): Promise<T> {
+  const headers = {...init.headers} as Record<string,string>;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const rejectedToken = headers['x-csrf-token'];
+    const r = await fetch(path, {...init, headers: {...headers}});
+    const text = await r.text();
+    const json = text ? JSON.parse(text) : {};
+    if (mutation && attempt === 0 && r.status === 403 && json.error === 'csrf') {
+      if (csrfToken === rejectedToken) { csrfToken = null; await session(); }
+      else if (!csrfToken) await session();
+      headers['x-csrf-token'] = csrfToken!;
+      continue;
+    }
+    if (!r.ok) throw new ApiError(r.status, json.error ?? 'http_error', json.field,
+      json.error === 'csrf' ? 'Dashboard session recovery failed. Check the API service and retry this action.' : json.detail ?? r.statusText);
+    if (headers['idempotency-key']) acknowledge(headers['idempotency-key']);
+    return json as T;
+  }
+  throw new Error('Dashboard session recovery failed');
 }
 
 export async function call<T>(
@@ -80,19 +115,11 @@ export async function call<T>(
     if (opts.rev !== undefined)
       headers["x-expected-revision"] = String(opts.rev);
   }
-  const r = await fetch(path, {
+  return request<T>(path, {
     method,
     headers,
     body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
-  });
-  const text = await r.text();
-  const json = text ? JSON.parse(text) : {};
-  if (!r.ok) {
-    throw new ApiError(r.status, json.error ?? "http_error",
-                       json.field, json.detail ?? r.statusText);
-  }
-  if (r.ok && headers["idempotency-key"]) acknowledge(headers["idempotency-key"]);
-  return json as T;
+  }, method !== 'GET');
 }
 
 export const api = {
@@ -111,11 +138,15 @@ export const api = {
     call<Record<string, unknown>>("GET", `/api/autoruns/${id}`),
   autorunResume: (id: string, body: Record<string, unknown> = {}) =>
     call("POST", `/api/autoruns/${id}/resume`, { body }),
+  autorunRecoverAnalysis: (id: string, body: Record<string, unknown>) =>
+    call("POST", `/api/autoruns/${id}/recover-analysis-response`, { body }),
+  reconcileInvalidAnalysis: (id: string, body: Record<string, unknown>) =>
+    call("POST", `/api/attempts/${id}/reconcile-invalid-analysis`, { body }),
   importFile: async (file: File) => {
     if (!csrfToken) await session();
     const digest = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",await file.arrayBuffer()))).map(x=>x.toString(16).padStart(2,"0")).join("");
     const key = await actionKey("POST","/api/imports",{name:file.name,sha256:digest});
-    return fetch("/api/imports", {
+    return request<Record<string, any>>("/api/imports", {
       method: "POST",
       headers: {
         "x-filename": file.name,
@@ -123,14 +154,7 @@ export const api = {
         ...(csrfToken ? { "x-csrf-token": csrfToken } : {}),
       },
       body: file,
-    }).then(async (r) => {
-      const j = await r.json();
-      if (!r.ok)
-        throw new ApiError(r.status, j.error ?? "http_error", j.field,
-                           j.detail ?? "");
-      acknowledge(key);
-      return j;
-    });
+    }, true);
   },
   analyze: (seedId: string) =>
     call("POST", `/api/seeds/${seedId}/analyze`, { body: {} }),
@@ -138,8 +162,8 @@ export const api = {
     call<Record<string, unknown> | null>("GET", `/api/analysis/${seedId}`),
   startAnalysis: (seedId: string, reviewer: string) =>
     call("POST", `/api/seeds/${seedId}/analysis`, { body: { reviewer } }),
-  rerunAnalysis: (seedId: string) =>
-    call("POST", `/api/analysis/${seedId}/rerun`, { body: {} }),
+  rerunAnalysis: (seedId: string, editToken?: string) =>
+    call("POST", `/api/analysis/${seedId}/rerun`, { body: {edit_token: editToken} }),
   saveAnalysis: (seedId: string, section: string,
                  body: Record<string, unknown>) =>
     call("PUT", `/api/analysis/${seedId}/${section}`, { body }),
@@ -170,6 +194,19 @@ export const api = {
   deliver: (variantId: string, body: Record<string, unknown>, rev?: number) =>
     call("POST", `/api/variants/${variantId}/deliver`, { body, rev }),
 };
+
+/** Collapse a burst of calls into one trailing invocation.
+ * Replay of a long event log must not trigger one refresh per event. */
+export function coalesce(fn: () => void, waitMs: number): () => void {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return () => {
+    if (timer !== undefined) clearTimeout(timer);
+    timer = setTimeout(() => {
+      timer = undefined;
+      fn();
+    }, waitMs);
+  };
+}
 
 /** SSE with Last-Event-ID reconnect — the durable log guarantees no
  * missed events; a disconnect never cancels server work. */

@@ -7,6 +7,8 @@ import base64
 import hashlib
 import json
 import math
+from pathlib import Path
+from urllib.error import URLError
 from .state import DurableState
 from ..execution.context import current_effect
 from ..execution.policy import ExecutionPolicy
@@ -54,11 +56,14 @@ class VertexAdapter(GenerationAdapter):
     unit = "usd_micros"
 
     def __init__(self, auth, transport, state, rates,
-                 capabilities=None, project=None, location="global"):
+                 capabilities=None, project=None, location="global",
+                 account="", artifacts=None):
         """auth: VertexAuth. transport(method, url, headers, body)
         -> (status:int, json:dict). state: persistent dict for op map.
         rates: dated pricing snapshot for estimates."""
         self.auth = auth
+        self.account = account
+        self.artifacts = artifacts
         self.transport = transport
         self.state = state
         self.state.setdefault("ops", {})
@@ -74,11 +79,27 @@ class VertexAdapter(GenerationAdapter):
         if hasattr(self.state, "flush"):
             self.state.flush()
 
+    def _binding_authorized(self, binding):
+        """Live submit is scoped to the qualified account identity.
+
+        Factory authorizations bind the OAuth principal (account_id), not
+        the GCP project id. Comparing those two used to reject every live
+        Vertex dispatch as authority_required before a request was sent.
+        """
+        if not binding or binding.get("provider") != self.name:
+            return False
+        expected = self.account or self.project
+        return bool(expected) and binding.get("account") == expected
+
     # ------------------------------------------------------ readiness
 
     def readiness(self):
         status=self.auth.status()
         return {**status,"installed":True,"authenticated":status.get("ready") is True,"catalog_visible":bool(self._caps),"contract_tested":True,"live_qualified":bool(self._caps) and all(c.get("live_qualified") is True for c in self._caps.values())}
+
+    def refresh_readiness(self):
+        self.auth.refresh()
+        return self.readiness()
 
     def capabilities(self, model):
         if model not in self._caps:
@@ -100,6 +121,12 @@ class VertexAdapter(GenerationAdapter):
         """Dated usage estimate — never represented as settled billing."""
         out_tokens = int(self.rates["video_per_sec_tokens"] * duration_s)
         in_tokens = self.rates.get("input_tokens_est", 150)
+        references = request.get('reference_artifact_ids') or []
+        if references:
+            image_tokens = self.rates.get('image_input_tokens_est')
+            if type(image_tokens) is not int or image_tokens <= 0:
+                raise ProviderError('price_unknown')
+            in_tokens += len(references) * image_tokens
         thought = self.rates.get("thought_tokens_est", 500)
         per_m = self.rates["usd_per_m"]
         micros = math.ceil((in_tokens * per_m["input"]
@@ -132,22 +159,59 @@ class VertexAdapter(GenerationAdapter):
     def _payload(self, request, model):
         request = request if isinstance(request, dict) else request.to_dict()
         mode = self._input_mode(request)
-        if model != "gemini-omni-1.1-flash-preview" or mode != "text" or request.get("reference_artifact_ids"):
+        if model != "gemini-omni-1.1-flash-preview" or mode == 'video_ref':
             raise ProviderError("input_mode_not_qualified")
         duration = request.get("requested_duration_s") or request.get("duration_s")
         cap = self.capabilities(model)
-        if isinstance(self.transport,LiveVertexTransport) and 'qualified_modes' in cap and mode not in cap['qualified_modes']:
+        qualified_modes = cap.get('qualified_modes', [])
+        refs = request.get('reference_artifact_ids') or []
+        inputs = [{'type': 'text', 'text': request['prompt']}]
+        if mode == 'image_ref':
+            if not cap.get('reference_enabled') or mode not in cap.get('qualified_modes', []):
+                raise ProviderError('input_mode_not_qualified')
+            mode_cap = cap.get('mode_capabilities', {}).get(mode, cap)
+            if (not self.artifacts or not isinstance(refs, list) or not refs
+                    or any(not isinstance(a, str) for a in refs) or len(set(refs)) != len(refs)
+                    or len(refs) > min(10, mode_cap.get('references', {}).get('image', 0))):
+                raise ProviderError('invalid_references')
+            hashes = request.get('reference_hashes') or {}
+            roles = request.get('reference_roles') or {}
+            if set(hashes) != set(refs) or set(roles) != set(refs) or any(v != 'image' for v in roles.values()):
+                raise ProviderError('invalid_references')
+            for aid in refs:
+                row = self.artifacts.db.uow().artifacts.get(aid)
+                if not row or row['kind'] != 'image' or row['sha256'] != hashes[aid]:
+                    raise ProviderError('reference_hash_mismatch')
+                path = self.artifacts.verified_path(aid)
+                if not 0 < path.stat().st_size <= min(20 * 1024 * 1024, mode_cap.get('max_image_bytes', 20 * 1024 * 1024)):
+                    raise ProviderError('reference_image_size')
+                raw = path.read_bytes()
+                from PIL import Image
+                import io
+                try:
+                    with Image.open(io.BytesIO(raw)) as im:
+                        mime = {'PNG': 'image/png', 'JPEG': 'image/jpeg', 'WEBP': 'image/webp'}.get(im.format)
+                        im.verify()
+                    if not mime:
+                        raise ValueError('image type')
+                except (OSError, ValueError):
+                    raise ProviderError('reference_image_type') from None
+                inputs.append({'type': 'image', 'mime_type': mime, 'data': base64.b64encode(raw).decode()})
+        elif refs:
+            raise ProviderError('invalid_references')
+        if isinstance(self.transport,LiveVertexTransport) and 'qualified_modes' in cap and mode not in qualified_modes:
             raise ProviderError('input_mode_not_qualified')
+        cap = cap.get('mode_capabilities', {}).get(mode, cap)
         if duration not in cap.get("durations_s", []):
             raise ProviderError("unsupported_duration")
         aspect, resolution = (normalized_setting(request, "aspect", "9:16"),
                               normalized_setting(request, "resolution", "720p"))
         if aspect not in cap.get("aspects", []) or resolution not in cap.get("resolutions", []):
             raise ProviderError("unsupported_settings")
-        return {"model": model, "background": True, "input": [{"type": "text", "text": request["prompt"]}],
+        return {"model": model, "background": True, "input": inputs,
                 "response_format": [{"type": "video", "aspect_ratio": aspect, "resolution": resolution,
                                      "duration": f"{duration:g}s"}],
-                "generation_config": {"video_config": {"task": "text_to_video"}}}
+                "generation_config": {"video_config": {"task": TASK_BY_MODE[mode]}}}
 
     def _req_hash(self, request, model):
         wire = json.dumps(request if isinstance(request, dict)
@@ -179,8 +243,10 @@ class VertexAdapter(GenerationAdapter):
             status, doc = self.transport(
                 "GET", self._endpoint(f"/{interaction_id}"),
                 {"Authorization": "Bearer " + self.auth.bearer(), "x-goog-user-project": self.project}, None)
-        except (TimeoutError, ConnectionError):
-            raise ProviderError("transport_error", transient=True)
+        except (TimeoutError, ConnectionError, URLError):
+            raise ProviderError("poll_failed", transient=True)
+        if status in (408, 429, 500, 502, 503, 504):
+            raise ProviderError("poll_failed", transient=True)
         if status == 404:
             raise ProviderError("operation_not_found")
         if status in (401, 403):
@@ -205,7 +271,7 @@ class VertexAdapter(GenerationAdapter):
         body = self._payload(request, m)
         binding = current_effect.get()
         if isinstance(self.transport, LiveVertexTransport):
-            if not binding or binding["provider"] != self.name or binding["account"] != self.project:
+            if not self._binding_authorized(binding):
                 raise ProviderError("authority_required")
             if not self.capabilities(m).get("live_qualified"):
                 raise ProviderError("input_mode_not_qualified")

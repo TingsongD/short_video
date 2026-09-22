@@ -28,6 +28,8 @@ class HypitBuildRunner:
             raise ContractError("run_missing", "svrun")
         # One receipt per frozen run content. RenderService owns new revision IDs.
         files = [source, *workspace.glob("*.svml"), *workspace.glob("*.svs"), *workspace.glob("assets/*")]
+        if (workspace/'editorial.json').exists():
+            files += [workspace/'editorial.json', *workspace.glob('packages/aligned-speech/**/*')]
         fingerprint = {str(p.relative_to(workspace)): hashlib.sha256(p.read_bytes()).hexdigest() for p in files if p.is_file()}
         profile = workspace / "hypit.runtime.json"
         if profile.is_file():

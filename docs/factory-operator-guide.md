@@ -4,6 +4,12 @@ A plain-language guide to producing reviewed, deliverable short-form
 video variants with the factory dashboard. No programming knowledge
 needed for the normal workflow.
 
+> **2026-09-22 update:** the AVvVLM5b-mE run completed four QC-passed,
+> verified-delivered finals. See [current status and limitations](factory-reports/FLASHCUT-CURRENT-STATUS.md)
+> and [the latest operating notes](#8-completed-flash-cut-run-and-recovery-notes-2026-09-22).
+> Older dated sections describe their original release; they are not blanket
+> proof of current provider qualification or fully unattended operation.
+
 > **What it does, in one sentence:** you give it a reference video and
 > your own footage/audio/images, it plans four variations, quotes the
 > cost before spending anything, renders them, asks you to review the
@@ -54,6 +60,41 @@ Manual equivalent, if you prefer two terminals:
 Then open **http://127.0.0.1:8100** in your browser. The API serves the
 dashboard page itself, so buttons and uploads work on the same origin.
 
+Both manual CLI launches and the launcher also write private, rotating
+diagnostic logs to `.run/factory-api.jsonl` and
+`.run/factory-worker.jsonl` (4 MiB per file, three backups). These contain
+timestamps, process IDs, job/run IDs and safe error codes—not raw request
+payloads or credential error text. The CLI also owns the access/error logs
+`.run/api.log` and `.run/worker.log`: queries and credentials are removed before
+writing, permissions are owner-only, and each log rotates at 4 MiB with three
+backups. A per-service lock refuses duplicate writers. Launchers do not append
+to these same files. Older processes must be restarted to enable this logging;
+old terminal output is not recovered retroactively.
+
+WhisperX starts through the repository's `scripts/factory-whisperx-launch.sh`,
+using the supported runtime `serviceCommand` setting and the existing managed
+Python environment. Model `small`, CPU, int8, batch size 8, endpoint 8765 and
+protocol/health checks are preserved. Its sanitized rotating log is
+`.run/whisperx.log`; installed packages are not modified.
+
+For an identified historical log, preview cleanup with
+`.venv/bin/python -m modules.factory.operations.log_privacy /absolute/log/path`.
+List rotations explicitly. Stop only that file's writer and repeat with
+`--apply`; the command refuses an open file, linked file or concurrent change.
+It atomically replaces sensitive values, keeps diagnostic context, prints
+counts only, and never creates a raw backup. An oversized legacy log can use
+`--archive-to /absolute/private-sanitized.log.gz` to retain sanitized context
+while starting the active log empty. This does not rotate Google credentials
+or establish that historical codes were misused.
+
+Dashboard status refreshes every five seconds for active runs and every
+30 seconds while idle. Details load on tab entry, relevant events/actions and
+a 30-second fallback. Hidden tabs stop polling and refresh on return. The
+status bar shows the last successful refresh; disconnected data is not current
+evidence. A specific pre-handler CSRF rejection reconnects once with the same
+request/revision/idempotency key (including uploads). Timeouts, other permission
+errors and revision conflicts are never automatically replayed.
+
 > If the dashboard page ever looks stale or missing, rebuild it once:
 > `cd apps/factory-dashboard && npm run build`, then refresh.
 > (`npm run dev` on port 5180 is only for developers editing the
@@ -68,6 +109,25 @@ routes are currently qualified.
 > **First thing every session:** type your name in the **Reviewer**
 > box at the top. The system refuses approvals without a reviewer name —
 > that's the audit trail for who approved what.
+
+### Hide past jobs without deleting anything
+
+Use **Clean up** at the top of the dashboard. It previews finished jobs and
+runs that can be hidden from Queue and Auto across all experiments. Review
+the list, then choose **Confirm cleanup**. Use **Show archived** to see them
+again or **Restore archived history → Confirm restore** to undo the archive.
+These preferences persist across browser reloads.
+
+Active, paused, blocked and unresolved work, including its related run and
+dependency history, cannot be archived. Work that changes or resumes becomes
+visible again. If work changes between preview and confirmation, cleanup is
+rejected without hiding anything; reopen Clean up for a fresh preview.
+
+The optional **Reset saved experiment selection and refresh dashboard data**
+only resets the dashboard selection. It does not clear media/generation caches,
+pending request identities or event cursors. Videos, source assets, approvals,
+job records, provider receipts and spending records are never deleted. This
+does not free disk space, cancel work, release budget holds or resume jobs.
 
 ## 2. The golden path (a complete production run)
 
@@ -87,7 +147,15 @@ render → QC. You click once and watch progress.
 3. **Generate A–D automatically.** The run record shows a stage bar and
    updates live. **A** is a close adaptation; **B** varies the hook,
    **C** a body section, **D** the ending — each declares its changed
-   factor, hypothesis and intended metric.
+   copy hypothesis and intended metric. New dashboard runs default to
+   **Full-video** footage variation: every beat in B/C/D has its own footage
+   and consistent per-variant visual direction. These are **multi-variable
+   creative comparisons**, not isolated causal tests. Choose **Controlled
+   regions** to retain shared footage outside the declared regions.
+   **Readable phrase captions** use final replacement narration timing,
+   at most two lines, 48px type at 720×1280 and proportional scaling.
+   These versioned policies are frozen with the run. Older runs and API
+   clients that omit `policies` retain legacy behavior.
 4. It **pauses only** when something genuinely needs you: missing
    source media, missing voice, exhausted budgets, an unqualified
    provider route, or a failed automated check. Each pause shows a
@@ -114,6 +182,14 @@ render → QC. You click once and watch progress.
    once and each segment still gets its own measured fit and captions.
    Scripts longer than 20 unique lines are bought in separate batches
    automatically — no manual splitting needed.
+   New policy runs can request a measured, shorter complete narration rewrite
+   at most twice per segment. Clean-footage visual QC distinguishes incidental
+   environmental text from unwanted overlays; confirmed overlays permit at
+   most two targeted repairs per clip. Zero repairs still performs overlay QC.
+   Repairs have their own quotes and require budget authority; counters survive
+   restarts. Uncertain provider outcomes pause for reconciliation, never replay.
+   Unreliable caption timing pauses with a specific recovery action instead of
+   substituting the seed transcript or shrinking text below the readable size.
 5. When it finishes, open the experiment in **Compare** — four playable
    finals with scripts, captions, hypotheses, highlighted changed
    sections, and QC results. Each variant carries a validation chip —
@@ -121,12 +197,132 @@ render → QC. You click once and watch progress.
    `validation blocked` (with the specific failing checks listed),
    `validated`, `delivered`, or `done` — a final on disk is never
    reported as validated on its own, and a previous revision's output
-   is shown `stale`, never as the current answer. `done` means the
-   finals exist and passed the checks that ran — it is **not** verified
-   delivery. The run's Limitations note says so, and whether visual QC
-   was skipped.
-   Upload the finals via the Deliveries flow; publishing stays a
-   separate manual step in the Publishing tab.
+   is shown `stale`, never as the current answer. Generation, QC and delivery
+   progress are shown separately. New dashboard runs default to **automatic
+   Drive delivery** if an authorized destination/account is configured. This
+   requires passing automated final QC, current-revision identity checks,
+   remote folder/name/size/checksum verification, and video-owned cleanup.
+   It never records a human creative approval and never publishes anything.
+   Otherwise, use the Deliveries flow after creative approval. Legacy `done`
+   still means local completion, not verified delivery. Ambiguous remote matches
+   or missing checksums remain unresolved rather than triggering duplicate uploads.
+   Shared dashboard/worker services are not video-owned cleanup targets.
+
+The Budgets table separates pending estimates, settled estimates,
+provider-confirmed usage, quoted usage and unresolved historical holds.
+Shared rows can cover the same operation; do not add them together. Historical
+evidence and do-not-retry decisions are retained. Prior QA spending authority
+does not authorize a new paid acceptance run.
+Run-creation and approval selectors show reusable, non-retired budgets only.
+Internal authorization ceilings appear separately in accounting and cannot be
+selected to fund a user action; their internal enforcement is unchanged.
+
+### Recovering Google credential failures safely
+
+A `reauth_required` pause means the configured Google account needs to be
+reconnected using Application Default Credentials. Do that outside the
+dashboard, then choose **Providers → Re-check readiness**. This explicitly
+refreshes credentials without submitting generation work. Network failures,
+missing dependencies and other credential-refresh failures have distinct
+messages; increasing a budget does not repair authentication.
+
+Before **Resume**, reconcile any unknown attempt using its recorded evidence.
+A new synchronous Vertex analysis attempt with a durable, matching
+`credential_preflight` / `not_sent` receipt closes as failed and releases only
+its own hold, including on restart. It does not retry automatically. Old
+`loader_failed` / `unknown` records have no such proof: reconnecting Google
+does **not** release those holds or authorize blind resubmission. In particular,
+the historical `$0.25` hold requires evidence-backed reconciliation; it is not
+automatically refunded by this patch. A missing remote ID alone proves nothing.
+
+### Recovering a returned but unusable analysis response
+
+The Auto tab now separates three decisions: **Recover saved result — no new
+request**, **Settle unusable response — no retry**, and **Approve paid analysis
+retry**. Recovery and settlement require a reviewer and evidence. A paid retry
+requires a separate checkbox and reviewer; generic Resume cannot bypass an
+unresolved analysis attempt. Each retry gets a fresh quote and must fit the
+existing approved budgets. An unknown transport outcome has no retry button.
+
+Scene-review replacement and approval actions have been removed. Historical
+unknown requests still require reconciliation; removing scene review does not
+refund them or authorize a replay. Audiovisual requests use a bounded
+180-second response wait; other HTTP routes retain their existing timeout.
+
+`malformed_analysis` / `invalid_analysis_timing` means the returned data failed
+validation; it is not an authentication failure or proof of zero cost. Vertex
+response evidence is now saved privately alongside the attempt receipt as
+`provider-response.json`, before content validation. It includes the attempt
+and request binding, response hash, provider usage metadata when present, and
+redacted content. It is evidence, not an invoice or a successful analysis.
+Earlier failures may have only a validation event, without the response itself.
+
+Optional zero-duration word stamps are discarded for the affected passage,
+with an explicit uncertainty note. Its text and passage bounds are preserved;
+the local speech aligner remains responsible for verified word timing. Invalid
+scene/passage boundaries, reversed words and out-of-bounds words still fail.
+Completely empty zero-length transcript placeholders are also discarded with
+an uncertainty note; nonempty spoken segments are never repaired this way.
+
+If the saved response passes the current validators, prefer local recovery:
+`POST /api/autoruns/{run_id}/recover-analysis-response` with `reviewer`,
+`evidence`, and the bound validation `event_seq`. It verifies the original
+attempt/request and the current source bytes, revalidates locally without a
+provider call, settles the completed request's conservative estimate, and
+adopts the result atomically. It leaves the run paused as `analysis_recovered`;
+Resume continues from that analysis, not a new analysis request. Original
+receipts remain unchanged. Invalid or mismatched evidence leaves all state and
+accounting unchanged. Auto then prepares the blueprint with source and timing
+validation; no separate scene-review approval is required.
+
+After reviewing the specific response-validation event and synchronous code
+path, an operator can use
+`POST /api/attempts/{attempt_id}/reconcile-invalid-analysis` with `reviewer`,
+`evidence`, and `event_seq`. This narrowly scoped command settles the existing
+hold at its full conservative `usage_estimate` and marks that attempt
+`completed_unusable` / failed, atomically. It refuses transport/auth failures,
+wrong providers/tasks/events and known remote jobs. It never refunds the call,
+fabricates a remote identity, changes a ceiling, or enqueues a retry. The
+original receipt and events remain intact. The paid-retry API is a separate
+Resume with `approve_paid_analysis_retry: true` and a nonempty `reviewer`;
+include the current `analysis_attempt_id` and `analysis_event_seq` from the
+recovery descriptor so a stale page cannot approve a different failure. The
+approval is recorded in run history. It quotes new work within the existing
+budgets. Repeating local recovery or
+settlement after a browser restart cannot adopt or settle the same event twice.
+Terminal resolution frees retained remote-operation queue capacity only if
+the job has no unfinished attempts; unrelated unknown work keeps its slots.
+The worker also repairs historical retained remote slots on terminal jobs
+whose attempts are all terminal. Unknown attempts and local-work holds are
+never discarded by this cleanup.
+
+### Automatic blueprint preparation (scene review removed)
+
+Auto proceeds from validated analysis to blueprint preparation without an AI
+scene review or manual scene approval. The dashboard no longer shows scene
+review cards, Manual fix, Proceed anyways, or Accept source timing controls.
+The old `ai_scene_review` creation option is ignored; `scene_review_action`
+Resume requests are rejected. New `review_blueprint` provider work cannot be
+quoted or executed.
+
+Semantic warnings remain recorded, but do not pause Auto. Original confidence
+is preserved: preparation never claims a human or AI review passed. The audit
+event is `prepared_without_scene_review`, and the run reports that descriptions
+were not independently reviewed. Timing, source identity, completed analysis,
+authentication, budgets and final technical QC are still required.
+
+Existing content-review pauses can use ordinary **Resume**. An earlier unknown
+paid request still blocks Resume until reconciled; no old review is retried.
+Historical receipts, adopted corrections and accounting are preserved. Final
+video QC and the Reviews tab for generated assets/finals are separate features
+and remain available.
+
+In live mode, starting/resuming a run checks the worker heartbeat, queue flags
+and dispatch capacity. Before new paid scope is authorized, the selected
+provider's non-billable readiness check must pass. These checks do not reserve
+money, raise limits or submit work. They cannot guarantee that credentials or
+network access will remain valid later, and checking a TTS key's presence is
+not a live provider-credit balance check.
 
 Automatic mode performs real intermediate checks (technical validity,
 duration/resolution coverage per asset, caption alignment, optional
@@ -140,15 +336,15 @@ configured route; the pause block offers the explicit downgrade
 (*finish on technical checks only* / *finish without music*) — the
 run never silently weakens a requested capability.
 
-**Copy provenance (declared).** In automatic mode the control (A)
-speaks the seed's own words — verbatim transcript-derived narration is
-the close-adaptation contract, and B/C/D treatments may only rearrange
-source vocabulary, never invent facts. When generated copy cannot fit
-its beat at the voice's documented pace, the bounded repair reverts
-that one segment to the source-derived line rather than inventing
-words. This is a deliberate *close-copy* workflow: the handover's
-"original copy" requirement applies to authored scripts; making the
-exception an explicit per-run choice remains a follow-up (W02).
+**Copy provenance (declared).** The qualified script model lightly
+paraphrases A while preserving source facts, order and meaning; B/C/D
+change one declared beat each. The deterministic fallback uses source
+words and is reported as a fallback, not an original adaptation. Numeric
+per-beat word limits guide the model. Overlong copy keeps complete
+sentences or a valid source-derived treatment; it is never cut midway
+through a sentence. When neither fits, one separately quoted script
+rewrite is allowed before pausing with an explicit failure. Measured
+speech fit remains authoritative and may still require shorter copy.
 
 ### Manual lane — work left to right through the tabs
 
@@ -191,11 +387,11 @@ Then fill in three forms — plain language, no JSON:
 
 Finally **Mark analysis complete**. From then on:
 
-- **Accept source timing** on the Seeds tab works — the approval is
-  bound to the exact file bytes *and* this analysis revision.
+- Auto prepares source timing against the exact file bytes and analysis
+  revision without a separate scene approval.
 - If the source file changes, or anyone edits the analysis afterwards,
-  downstream approvals go **stale** and you'll be asked to re-review
-  and re-accept — by design, not a bug.
+  downstream work goes **stale** and must be rebuilt and validated against
+  the new revision — by design, not a bug.
 
 > If the analysis shows **blocked**: the box names the problem and the
 > recovery action. The common one is *transcript unavailable* — the
@@ -216,17 +412,29 @@ Finally **Mark analysis complete**. From then on:
 > import, re-run the analysis and the picture grids regenerate linked
 > to your words.
 
-Then continue on the Seeds tab: check the extracted beats → **Accept
-source timing** → **Prepare four variants**.
+Then use Auto to prepare the blueprint and four variants. Source timing is
+validated automatically; there is no separate **Accept source timing** action.
+New Auto runs save `source_timing.v1`: suspicious word durations, missing text,
+ordering and bounds are checked before assigning copy to scenes. Up to two
+local cropped-audio repairs per passage are persisted across restarts. A repair
+must preserve the source's spoken words and pass timing validation. If both
+attempts fail, passage timing is usable only when exactly one beat contains the
+whole passage; the UI explicitly says word timing is unavailable. Otherwise a
+technical pause names the affected passage and asks for reliable timing. This
+does not restore scene review or an approval bypass. Corrected evidence is
+run-owned and source/transcript/policy-bound; historical evidence is untouched.
+Final captions still use the replacement narration's own reliable alignment.
 
 ### Step 2 — Plan: review the plan, get a price, approve it
 
 1. On the **Plan** tab, pick your experiment in the **Experiment**
    dropdown at the very top of the page.
 2. The draft plan is editable JSON — the four variants' copy, footage,
-   regions and declared changes. The default B/C/D treatments each vary
+   regions and declared changes. Legacy/controlled-region B/C/D treatments vary
    one picture request and its caption (hook, body and ending respectively),
-   while every unchanged shot is shared with A. Edit it, or **Load current draft** → tweak →
+   while unchanged shots are shared with A. Full-video policy runs instead
+   generate every B/C/D beat independently; Compare labels the additional
+   footage changes and the preserved script hypotheses. Edit it, or **Load current draft** → tweak →
    **Save revised draft** (makes a new revision; quotes are per-revision).
 3. **Prepare current quote** — the system prices every operation and
    shows the totals (credits and/or cost). Nothing has been spent yet.
@@ -244,6 +452,7 @@ Every job shows a state:
 |---|---|
 | `queued` | waiting for a dependency or a worker slot |
 | `running` | in progress |
+| `waiting` | remote operation unfinished, capacity wait, or retry backoff; not a failure |
 | `blocked` | needs you — a review, a failure, or operator input |
 | `done` | finished |
 
@@ -276,6 +485,16 @@ Two kinds of review, both required:
    copy byte-for-byte, and shows the Drive link and cleanup state.
 4. If a delivery fails before upload, re-authorizing retries the
    *transfer only* — it never re-renders or re-charges.
+
+For new experiments marked `verified_receipts.v1`, **Verify an existing Drive
+file** reconciles an already-uploaded final without uploading anything. Enter
+the exact file ID and filename under the configured account/folder. Current
+revision, final QC, file identity, parent, name, bytes and checksum must all
+match. Duplicate candidates, missing checksums, stale revisions or unavailable
+verification remain unresolved. A verified receipt and its delivery-only queue
+entry update together, with external provenance and no fabricated creative
+approval. Cleanup remains separate. This action is unavailable for historical
+experiments; the twelve completed QA delivery statuses are not backfilled.
 
 ### Step 6 — Compare & Studio (optional polish)
 
@@ -393,11 +612,11 @@ you explicitly authorize each destination.
   captions / lip-sync footage are flagged instead of silently reused.
 - **Publishing is gated.** Posting publicly requires its own explicit
   authorization and verified delivery; it can't happen by accident.
-- **No production without understood references.** A blueprint can only
-  be accepted after a reviewed deep analysis of the exact source bytes;
+- **No production without bound reference evidence.** A blueprint can only
+  be prepared after completed deep analysis of the exact source bytes;
   quoting, authorizing, starting or recovering production all re-check
   that binding. Editing the analysis afterwards stales the approval
-  until you re-review and re-accept.
+  until the derived blueprint is prepared against the new analysis.
 - **Late evidence can't win an earlier checkpoint.** A metric snapshot
   taken materially after its checkpoint age is labeled late and
   excluded from that evaluation — a number measured at 28 days never
@@ -420,8 +639,8 @@ you explicitly authorize each destination.
   the reason noted — never a silent green.
 - **Declared uncertainty isn't upgraded on vibes.** When the analysis
   provider marks a scene observation uncertain, it stays uncertain
-  unless independent local evidence (a detected scene cut or the media
-  head) anchors it — transcript overlap alone doesn't promote it.
+  during automatic preparation. Semantic warnings remain recorded and do
+  not create a scene-review gate; no human or AI scene approval is implied.
 - **A crash can't double-charge.** Paid effect plans are content-keyed
   and their plan/authorization/job ids are persisted as work is queued;
   a restart reuses them instead of submitting a second paid job set.
@@ -456,8 +675,8 @@ you explicitly authorize each destination.
 |---|---|
 | Job `failed` in Queue | Open the job — the error field says why. Use **Retry** for local failures, **Reconcile** when a remote operation might have succeeded. |
 | `blocked` jobs | Usually waiting on a review or a delivery authorization — check Reviews and Delivery. |
-| "Accept source timing" refuses with *analysis required / incomplete / blocked* | The deep analysis on the Analysis tab isn't finished or hit a blocker — open it, finish the forms or resolve the blocking item, then mark it complete. |
-| Buttons refuse with *analysis stale* | The source file changed, or the analysis was edited after approval. Re-run/re-review the analysis, then re-accept the blueprint — stale approvals can never slip through. |
+| Blueprint preparation refuses with *analysis required / incomplete / blocked* | The deep analysis is incomplete or blocked. Resolve that underlying analysis problem; scene approval is no longer a separate step. |
+| Buttons refuse with *analysis stale* | The source file changed, or the analysis was edited after preparation. Refresh the analysis and let Auto prepare the blueprint against the current source — stale evidence cannot authorize production. |
 | Provider not ready | Providers tab → **Re-check readiness** → the operator-language hint says what to fix (reconnect, set budget, qualify). |
 | Dashboard looks stale | The page refreshes itself every few seconds; provider readiness loads once — use **Re-check readiness** to force it. |
 | Something feels lost after a crash | Close the browser worry-free — jobs are durable on disk. Restart the API/worker and press **Start / recover this revision**. |
@@ -470,7 +689,7 @@ you explicitly authorize each destination.
 | Auto run paused `final_qc_flagged` | A final's automated review came back uncertain or failed. Watch it yourself, then either *Accept after human review* (records a named human verdict) or *Recheck once* (one fresh paid review — never an unbounded loop). Plain Resume just re-reads the recorded verdicts. |
 | Auto run paused `final_qc_blocked` | A mandatory technical or changed-region check did not pass on the *current* finals — missing, stale, failed or unbound evidence. A final existing on disk is not validation; Compare shows each variant's validation state and the actionable problems. Fix the cause and Resume — finals rendered under a superseded plan are re-rendered automatically (bounded), never rubber-stamped. |
 | Auto run paused `analysis_invalid` | The provider's analysis failed structural timing validation (non-finite/overlapping beats, material gaps, or coverage far short of the verified media duration). It was never stored or built on. The paid attempt may still have billed — settle its hold, then Resume for a fresh analysis, or attach corrected observations. |
-| Auto run paused `blueprint_flags` | The automated beat review left unresolved or uncertain flags. Review the flagged beats in the Analysis tab and accept the blueprint yourself — auto-pipeline can never override flags — then Resume. |
+| Historical `blueprint_flags` or `ai_scene_review_*` pause | Scene review was removed. Use Resume to continue technical validation if all previous paid requests are resolved. Unknown requests still require reconciliation; no review is retried. Changed source bytes still cannot reuse old analysis. |
 | Auto run paused `variation_lost` / `variation_missing` | A repair or budget bound would have erased a declared B/C/D variation (the changed copy ended up identical to A). The run refuses to ship identical variants silently — edit the segment copy or the variation declaration, then Resume. |
 | Auto run paused `speech_fit_failed` | Even the source-derived fallback line cannot fit its beat at the selected voice's pace. Shorten the copy, pick another beat boundary or a different voice, then Resume — fitting limits are never loosened to force success. |
 | Auto run paused `draft_failed` | The draft could not be created — e.g. the generation route's aspect/resolution has no known output dimensions, so no output profile could be frozen. Fix the route/settings, then Resume. |
@@ -536,5 +755,109 @@ you explicitly authorize each destination.
   retain the old dispatch job (F02). None of these are new spend risks —
   they are correctness gaps being patched.
 
+## 7. Future-run safety update (2026-09-21)
+
+New Auto runs save their workflow, scene-prompt and visual-QC versions. Existing
+runs keep their saved behavior; creating a new run does not upgrade or resume an
+older paused run. This update supersedes the older recovery advice above for
+version-2 runs:
+
+- Analysis forms belong to the selected source and loaded revision. If another
+  edit or background stage changes the source, reload before saving. Unsaved
+  edits are kept when newer analysis becomes available. Old run evidence is
+  retained, not overwritten by a later edit.
+- QC rechecks temporarily show **pending**. Wait for the committed result before
+  accepting or delivering that export. A completed recheck replaces the previous
+  verdict for those exact video bytes. Restore a missing QC provider route; a
+  version-2 run cannot disable required QC on Resume.
+- Planned cast, wardrobe and scene changes are part of the creative brief, not
+  automatically considered character drift. Generated clips receive scene-local
+  instructions. These checks do not reintroduce manual or AI scene approval.
+- **Reference-conditioned character continuity is not yet enabled.** The code
+  supports variant-specific references extracted from the first planned clip,
+  but the Google image-reference route needs its own separately authorized live
+  qualification. Text-only qualification does not enable it. A disabled route
+  pauses explicitly; it never silently substitutes text-only generation.
+- Provider throttling or retry backoff is **waiting**, with the next retry shown.
+  Unknown submissions require reconciliation rather than another submission.
+  Delivery recovery likewise verifies an existing remote file before any safe
+  retry; a lost acknowledgement is not permission to upload a duplicate.
+- Compare's **Linked seeking** moves players to the same timestamp. It does not
+  synchronize play/pause. Publishing remains separately authorized and is not
+  enabled by this update.
+
+Implementation, offline verification and rollout status are recorded in
+`docs/factory-reports/FUTURE-RUN-SAFETY-2026-09-21.md`.
+
 *Questions or stuck states: `docs/factory-reports/REPAIRS.md` is the
 engineering ledger; this guide covers operator use only.*
+
+## 8. Completed flash-cut run and recovery notes (2026-09-22)
+
+### Find and compare the finished videos
+
+Open the dashboard, select **exp-auto-2c9de6ddf2e34d5c · revision 3**, then
+**Compare**. A/B/C/D are each approximately 14.13 seconds, 720×1280. A is the
+close adaptation; B changes the opening, C the body, D the ending. Footage also
+varies, so these are multi-variable creative comparisons, not isolated tests.
+Use each player's controls to play/pause; **Linked seeking** aligns positions
+but does not synchronize playback.
+
+The run finished with generation, QC and delivery complete. Its verified files
+are in [factory-deliveries](https://drive.google.com/drive/folders/1dDy1kKvQI8gio3k1oOjgqeIepjZnyiLM).
+Delivery uses the account and destination saved for the run. Video-specific
+render services were stopped; dashboard playback remains available. Nothing
+was scheduled or published, and automated QC did not create human approval.
+
+### Understand the budget
+
+This run had a **$50 cumulative USD ceiling for all four variants and repairs**,
+plus a separate 10,000 prepaid TTS-credit allowance. Completion-time headroom
+was $33.479344 and 9,361 credits. Outstanding estimates and unresolved holds
+count against available funds; the difference is not necessarily invoiced spend.
+
+The hardened workflow gives each **new** automatic run its own versioned
+**$50 cumulative USD guardrail**. The run status shows the cap, committed
+amount and remaining allowance. Pending and ambiguous holds count immediately;
+later confirmed usage also counts. The guardrail cannot be reused by another
+run or removed with Resume. Existing runs keep their saved spending behavior.
+
+This default does not override a stricter aggregate, provider or category
+ceiling, and it does not cover provider-credit units such as prepaid TTS
+credits. A lower applicable ceiling still pauses the run and names the blocker.
+The completed run above does not authorize new qualification tests,
+subscription changes or spending over any applicable limit.
+
+### When progress slows or pauses
+
+| What you see | Safe next step |
+| --- | --- |
+| Provider still generating | Keep the original job; a slow request is not permission to submit another. One clip in this run took about ten minutes. |
+| Unknown provider outcome / HTTP 500 | Preserve its identity and hold. Do not repeatedly Resume or recreate the request. Use evidence-backed reconciliation or supported independent recovery. |
+| Completed analysis hit its response cap | On new hardened runs, the app may automatically plan the bounded saved-response recovery if the original completed payload is present and the run has authority. This is a new request identity, not a replay. An HTTP 500 or submission with an unknown outcome still pauses. |
+| Returned but invalid analysis | Use the specific bounded recovery offered for that run; malformed completed output, missing evidence and unknown transport outcomes are different states and not every one is safe to retry. |
+| Google sign-in required | Complete sign-in through the supported flow. Never paste tokens/passwords into logs; authentication does not resolve old financial holds. |
+| Narration cannot fit | The app may make at most two distinct repair attempts per affected segment. An unusable completed first rewrite is retained as evidence and can advance to the second attempt. Unknown outcomes never advance automatically; do not reset counters or bypass timing. |
+| Editorial plan incomplete | A completed but invalid plan may be replaced by conservative source-bound coverage and exact observed cuts only when variant ownership, clip ranges and timing are unambiguous. Conflicts, invalid JSON and unknown provider outcomes pause with a technical reason. |
+| QC flags original source subtitles as missing | Replacement captions may be intentional. Inspect the verdict and current script; request a fresh review after correcting the policy, not a fabricated human acceptance. |
+| Clean up reports no eligible history | Protected or unresolved work is retained. Archive is not deletion or accounting settlement. |
+
+Execution capacity and accounting are separate: a proven completed response can
+free a worker slot while its uncertain charge remains held. Completion of the
+video does not settle that charge.
+
+### What this successful run does not prove
+
+- The completed acceptance run required assistant corrections. The subsequent
+  hardening work improves bounded automatic recovery, but fully unattended
+  operation is not established until the complete offline qualification and a
+  separately authorized live acceptance run pass.
+- New analysis routes were qualified narrowly for this run/source. Check current
+  qualification and expiry before reuse; reference-conditioned generation remains disabled.
+- Jev ran in shadow mode; better cost/quality has not been measured.
+- Every decoded frame was processed by PE, but this is not exhaustive visual or
+  lip-sync review. Character continuity remains a quality limitation.
+- This source was continuous footage. It does not qualify rapid-cut reproduction;
+  unreliable audio rhythm is an honest measurement, not a failed beat grid to invent.
+- Focused regressions and real local renders passed, not a fresh full release
+  suite after the final patches. See the current handover for precise evidence.

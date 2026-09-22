@@ -63,6 +63,11 @@ def bootstrap(root, *, providers=None, drive=None, settings=None,publisher=None,
     services.ref_analysis=ReferenceAnalysisService(
         db,seeds,artifacts,data/'analysis-projects',
         HypitTransport(root/'scripts'/'hypit.sh'))
+    from .analysis.source_evidence import SourceEvidenceService, binding_from_db
+    from .services.source_work import SourceEvidenceWork
+    services.source_evidence = SourceEvidenceService(db, data/'source_evidence',
+        verify_lease=scheduler._verify_lease, current_binding=lambda rid: binding_from_db(db, rid))
+    services.source_work = SourceEvidenceWork(services, Path(__file__).resolve().parents[2])
     from .publishing.service import PublishingService
     from .analytics.service import ReadbackService
     from .learning.service import LearningService
@@ -96,5 +101,5 @@ def bootstrap(root, *, providers=None, drive=None, settings=None,publisher=None,
     import json
     with db.uow() as u:
         u.conn.execute("INSERT OR REPLACE INTO meta(key,value) VALUES('recovery_roots',?)",(json.dumps(
-            {name:str(data/name) for name in ('providers','compositions','renders','processes','studio')}),))
+            {name:str(data/name) for name in ('providers','compositions','renders','processes','studio','source_evidence')}),))
     return services

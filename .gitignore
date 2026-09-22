@@ -20,9 +20,12 @@ logs/
 !/data/costs/.gitkeep
 /data/factory/
 /data/factory-qa*/
+/data/factory-reset-backups/
+/data/factory-rollout-backups/
 
 # Vendored repos — re-clone via pins in docs/vendor-pins.md
 vendor/
+apps/factory-dashboard/public/qa-media/
 
 # OS
 .DS_Store

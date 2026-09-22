@@ -90,3 +90,29 @@ instruction to reactivate it or buy credits.
 Prioritize F01/F03/F04/F05, then repair revision/expiry/translation recovery,
 proxy selection and publication verification. Complete financial and acceptance
 work against the corrected, identified source revision.
+
+## 2026-09-20 live-run dispositions (nFfa1wMBruo)
+
+Browser-driven production of `https://www.youtube.com/shorts/nFfa1wMBruo` on
+`feat/factory`, autorun `auto-22d6ceaed2f2433c`, experiment
+`exp-auto-22d6ceaed2f2433c` rev 2. This does **not** close the inventory
+above unless a finding actually reproduced and was fixed. Human creative
+acceptance was not invented.
+
+| ID | Disposition after this run |
+| --- | --- |
+| F01 | Not reproduced (no replacement finals after a cached creative verdict). Still open. |
+| F02 | Not reproduced. Still open. |
+| F03 | Not reproduced as an edit-while-paid-jobs-active case. Still open. |
+| F04 | Not reproduced (source was 30fps). Still open for 24→30. |
+| F05 | **Partially closed.** Unchanged-region mix QC smeared a 22,050 Hz beat boundary when forced through 48 kHz; native-rate compare now passes C/D without regenerating Vertex clips. Export-vs-mix audio content/alignment check is still open. |
+| F06–F12 | Not the blocking path of this seed. Still open as recorded. |
+| W01 | **This video's authorized Drive workflow is done** (verified parent/name/bytes/MD5, ports 5184–5188 free). Autorun `_finish` still marks done with a delivery-pending note — the code gap remains. |
+| W02 | Unchanged: control A is still source-derived narration. |
+| W03 | Unchanged: historical overrun not reconciled. This run's VG/TTS holds are recorded in `DEV_LOG.md` (Vertex 7,134,640 usd_micros held on 8 downloaded clips; 765,130 released pre-acceptance; TTS 222 credits). Not invoice-confirmed. |
+| W04 | This run is one scoped live production + Drive delivery. It is not native publication, elapsed analytics horizons, or a grounded next-round decision. |
+| W05–W06, L01–L04 | Unchanged. |
+
+Offline suites after the live-run repairs: backend **1139 passed** (703.44s),
+dashboard **35 passed**, dashboard production build green. Frozen schemas and
+fixtures were not changed.

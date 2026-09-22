@@ -11,9 +11,13 @@
 # All liveness/pgrep checks match on that absolute path — another
 # checkout's factory processes never match.
 set -u
+umask 077
 cd "$(dirname "$0")/.."
 ROOT="$PWD"
 PYBIN="$ROOT/.venv/bin/python"
+# Worker/API logs are redirected files; without unbuffered stdio they
+# can stay empty for the life of a long live run.
+export PYTHONUNBUFFERED=1
 mkdir -p .run
 
 pid_alive() {
@@ -32,7 +36,7 @@ api_pid=$(cat .run/api.pid 2>/dev/null || true)
 if pid_alive "$api_pid" "serve" || [ -n "$(scoped_pgrep serve)" ]; then
   echo "  api:    already running"
 else
-  nohup "$PYBIN" -m modules.factory.cli serve --port 8100 >> .run/api.log 2>&1 &
+  nohup "$PYBIN" -m modules.factory.cli serve --port 8100 >/dev/null 2>&1 &
   echo $! > .run/api.pid
   disown
   echo "  api:    started (pid $(cat .run/api.pid)) -> .run/api.log"
@@ -41,7 +45,7 @@ worker_pid=$(cat .run/worker.pid 2>/dev/null || true)
 if pid_alive "$worker_pid" "worker" || [ -n "$(scoped_pgrep worker)" ]; then
   echo "  worker: already running (only one may run)"
 else
-  nohup "$PYBIN" -m modules.factory.cli worker >> .run/worker.log 2>&1 &
+  nohup "$PYBIN" -m modules.factory.cli worker >/dev/null 2>&1 &
   worker_pid=$!
   echo "$worker_pid" > .run/worker.pid
   disown

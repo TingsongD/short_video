@@ -69,12 +69,77 @@ def test_expand_within_limit():
     assert fit["allocations"][0]["duration_s"] == 4
 
 
+def test_future_split_retry_keeps_allocation_identity(stack):
+    from modules.factory.domain.records import ExperimentRevision
+    from modules.factory.execution.effects import EffectService
+    from modules.factory.testing.fakes import ProviderError
+    db, sched, provider, adapter, arts, svc = stack
+    with db.uow() as u:
+        u.records.put(ExperimentRevision(schema_version='experiment.v1', id='exp:exp1',
+            experiment_id='exp1', revision=1, packaging={'workflow': {'version': 2}}))
+    out = svc.plan('split-safe', 'exp1', 1, [{'variant': 'A', 'slot': 's1',
+        'duration_s': 12, 'request': {'prompt': 'scene', 'settings': {}, 'refs': []}}],
+        'jimeng_canvas', 'seedance_2.0_fast_vip', [4, 8], now=NOW)
+    authority = approve_production(svc, 'split-safe')
+    svc.submit('split-safe')
+    job = sched.claim()
+    picture = next(n for n in out['nodes'].values() if n['kind'] == 'picture')
+    key = picture['node_key']
+    effects = EffectService(db, svc.executor)
+    aid = effects.prepare(authority, key + ':0', job['id'], job['fencing_token'], sched.worker_id, 1)
+    with pytest.raises(ProviderError):
+        svc.executor.submit(aid, lambda: provider.submit({'p': 1}, faults=('reject-before-accept',)))
+    sched.defer(job['id'], job['fencing_token'], 'explicit-recovery', 0)
+    assert svc.run_next()['outcome'] == 'submitted'
+    rows = db.conn.execute("SELECT a.*,i.body AS intent FROM attempts a JOIN intents i ON json_extract(i.body,'$.attempt_id')=a.id WHERE a.job_id=? ORDER BY a.attempt_seq", (job['id'],)).fetchall()
+    assert [r['attempt_seq'] for r in rows] == [1, 2, 3]
+    assert [json.loads(r['intent'])['extra']['operation_key'] for r in rows] == [key + ':0', key + ':0', key + ':1']
+    assert len({r['remote_id'] for r in rows if r['remote_id']}) == 2
+
+
 def test_expand_over_max_splits_declared():
     fit = expand_take(12.0, [4, 8])
     assert fit["status"] == "ok"
     assert [a["duration_s"] for a in fit["allocations"]] == [8, 4]
     assert all(a["split"] for a in fit["allocations"])
     assert "declared split" in fit["split_reason"]
+
+
+@pytest.mark.parametrize('state', ['prepared', 'failed'])
+def test_future_allocation_never_replaces_unresolved_prepared_work(stack, state):
+    from modules.factory.domain.records import ExperimentRevision, Authorization
+    from modules.factory.execution.effects import EffectService
+    db, sched, provider, adapter, arts, svc = stack
+    with db.uow() as u:
+        u.records.put(ExperimentRevision(schema_version='experiment.v1', id='exp:exp1',
+            experiment_id='exp1', revision=1, packaging={'workflow': {'version': 2}}))
+    out = svc.plan('prepared-safe', 'exp1', 1, [{'variant':'A', 'slot':'s1',
+        'duration_s':4, 'request':{'prompt':'scene','settings':{},'refs':[]}}],
+        'jimeng_canvas', 'seedance_2.0_fast_vip', [4,8], now=NOW)
+    original = approve_production(svc, 'prepared-safe')
+    svc.submit('prepared-safe')
+    job = sched.claim()
+    key = next(n['node_key'] for n in out['nodes'].values() if n['kind'] == 'picture')
+    effects = EffectService(db, svc.executor)
+    aid = effects.prepare(original, key + ':0', job['id'], job['fencing_token'], sched.worker_id, None)
+    auth = Authorization(**json.loads(db.uow().records.get('authorization', original)['body']))
+    auth.id = 'auth:prepared-safe:new'
+    auth.created_at = '2099-01-01T00:00:00Z'
+    svc.authorize('prepared-safe', auth, 'offline-fixture-account',
+                  ['fixture:prepared-safe:jimeng_credits'], auth.valid_until)
+    if state == 'failed':
+        # Simulate a historical terminal label without proof of non-submission.
+        with db.uow() as u:
+            u.conn.execute("UPDATE attempts SET status='failed' WHERE id=?", (aid,))
+    sched.defer(job['id'], job['fencing_token'], 'explicit-recovery', 0)
+    outcome = svc.run_next()
+    assert db.conn.execute('SELECT count(*) FROM attempts WHERE job_id=?', (job['id'],)).fetchone()[0] == 1
+    if state == 'prepared':
+        assert outcome['outcome'] == 'submitted'
+        assert svc.executor._attempt(aid)['remote_id']
+    else:
+        assert outcome['error'] == 'pre_acceptance_evidence_required'
+        assert provider.effect_counts()['submit'] == 0
 
 
 def test_expand_remainder_is_trimmed():

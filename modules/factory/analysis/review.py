@@ -17,6 +17,31 @@ class BlueprintReview:
     def __init__(self, db):
         self.db = db
 
+    def prepare_automatically(self, blueprint_id, expected_hash):
+        """Prepare structurally valid analysis without a scene-review verdict.
+
+        `accepted` is the downstream template prerequisite, not a claim that
+        the content was reviewed. Semantic warnings and confidence are kept.
+        """
+        bp = self._load(blueprint_id)
+        if bp.content_hash != expected_hash:
+            raise ContractError('revision_mismatch', 'content_hash')
+        bp.validate_or_raise()
+        errors = check_partition([b.target for b in bp.beats], bp.target_frames)
+        if errors:
+            raise ContractError('invalid_blueprint_timing', 'beats', str(errors))
+        from .deep import analysis_gate
+        analysis = analysis_gate(self.db, bp.seed_id,
+                                 bp.provenance.get('artifact_sha256', ''))
+        warnings = self.flags(blueprint_id)
+        with self.db.uow():
+            self._update(blueprint_id, status='accepted',
+                         analysis={'id': analysis.id, 'revision': analysis.revision})
+            self._event(blueprint_id, 'prepared_without_scene_review',
+                        {'hash': expected_hash, 'review_performed': False,
+                         'content_warnings': warnings})
+        return self._load(blueprint_id)
+
     def flags(self, blueprint_id):
         bp = self._load(blueprint_id)
         flags = []

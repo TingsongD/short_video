@@ -7,17 +7,85 @@ not impersonate human creative approval.
 """
 import json
 import subprocess
+import math
+
+
+def legacy_observations_match(bp, payload, source_sha):
+    """Read-only compatibility for pre-binding blueprints, never source-only reuse.
+
+    Every observable field must match. Confidence may have changed through
+    review; clocks allow only their existing one-frame quantization.
+    """
+    from ..analysis.analyzer import parse_analysis
+    from ..domain.errors import ContractError
+    if bp.provenance.get('artifact_sha256') != source_sha:
+        return False
+    try:
+        parsed = parse_analysis(payload)
+        observed = parse_analysis({**payload, 'transcript': bp.speech.get('transcript') or []})
+        fps = bp.clock.num / bp.clock.den
+        return (len(bp.beats) == len(parsed['beats'])
+            and observed['transcript'] == parsed['transcript']
+            and bp.audio.get('music_role') == parsed['music']['role']
+            and bp.provenance.get('uncertainty', []) == parsed['uncertainty']
+            and all(b.id == p['id'] and b.role == p['role'] and b.visual_event == p['visual_event']
+                and math.isclose(b.target.start / fps, p['start_s'], abs_tol=1/fps)
+                and math.isclose(b.target.end / fps, p['end_s'], abs_tol=1/fps)
+                for b, p in zip(bp.beats, parsed['beats'])))
+    except (ContractError, AttributeError, KeyError, TypeError, ZeroDivisionError):
+        return False
+
+
+def blueprint_review_cards(services, run):
+    """Evidence for human review, never an automatic semantic verdict.
+
+    A frame's existence supports inspection, not the truth of a model's
+    description. Missing cut/speech anchors are shown as limitations, not
+    fabricated into an event or a spoken line.
+    """
+    from ..analysis.service import blueprint_id_for
+    from ..domain.errors import ContractError
+    try:
+        bp = services.analysis.get(blueprint_id_for(run.seed_id))
+        flags = services.blueprints.flags(bp.id)
+    except ContractError:
+        return []
+    transcript = {t['id']: t.get('text', '') for t in bp.speech.get('transcript') or []}
+    fps = bp.clock.num / bp.clock.den
+    cards = []
+    for beat in bp.beats:
+        related = [f for f in flags if f['detail'].startswith(f'beat {beat.id}:')]
+        if not related:
+            continue
+        images = []
+        for aid in beat.evidence_ids:
+            row = services.db.uow().artifacts.get(aid)
+            if row and row['kind'] == 'image':
+                images.append(aid)
+        reasons = []
+        if beat.confidence != 'reviewed':
+            reasons.append('The scene description has not been independently confirmed. A continuous shot can contain several story beats without a cut.')
+        if not beat.speech_segment_id:
+            reasons.append('No linked speech. Check the visible action and on-screen text; a silent reveal does not justify inventing narration.')
+        if beat.role == 'product_reveal':
+            reasons.append('Check the role: personal announcements and story surprises should use body/payoff, not product reveal. Edit observations if needed.')
+        cards.append({'beat_id': beat.id, 'start_s': beat.target.start / fps,
+            'end_s': beat.target.end / fps, 'description': beat.visual_event,
+            'role': beat.role, 'declared_confidence': beat.confidence,
+            'speech': transcript.get(beat.speech_segment_id, ''), 'evidence_ids': images,
+            'reasons': reasons, 'flags': [f['flag'] for f in related],
+            'blueprint_id': bp.id, 'content_hash': bp.content_hash})
+    return cards
 
 
 def auto_review_beats(payload, evidence=None):
     """Upgrade beat confidence only where evidence supports it.
 
     'reviewed' requires a visual description, a sane duration, transcript
-    overlap for speech-critical roles, and — for beats the provider
-    itself declared uncertain or unresolved — corroborating local visual
-    evidence: a detected scene boundary anchoring the beat's start (or
-    the media head). Without that anchor the declared uncertainty stands
-    and the blueprint gate flags the beat for a human."""
+    overlap for speech-critical roles, and a local scene boundary at the
+    start (or media head). Provider-supplied 'reviewed' and evidence IDs
+    are not trusted approval. This is a mechanical interval check, not
+    human confirmation of the visual description or creative choice."""
     beats = payload.get("beats") or []
     transcript = payload.get("transcript") or []
     bounds = [float(c.get("t", -1)) for c in
@@ -25,12 +93,11 @@ def auto_review_beats(payload, evidence=None):
     speech_critical = {"product_reveal", "proof", "hook", "cta"}
     for b in beats:
         declared = str(b.get("confidence") or "").strip().lower()
-        if declared in ("uncertain", "unresolved"):
-            start = float(b.get("start_s") or 0)
-            anchored = start <= 0.05 or b.get("evidence_ids") or \
-                any(abs(t - start) <= 0.25 for t in bounds)
-            if not anchored:
-                continue
+        start = float(b.get("start_s") or 0)
+        anchored = start <= 0.05 or any(abs(t - start) <= 0.25 for t in bounds)
+        if not anchored:
+            b["confidence"] = "unresolved" if declared == "unresolved" else "uncertain"
+            continue
         dur = (b.get("end_s") or 0) - (b.get("start_s") or 0)
         if not str(b.get("visual_event") or "").strip() or dur < 0.4:
             b["confidence"] = "uncertain"

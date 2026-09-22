@@ -109,6 +109,22 @@ def test_due_job_is_not_claimable_early(db):
     assert job["id"] == "readback:pub-1:24h"
 
 
+def test_seconds_until_due_uses_readback_clock(db):
+    class RB:
+        clock = staticmethod(
+            lambda: datetime(2026, 9, 19, 12, tzinfo=timezone.utc))
+
+        def collect(self, publication_id, horizon, now=""):
+            raise AssertionError("collect must not run")
+
+    svc = CheckpointService(db, _queue(db), RB())
+    svc.schedule_for(_public_pub(), now=NOW)
+    wait = svc.seconds_until_due("pub-1", "72h")
+    # published 2026-09-17T10:00 + 72h = 2026-09-20T10:00; clock is
+    # 2026-09-19T12:00 → a bit under 22 hours, never a 2s poll.
+    assert 20 * 3600 < wait < 24 * 3600
+
+
 # ---------------------------------------------------- collection --
 
 def test_collect_marks_schedule_collected_or_late(db):

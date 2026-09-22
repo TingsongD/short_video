@@ -33,7 +33,10 @@ class AudioWork:
         sid='speech-'+uuid.uuid4().hex
         voice={k:req.get(k) for k in ('voice_id','model','language','settings')}
         self.speech.plan_segment(sid,variant.id,req['text'],voice,seg['target'],utcnow())
-        binding={'experiment_id':eid,'revision':revision,'variant_key':key,'segment_id':segment,'speech_id':sid,'job_id':source,'clock':exp.output_clock}
+        binding={'experiment_id':eid,'revision':revision,'variant_key':key,'segment_id':segment,'speech_id':sid,'job_id':source,'clock':exp.output_clock,
+                 'caption_preset':exp.packaging.get('run_policies',{}).get('captions','words.v1')}
+        if exp.packaging.get('flashcut_policy'):
+            binding['semantic_alignment']='final_alignment.v1'
         with self.s.db.uow() as u:u.conn.execute('INSERT INTO meta VALUES(?,?)',('speech-binding:'+sid,json.dumps(binding)))
         return self.s.commands.enqueue('speech_fit',binding,experiment_id=eid,revision=revision,phase='render')
 
@@ -48,7 +51,7 @@ class AudioWork:
         fit=self.speech.fit(sid,clock.num/clock.den)
         if not self.alignment.get(sid):self.alignment.align(sid,self.speech.get,now=utcnow())
         previous=self.s.db.uow().records.get('captionset','caps:'+sid)
-        caps=json.loads(previous['body']) if previous else self.alignment.captions(sid,self.speech.get,fit['fit'],clock,fit['speech_hash'],now=utcnow()).to_dict()
+        caps=json.loads(previous['body']) if previous else self.alignment.captions(sid,self.speech.get,fit['fit'],clock,fit['speech_hash'],now=utcnow(),preset=body.get('caption_preset','words.v1'),exact=bool(body.get('semantic_alignment'))).to_dict()
         return {'speech':fit,'captions':caps}
 
     def approve(self,sid,body):
@@ -79,8 +82,12 @@ class AudioWork:
                         # the synthesizer spelled differently.
                         seg['speech']={'artifact_id':speech['artifact_id'],'speech_hash':speech['speech_hash'],
                                        'source_text':speech.get('source_text'),'normalized_copy':self.speech.normalize(speech.get('source_text') or '')}
+                        if binding.get('semantic_alignment'):
+                            final=self.alignment.final_alignment(sid,self.speech.get,RationalRate(**binding['clock']),speech['speech_hash'])
+                            seg['speech'].update(speech_id=sid,alignment_hash=final['alignment_hash'])
                         attached+=1
-                        if not seg.get('captions'):seg['captions']=[{k:c[k] for k in ('start_frame','end_frame','text')} for c in caps['cues']]
+                        if not seg.get('captions') or binding.get('caption_preset') == 'phrases.v1':
+                            seg['captions']=[{k:c[k] for k in ('start_frame','end_frame','text')} for c in caps['cues']]
             if not attached:raise ContractError('speech_unattached','speech_id',sid)
         branches=[{'key':k,'factor':v.changed_factor,'regions':[x.to_dict() if hasattr(x,'to_dict') else x for x in v.allowed_regions],
             'segments':segments[k],'hypothesis':v.hypothesis,'primary_metric':v.primary_metric,'allowed_fields':v.allowed_fields,'dependent_fields':v.dependent_fields} for k,v in variants.items() if k!='A']

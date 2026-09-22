@@ -12,12 +12,13 @@ import hashlib
 import os
 import shutil
 import uuid
+from contextlib import closing
 from pathlib import Path
 
 from ..domain.errors import ContractError
 from ..domain.records import Artifact
 from ..media.probe import probe
-from ..store.uow import utcnow
+from ..store.uow import Artifacts, utcnow
 
 CHUNK = 1 << 20
 
@@ -166,12 +167,23 @@ class ArtifactStore:
 
     def path_for(self, artifact_id):
         """Resolve a registered artifact to a contained real path."""
+        return self._path_for(self._metadata(artifact_id))
+
+    def _metadata(self, artifact_id):
         if self.db is None:
             raise ContractError("no_registry", "db")
-        row = self.db.uow().artifacts.get(artifact_id)
+        with self.db.lock:
+            row = self.db.uow().artifacts.get(artifact_id)
+        return self._require_row(row, artifact_id)
+
+    @staticmethod
+    def _require_row(row, artifact_id):
         if row is None:
             raise ContractError("unknown_artifact", "artifact_id",
                                 artifact_id)
+        return row
+
+    def _path_for(self, row):
         rel = row["local_path"]
         real = (self.root / rel).resolve()
         if not str(real).startswith(str(self.root) + os.sep):
@@ -181,14 +193,30 @@ class ArtifactStore:
         return real
 
     def verified_path(self, artifact_id):
-        path = self.path_for(artifact_id)
-        row = self.db.uow().artifacts.get(artifact_id)
+        return self._verify(self._metadata(artifact_id))
+
+    def verified_media(self, artifact_id):
+        """Preview snapshot: connection is opened, used and closed on this
+        thread. Never share the API writer connection with hashing workers.
+        """
+        if self.db is None:
+            raise ContractError("no_registry", "db")
+        with closing(self.db.readonly()) as conn:
+            row = self._require_row(Artifacts(conn).get(artifact_id), artifact_id)
+        return self._verify(row), row
+
+    def _verify(self, row):
+        path = self._path_for(row)
         digest = hashlib.sha256()
-        with path.open("rb") as stream:
-            for chunk in iter(lambda: stream.read(CHUNK), b""):
-                digest.update(chunk)
-        if path.stat().st_size != row["byte_count"] or digest.hexdigest() != row["sha256"]:
-            raise ContractError("artifact_changed", "artifact_id", artifact_id)
+        try:
+            with path.open("rb") as stream:
+                for chunk in iter(lambda: stream.read(CHUNK), b""):
+                    digest.update(chunk)
+                size = os.fstat(stream.fileno()).st_size
+        except FileNotFoundError:
+            raise ContractError("referenced_missing", "artifact_id", row["id"]) from None
+        if size != row["byte_count"] or digest.hexdigest() != row["sha256"]:
+            raise ContractError("artifact_changed", "artifact_id", row["id"])
         return path
 
     # -------------------------------------------------------- recovery

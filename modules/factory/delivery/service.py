@@ -44,7 +44,7 @@ class DeliveryService:
     # ------------------------------------------------------ deliver --
 
     def deliver(self, delivery_id, final_path, name, folder_id,
-                now="", variant_plan_id="", experiment_revision=0):
+                now="", variant_plan_id="", experiment_revision=0, queue_job_id=""):
         """Persist intent → reuse a verified identical remote file →
         upload → verify. Any ambiguity reconciles remote state first."""
         now = now or _now()
@@ -53,8 +53,16 @@ class DeliveryService:
         size = Path(final_path).stat().st_size
         existing = self._get(delivery_id)
         if existing:
+            self._account_binding(existing)
+            if 'expected_account' in existing and existing.get('queue_job_id', '') != queue_job_id:
+                raise ContractError('delivery_identity_conflict', 'queue_job_id', delivery_id)
+            if existing.get('external_file_id'):
+                raise ContractError('external_verification_only', 'delivery_id')
             if existing["file_sha256"] != sha or existing["parent_folder_id"] != folder_id or existing.get("delivery_name") != name:
                 raise ContractError("delivery_identity_conflict", "delivery_id", delivery_id)
+            if (existing.get('variant_plan_id', '') != variant_plan_id or
+                    existing.get('experiment_revision', 0) != experiment_revision):
+                raise ContractError('delivery_identity_conflict', 'revision/variant', delivery_id)
             rec = self.reconcile(delivery_id, now=now)
             # A pre-upload failure leaves no attempt: the listing proved
             # nothing remote exists, so the same final transfers again.
@@ -67,9 +75,11 @@ class DeliveryService:
                      variant_plan_id=variant_plan_id,
                      experiment_revision=experiment_revision)
         d.validate_or_raise()
-        self._put(d)
-        self._set(delivery_id, remote_md5=md5, drive_link="",
-                  delivery_name=name, expected_size=size, source_path=str(Path(final_path).resolve()))
+        with self.db.uow():
+            self._put(d)
+            self._set(delivery_id, remote_md5=md5, drive_link="",
+                      delivery_name=name, expected_size=size, source_path=str(Path(final_path).resolve()),
+                      queue_job_id=queue_job_id, expected_account=getattr(self.drive, 'expected_account', ''))
         try:
             remote = self._find(folder_id, name)
         except Exception:
@@ -85,6 +95,11 @@ class DeliveryService:
             return {"status": "conflict",
                     "detail": "same name, different content — "
                               "not proof of success, not overwritten"}
+        if remote:
+            # A match lacking a checksum is uncertain, not absent. Verify it
+            # and retain the unresolved receipt rather than creating a copy.
+            return self._verify(delivery_id, remote['id'], name, folder_id,
+                                size, md5, now, reused=True)
         try:
             up = self._upload(delivery_id, final_path, folder_id, name)
             self._set(delivery_id, status="uploaded",
@@ -115,14 +130,19 @@ class DeliveryService:
         return {"id": op["operation_id"]}
 
     def _find(self, folder_id, name):
-        for f in self.drive.list_files(folder_id):
-            if f.get("name") == name:
-                st = self.drive.stat(f["id"]) or f
-                return {**f, **(st or {})}
+        matches = [f for f in self.drive.list_files(folder_id) if f.get('name') == name]
+        if len(matches) > 1:
+            raise ContractError('ambiguous_remote_match', 'delivery',
+                                'Multiple remote files match; select or resolve the duplicate before retrying')
+        if matches:
+            f = matches[0]
+            st = self.drive.stat(f['id']) or f
+            return {**f, **st}
         return None
 
     def _verify(self, delivery_id, file_id, name, folder_id, size,
                 md5, now, reused=False):
+        self._account_binding(self._get(delivery_id))
         st = self.drive.stat(file_id)
         problems = []
         if st is None:
@@ -144,26 +164,84 @@ class DeliveryService:
             self._set(delivery_id, status="uploaded",
                       cleanup_receipt=json.dumps(problems))
             return {"status": "unverified", "problems": problems}
-        self._set(delivery_id, status="verified",
-                  drive_file_id=file_id,
-                  drive_link=self.drive.link(file_id),
-                  remote_md5=md5, verified_at=now,
-                  cleanup_receipt="reused" if reused else "")
+        with self.db.uow() as u:
+            d = self._get(delivery_id)
+            self._account_binding(d)
+            if d.get('queue_job_id'):
+                # The draft may change while remote stat is in flight. Check
+                # current identity again under the same write transaction as
+                # the verified receipt and delivery-only queue transition.
+                row = u.records.get('variantplan', d['variant_plan_id'])
+                variant = json.loads(row['body']) if row else {}
+                exp = u.records.get('experimentrevision', 'exp:'+variant.get('experiment_id',''))
+                final = u.conn.execute('SELECT value FROM meta WHERE key=?',
+                    ('final:'+d['variant_plan_id'],)).fetchone()
+                final = json.loads(final[0]) if final else {}
+                job = u.jobs.get(d['queue_job_id'])
+                if (not exp or exp['revision'] != d['experiment_revision']
+                    or variant.get('experiment_revision') != d['experiment_revision']
+                    or final.get('sha256') != d['file_sha256'] or not job
+                    or job['experiment_id'] != variant.get('experiment_id')
+                    or job['revision'] != d['experiment_revision'] or job['phase'] != 'deliver'):
+                    raise ContractError('stale_revision', 'delivery', 'The current final changed during remote verification; no delivery completion was recorded.')
+            provenance = {'provenance':'external_verified'} if d.get('external_file_id') else {}
+            self._set(delivery_id, status="verified",
+                      drive_file_id=file_id, drive_link=self.drive.link(file_id),
+                      remote_md5=md5, verified_at=now, **provenance)
+            if d.get('queue_job_id'):
+                u.conn.execute("UPDATE jobs SET status='succeeded',blocked_reason=NULL,updated_at=? "
+                    "WHERE id=? AND phase='deliver' AND status='awaiting_review'",
+                    (now, d['queue_job_id']))
+            self._event(delivery_id, 'upload_verified', {'file_id':file_id, 'reused':reused})
         attempt_id = self._get(delivery_id).get("attempt_id")
         if attempt_id:
             self.executor._attach_remote(attempt_id, file_id, "succeeded", "delivery_verified")
-        self._event(delivery_id, "upload_verified",
-                    {"file_id": file_id, "reused": reused})
         return {"status": "verified", "file_id": file_id,
                 "link": self.drive.link(file_id), "reused": reused}
 
     # ------------------------------------------------------ recover --
+
+    def reconcile_external(self, delivery_id, final_path, name, folder_id, file_id,
+                           *, variant_plan_id, experiment_revision, queue_job_id=''):
+        """Read-only remote verification; this path can never transfer bytes."""
+        sha, md5, size = _sha256(final_path), _md5(final_path), Path(final_path).stat().st_size
+        prior = self._get(delivery_id)
+        if prior:
+            self._account_binding(prior)
+            if 'expected_account' in prior and prior.get('queue_job_id', '') != queue_job_id:
+                raise ContractError('delivery_identity_conflict', 'queue_job_id', delivery_id)
+            if prior.get('attempt_id'):
+                raise ContractError('delivery_attempt_requires_reconciliation', 'delivery_id')
+            expected = (sha, folder_id, name, file_id, variant_plan_id, experiment_revision)
+            actual = tuple(prior.get(k) for k in ('file_sha256','parent_folder_id','delivery_name',
+                'external_file_id','variant_plan_id','experiment_revision'))
+            if actual != expected: raise ContractError('delivery_identity_conflict', 'delivery_id')
+        else:
+            with self.db.uow():
+                self._put(Delivery(schema_version='delivery.v1', id=delivery_id, created_at=_now(),
+                    file_sha256=sha, parent_folder_id=folder_id, status='pending',
+                    variant_plan_id=variant_plan_id, experiment_revision=experiment_revision))
+                self._set(delivery_id, delivery_name=name, external_file_id=file_id,
+                    expected_size=size, remote_md5=md5, queue_job_id=queue_job_id,
+                    expected_account=getattr(self.drive, 'expected_account', ''),
+                    provenance='external_verification_pending', source_path=str(Path(final_path).resolve()))
+        matches = [f for f in self.drive.list_files(folder_id) if f.get('name') == name]
+        if len(matches) != 1 or matches[0]['id'] != file_id:
+            self._set(delivery_id, status='conflict')
+            return {'status':'conflict', 'detail':'Remote identity is absent or ambiguous; no upload was attempted.'}
+        result = self._verify(delivery_id, file_id, name, folder_id, size, md5, _now(), reused=True)
+        return {**result, 'delivery_id':delivery_id}
 
     def reconcile(self, delivery_id, now=""):
         """After restart/lost ack: remote state decides, never blind
         re-upload. A same-name different-content file is a conflict."""
         now = now or _now()
         d = self._get(delivery_id)
+        self._account_binding(d)
+        if d.get('external_file_id'):
+            return self.reconcile_external(delivery_id, d['source_path'], d['delivery_name'],
+                d['parent_folder_id'], d['external_file_id'], variant_plan_id=d['variant_plan_id'],
+                experiment_revision=d['experiment_revision'], queue_job_id=d.get('queue_job_id',''))
         name = self._name_of(delivery_id)
         remote = self._find(d["parent_folder_id"], name)
         if remote is None:
@@ -183,6 +261,8 @@ class DeliveryService:
         """Transfer-only retry: re-uploads the SAME local final; never
         regenerates or renders anything."""
         d = self._get(delivery_id)
+        if d.get('external_file_id'):
+            raise ContractError('external_verification_only', 'delivery_id')
         if d["file_sha256"] != _sha256(final_path):
             raise ContractError("final_changed", "file_sha256",
                                 "retry requires the identical final")
@@ -198,6 +278,11 @@ class DeliveryService:
         up = self._upload(delivery_id, final_path, d["parent_folder_id"], name)
         return self._verify(delivery_id, up["id"], name, d["parent_folder_id"],
                             d["expected_size"], d["remote_md5"], now or _now())
+
+    def _account_binding(self, delivery):
+        # Absence is legacy metadata, not permission to rewrite historical rows.
+        if 'expected_account' in delivery and delivery['expected_account'] != getattr(self.drive, 'expected_account', ''):
+            raise ContractError('delivery_account_changed', 'account', 'Reconnect the original authorized destination account before reconciling this receipt.')
 
     def _name_of(self, delivery_id):
         # the descriptive name travels with the intent record
@@ -220,9 +305,9 @@ class DeliveryService:
         body.update(fields)
         with self.db.uow() as u:
             u.conn.execute(
-                "UPDATE records SET body=? WHERE kind='delivery' AND "
+                "UPDATE records SET body=?,status=?,updated_at=?,version=version+1 WHERE kind='delivery' AND "
                 "id=? AND revision=?",
-                (json.dumps(body), delivery_id, row["revision"]))
+                (json.dumps(body), body.get('status',''), _now(), delivery_id, row["revision"]))
 
     def _event(self, delivery_id, kind, body):
         with self.db.uow() as u:

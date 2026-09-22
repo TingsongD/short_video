@@ -24,6 +24,7 @@ function fakeFetch(routes: Record<string, unknown>) {
 
 beforeEach(() => { calls.length = 0; });
 
+
 describe("component states", () => {
   it("remoteOf covers loading/empty/ready/error", () => {
     expect(remoteOf(undefined, null).state).toBe("loading");
@@ -195,8 +196,10 @@ describe("learning fresh-series loop (Q12)", () => {
     const btn = screen.getByText("Freeze loop for series:grp-1");
     fireEvent.click(btn);
     await waitFor(() => expect(act).toHaveBeenCalled());
-    expect(calls.some((c) =>
+    // The handler starts before the asynchronous API/session work finishes.
+    // Wait for the observed request, not just invocation of its wrapper.
+    await waitFor(() => expect(calls.some((c) =>
       c.url.includes("/api/series/") && c.url.includes("/loop")))
-      .toBe(true);
+      .toBe(true));
   });
 });

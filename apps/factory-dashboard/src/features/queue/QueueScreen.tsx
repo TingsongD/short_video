@@ -10,9 +10,22 @@ export interface JobView {
   id: string;
   variant: string;
   stage: string;
-  state: "queued" | "running" | "done" | "failed" | "blocked";
+  state: "queued" | "running" | "waiting" | "done" | "failed" | "blocked" | "cancelled";
+  waiting_label?: string;
+  next_retry_at?: string;
+  archived?: boolean;
   started_at?: string;
   finished_at?: string;
+}
+
+export function queueJobView(job: Record<string, any>): JobView {
+  const waits: Record<string,string> = {analysis_throttled:'Waiting for analysis capacity', remote_unfinished:'Waiting for provider', capacity_full:'Waiting for capacity', retry_backoff:'Waiting for retry backoff', pending:'Waiting for provider', running:'Waiting for provider'};
+  const waiting = job.status==='ready' ? waits[job.blocked_reason] : undefined;
+  return {id:job.id,variant:job.variant_key||'',stage:job.phase,archived:job.archived,
+    waiting_label:waiting,next_retry_at:waiting?job.next_attempt_at:undefined,
+    state:job.status==='succeeded'?'done':['failed','blocked','cancelled'].includes(job.status)?job.status
+      :job.status==='awaiting_review'?'blocked':waiting?'waiting'
+      :['ready','waiting_dependencies'].includes(job.status)?'queued':'running'};
 }
 
 /** Stage labels are honest pipeline states — never a guessed %.
@@ -79,10 +92,10 @@ export function QueueScreen(
         <tbody>
           {jobs.map((j) => (
             <tr key={j.id}>
-              <td>{j.id}</td><td>{j.variant}</td>
+              <td>{j.id}{j.archived && <small> · Archived</small>}</td><td>{j.variant}</td>
               <td>{j.stage.replace("_", " ")}</td>
-              <td>{j.state === "running" ? "Waiting for provider"
-                  : j.state}</td>
+              <td>{j.state === 'waiting' ? j.waiting_label : j.state === "running" ? "Waiting for provider"
+                  : j.state}{j.next_retry_at && <small> · Next retry: {new Date(j.next_retry_at).toLocaleTimeString()}</small>}</td>
               <td>
                 {["failed","blocked"].includes(j.state) &&
                   <button onClick={() => onReconcile?.(j.id)}>

@@ -1,12 +1,15 @@
 import React, { useMemo, useState } from "react";
 import { api, call } from "../../api/client";
+import { selectableBudget } from '../../api/budgets';
+import { credentialRecovery, analysisRecovery } from "../providers/recovery";
+import { RecoveryPanel } from './RecoveryPanel';
 
 type Row = Record<string, any>;
 
 const STAGES: [string, string][] = [
   ["intake", "Seed intake"], ["evidence", "Reference evidence"],
   ["video_analysis", "Video analysis"], ["sections", "Analysis write-up"],
-  ["analysis_review", "Analysis review"], ["blueprint", "Blueprint"],
+  ["analysis_review", "Analysis checks"], ["blueprint", "Blueprint"],
   ["template", "Format template"], ["script", "Script adaptation"],
   ["music", "Music"], ["draft", "Experiment draft"],
   ["tts", "Narration"], ["quote", "Footage quote"],
@@ -15,6 +18,75 @@ const STAGES: [string, string][] = [
   ["final_qc", "Final quality check"], ["done", "Complete"],
 ];
 const LABEL = Object.fromEntries(STAGES);
+
+export function RunProgress({ run }: { run: Row }) {
+  const stages = STAGES.filter(([key]) => key !== "done");
+  const current = stages.findIndex(([key]) => key === run.stage);
+  // Historical completed events survive rewinds; don't count stages ahead
+  // of the current stage as completed work in the current execution.
+  const done = new Set((run.progress || []).filter((p: Row) =>
+    p.outcome === "done").map((p: Row) => p.stage));
+  const complete = run.status === "succeeded";
+  const count = complete ? stages.length : stages.filter(([key], i) =>
+    i < current && done.has(key)).length;
+  const percent = Math.round(count / stages.length * 100);
+  const state = complete ? "Run complete" : run.status === "paused"
+    ? "Paused — needs attention" : run.status === "running" ? "Running" : run.status;
+  const phases = run.state?.completion_phases || {};
+  const deliveryPhase = phases.delivery === 'running' && run.status === 'paused' ? 'paused'
+    : phases.delivery || (complete && run.params?.policies?.delivery === 'creative_approval' ? 'awaiting creative approval' : 'pending');
+  const narrationRepairs = Object.entries(run.state?.speech_repair_attempts || {});
+  const overlayRepairs = Object.entries(run.state?.overlay_repair_attempts || {});
+  const source=run.source_analysis;
+  const spend=run.spending_policy;
+  return <div className={`run-progress ${run.status}`}>
+    <div role="status" aria-live="polite">
+      <strong>{state}</strong> · {LABEL[run.stage] || run.stage}
+      <span className="progress-count">{count}/{stages.length} stages · {percent}%</span>
+    </div>
+    <progress aria-label={`Run progress ${run.id}`} max={stages.length} value={count}
+      aria-valuetext={`${count} of ${stages.length} stages completed; ${state}; ${LABEL[run.stage] || run.stage}`} />
+    <small>Stage completion, not a time estimate. Generation stages may take longer.</small>
+    {spend && <p aria-label="Run USD guardrail">
+      ${(Number(spend.remaining || 0) / 1_000_000).toFixed(2)} remaining of ${(Number(spend.cap_amount || 0) / 1_000_000).toFixed(2)} cumulative USD; holds and confirmed usage both count. This guardrail belongs only to this run.
+    </p>}
+    {source && <section aria-label="Source analysis details">
+      <h4>Source analysis · {String(source.stage || 'waiting').replace(/_/g,' ')}</h4>
+      <p>{source.state === 'complete' ? 'Source evidence and interpretation complete.' : source.state === 'waiting' ? 'Waiting — existing work is preserved.' : source.state === 'paused' ? 'Source analysis paused.' : 'Measuring source evidence.'}</p>
+      <p>{source.encoded_frames ?? 0} frames encoded · {source.decoded_frames ?? 'unknown'} decoded</p>
+      {Number.isInteger(source.total_frames) && source.total_frames > 0
+        ? <progress aria-label="Source frame coverage" max={source.total_frames} value={source.encoded_frames ?? 0}/>
+        : <p>Total frame count not yet verified — no estimated percentage.</p>}
+      <p>Audio: {source.audio_status || 'pending'} · {((source.processed_audio_samples ?? 0)/48000).toFixed(1)} seconds processed · Rhythm: {source.rhythm_status || 'pending'}</p>
+      <p>Measured events: {source.event_count ?? 'pending'} · Cached chunks reused: {source.cache_reused_chunks ?? 0}</p>
+      <p>Local repairs: {source.repairs_used ?? 0} (at most two per chunk) · Clarifications: {source.clarifications_used ?? 0}/2</p>
+      <p>Jev {source.jev_mode || 'shadow'}: {source.jev_status || 'pending'} — mandatory evidence is retained.</p>
+      {source.jev_status === 'unknown_retained' && <p>Unknown Jev outcome retained for reconciliation; no request replay or hold release.</p>}
+      {source.next_attempt_at && <p>Next attempt: {source.next_attempt_at}</p>}
+      {source.updated_at && <p>Evidence last updated: {source.updated_at}</p>}
+    </section>}
+    {run.status === 'running' && run.state?.provider_wait?.reason === 'analysis_throttled' &&
+      <p role="status">Google is busy — waiting before an automatic QC/analysis retry. Up to two retries; existing clips are preserved.</p>}
+    {run.state?.source_timing && <details><summary>Source timing evidence</summary>
+      <ul>{(run.state.source_timing.passages||[]).map((p:Row,i:number)=><li key={i}>Passage {i+1}: {p.quality === 'passage_only' ? 'Passage timing only — word timing unavailable' : p.quality} · {p.attempts}/2 local repair attempts</li>)}</ul>
+      <p>Final captions use replacement narration alignment, not source-word estimates.</p>
+    </details>}
+    {run.params?.policies && <>
+      <p aria-label="Completion phases">Generation: {phases.generation || (complete || run.stage === 'final_qc' ? 'complete' : 'in progress')} · QC: {phases.qc || (complete ? 'complete' : run.stage === 'final_qc' ? 'in progress' : 'pending')} · Delivery: {deliveryPhase}</p>
+      <p>{run.params.policies.variation === 'full_video' ? 'Full-video multi-variable creative comparison' : 'Controlled-region comparison'} · {run.params.policies.captions === 'phrases.v1' ? 'Readable phrase captions' : 'Word captions'}</p>
+      {(narrationRepairs.length > 0 || overlayRepairs.length > 0) && <details><summary>Automatic repair progress</summary>
+        <ul>{narrationRepairs.map(([key, used]) => <li key={key}>Narration {key}: {String(used)}/{run.params.policies.speech_repairs} attempts</li>)}
+        {overlayRepairs.map(([key, used]) => <li key={key}>{run.state?.overlay_repair_labels?.[key] || `Clip ${key}`}: {String(used)}/{run.params.policies.overlay_repairs} attempts</li>)}</ul>
+        <p>Attempts persist across restarts. Unknown provider outcomes pause without resubmission.</p>
+      </details>}
+    </>}
+    {run.status === "paused" && <p className="progress-problem">
+      {run.recovery ? <>{run.recovery.title}<br/>{run.recovery.message}</>
+        : <>{run.pause?.code}: {run.pause?.detail}<br />{credentialRecovery(run.pause?.detail) || analysisRecovery(run.pause?.detail) || run.pause?.action}</>}
+    </p>}
+    {complete && <p className="hint">{phases.delivery === 'complete' ? 'Finals verified on Drive. Nothing published; creative approval is separate.' : 'Open Compare to review results. Completion does not mean published or delivered.'}</p>}
+  </div>;
+}
 
 function StageBar({ run }: { run: Row }) {
   const done = new Set(
@@ -36,13 +108,14 @@ function StageBar({ run }: { run: Row }) {
   );
 }
 
-export function AutoRunScreen({ seeds, budgets, runs, act, media,
+export function AutoRunScreen({ seeds, budgets: allBudgets, runs, act, media,
                                 onSelectExperiment }: {
   seeds: Row[]; budgets: Row[]; runs: Row[];
   act: (fn: () => Promise<unknown>, message?: string) => Promise<unknown>;
   media: (id: string) => string;
   onSelectExperiment: (id: string) => void;
 }) {
+  const budgets = useMemo(() => allBudgets.filter(selectableBudget), [allBudgets]);
   const [url, setUrl] = useState("");
   const [seedId, setSeedId] = useState("");
   const [voiceId, setVoiceId] = useState("");
@@ -51,6 +124,10 @@ export function AutoRunScreen({ seeds, budgets, runs, act, media,
   const [limits, setLimits] = useState<Record<string, string>>({});
   const [music, setMusic] = useState(false);
   const [reviews, setReviews] = useState(true);
+  const [variation, setVariation] = useState('full_video');
+  const [profileId,setProfileId]=useState('legacy');
+  const [captions, setCaptions] = useState('phrases.v1');
+  const [delivery, setDelivery] = useState('configured');
   const [account, setAccount] = useState("");
   const [reviewer, setReviewer] = useState("");
   const seed = seeds.find((s) => s.id === seedId);
@@ -74,6 +151,9 @@ export function AutoRunScreen({ seeds, budgets, runs, act, media,
       budget_ids: selectedBudgets.map((b) => b.id),
       limits: lim, generate_music: music, visual_reviews: reviews,
       account: account || undefined,
+      ...(profileId==='legacy'?{}:{profile_id:profileId}),
+      policies: {version: 1, variation, captions, speech_repairs: 2, overlay_repairs: 2,
+        ...(delivery === 'configured' ? {} : {delivery})},
     });
   }
 
@@ -130,6 +210,7 @@ export function AutoRunScreen({ seeds, budgets, runs, act, media,
                  onChange={(e) => setLanguage(e.target.value)} /></label>
         <fieldset>
           <legend>Budgets this run may draw from</legend>
+          <p>New runs receive up to $50 cumulative USD per new run automatically. This run-owned guardrail counts pending holds and confirmed usage and cannot fund unrelated work. Select separate budgets for provider credits or any stricter shared ceilings you want enforced.</p>
           {budgets.map((b) => (
             <label key={b.id}>
               <input type="checkbox" checked={!!picked[b.id]}
@@ -142,11 +223,11 @@ export function AutoRunScreen({ seeds, budgets, runs, act, media,
             Budgets tab first.</p>}
         </fieldset>
         <fieldset>
-          <legend>Optional per-operation limits</legend>
+          <legend>Optional per-plan limits</legend>
           {units.map((u) => (
             <label key={u}>{u} limit
               <input value={limits[u] || ""} inputMode="numeric"
-                     placeholder="largest single operation"
+                     placeholder="maximum total for one quoted plan"
                      onChange={(e) => setLimits(
                        { ...limits, [u]: e.target.value })} /></label>))}
         </fieldset>
@@ -160,12 +241,36 @@ export function AutoRunScreen({ seeds, budgets, runs, act, media,
           Generate an instrumental music bed (spends music credits)
         </label>
         <label>
-          <input type="checkbox" checked={reviews}
+          <input type="checkbox" checked={reviews} disabled={profileId==='flashcut_hypit.v1'}
                  onChange={(e) => setReviews(e.target.checked)} />
           Automated final visual QC (spends analysis budget)
         </label>
       </fieldset>
 
+      <fieldset><legend>3 · Video policies (frozen for this run)</legend>
+        <label>Workflow profile<select value={profileId} onChange={e=>{
+          setProfileId(e.target.value);
+          if(e.target.value==='flashcut_hypit.v1'){setCaptions('phrases.v1');setReviews(true);}
+        }}>
+          <option value="legacy">Standard — existing workflow</option>
+          <option value="flashcut_hypit.v1">Flash-cut — all-frame PE, audio, Jev and Gemini, native Hypit</option>
+        </select></label>
+        {profileId==='flashcut_hypit.v1' && <p>Requires the installed local helper and separately qualified analysis routes. Every decoded frame is processed; no publishing or character-reference generation is enabled.</p>}
+        <label>Footage variation<select value={variation} onChange={e=>setVariation(e.target.value)}>
+          <option value="full_video">Full video — distinct B/C/D footage in every beat</option>
+          <option value="controlled_regions">Controlled regions — selected beats only</option>
+        </select></label>
+        <p>Full-video variants compare multiple creative changes, not isolated causal effects.</p>
+        <label>Caption style<select value={captions} disabled={profileId==='flashcut_hypit.v1'} onChange={e=>setCaptions(e.target.value)}>
+          <option value="phrases.v1">Readable phrases — large text, at most two lines</option>
+          <option value="words.v1">Legacy word captions</option>
+        </select></label>
+        <label>Drive delivery<select value={delivery} onChange={e=>setDelivery(e.target.value)}>
+          <option value="configured">Automatic after QC when an authorized destination is configured</option>
+          <option value="creative_approval">Wait for human creative approval</option>
+        </select></label>
+        <p>At most two narration repairs per segment and two overlay repairs per clip, within selected budgets. Automatic delivery requires final visual QC and verified remote files. Publishing stays disabled.</p>
+      </fieldset>
       <button disabled={!ready}
               onClick={() => act(launch,
                 "Automatic run started — watch progress below")}>
@@ -177,18 +282,22 @@ export function AutoRunScreen({ seeds, budgets, runs, act, media,
       {runs.map((run) => (
         <article key={run.id} className={`run ${run.status}`}>
           <header>
-            <strong>{run.id}</strong> · {run.status}
+            <strong>{run.id}</strong> · {run.status}{run.archived && ' · Archived'}
             {run.experiment_id && (
               <button onClick={() => onSelectExperiment(
                 run.experiment_id)}>
                 Open {run.experiment_id} in Compare</button>)}
           </header>
+          <RunProgress run={run} />
           <StageBar run={run} />
           {run.status === "paused" && run.pause && (
             <div className="pause" role="alert">
+              {run.recovery ? <RecoveryPanel key={`${run.id}:${run.pause.at}`} run={run} act={act}/>
+                : <>
               <strong>{run.pause.code}</strong>
               <p>{run.pause.detail}</p>
-              <p><em>{run.pause.action}</em></p>
+              <p><em>{credentialRecovery(run.pause.detail) || analysisRecovery(run.pause.detail) || run.pause.action}</em></p>
+              </>}
               {run.pause.code === "budget_exhausted" && (
                 <p className="hint">The message names the ceiling that
                   blocks. Raise it in the Budgets tab (same id, higher
@@ -234,14 +343,19 @@ export function AutoRunScreen({ seeds, budgets, runs, act, media,
                       "Run continuing without music")}>
                       Finish without music</button>)}
                 </p>)}
-              <button onClick={() => act(
-                () => api.autorunResume(run.id,
-                  selectedBudgets.length
+              {(!run.recovery || run.recovery.can_resume) && <button onClick={() => act(
+                () => api.autorunResume(run.id, {
+                  // Bind this click to the current pause so a later
+                  // pause cannot replay the first Resume's idempotent
+                  // response (empty bodies would otherwise collide).
+                  pause_at: run.pause?.at,
+                  ...(selectedBudgets.length
                     ? { add_budget_ids: selectedBudgets.map((b) => b.id) }
                     : {}),
+                }),
                 "Run resumed")}>
                 Resume{selectedBudgets.length
-                  ? " with checked budgets" : ""}</button>
+                  ? " with checked budgets" : ""}</button>}
             </div>)}
           {(run.progress || []).some(
             (p: Row) => p.outcome === "paused" && p.detail) && (

@@ -86,6 +86,10 @@ def configured_adapters(db,data,mode,artifacts):
             except (KeyError,ValueError,TypeError):valid=False
             if snap['support']=='qualified' and valid and snap.get('input_mode') in conn.get('input_modes',[]) and snap.get('location','')==conn.get('location',''):
                 caps.setdefault(model,{**snap['capabilities'],'live_qualified':True,'qualified_modes':[]})['qualified_modes'].append(snap['input_mode'])
+                caps[model].setdefault('mode_capabilities', {})[snap['input_mode']] = snap['capabilities']
+                # New reference mode needs its own qualified route AND an explicit
+                # configuration enablement. Text qualification cannot enable it.
+                caps[model]['reference_enabled'] = conn.get('reference_enabled') is True
         if not caps:continue
         state=DurableState(Path(data)/'providers'/f'{provider}.json')
         if provider=='jimeng_canvas':
@@ -93,6 +97,7 @@ def configured_adapters(db,data,mode,artifacts):
             from .canvas import CanvasAdapter
             adapter=CanvasAdapter(CanvasCLI(profile=conn.get('profile','default'),region=conn.get('region','cn')),
                   state,expected_user=conn.get('account_id'),policy=policy,artifacts=artifacts)
+            adapter.account = conn.get('account_id')
             adapter.set_capabilities(caps)
         else:
             from .vertex import VertexAdapter,LiveVertexTransport
@@ -109,7 +114,8 @@ def configured_adapters(db,data,mode,artifacts):
                 return {'kind':'oauth','access_token':creds.token,'identity':observed,'project':project,
                         'scopes':['cloud-platform'],'expiry':creds.expiry.replace(tzinfo=timezone.utc).isoformat() if creds.expiry else None}
             adapter=VertexAdapter(VertexAuth(credentials,project),LiveVertexTransport(policy),state,
-                conn['rates'],capabilities=caps,project=project,location=conn.get('location','global'))
+                conn['rates'],capabilities=caps,project=project,location=conn.get('location','global'),
+                account=identity, artifacts=artifacts)
         adapters[provider]=adapter
     drive_conn=settings.get('drive',{})
     try:drive_current=datetime.fromisoformat(drive_conn['qualified_until'].replace('Z','+00:00'))>now
@@ -132,7 +138,13 @@ def configured_auxiliary(root,data,mode,artifacts=None):
         conn=settings.get(name,{})
         try:valid=datetime.fromisoformat(conn['qualified_until'].replace('Z','+00:00'))>datetime.now(timezone.utc)
         except (KeyError,ValueError,TypeError):valid=False
-        return conn if name in enabled and conn.get('contract_evidence') and conn.get('live_evidence') and valid and conn.get('account_id') else None
+        if name not in enabled or not conn.get('contract_evidence') or not conn.get('account_id'):
+            return None
+        if conn.get('live_evidence') and valid:return conn
+        if name in ('audiovisual_analysis_flashcut','jev_decisions') and artifacts:
+            from .flashcut_qualification import acceptance_scope
+            if acceptance_scope(artifacts.db,conn):return conn
+        return None
     conn=qualified('audiovisual_analysis')
     if conn and conn.get('project') and conn.get('model') and conn.get('pricing') and artifacts:
         from ..analysis.vertex import VertexAnalyzer
@@ -146,6 +158,29 @@ def configured_auxiliary(root,data,mode,artifacts=None):
             if observed!=identity:raise AuthError('account_mismatch_or_unavailable')
             return {'kind':'oauth','identity':observed,'project':project,'scopes':['cloud-platform'],'access_token':creds.token}
         providers['audiovisual_analysis']=VertexAnalyzer(Path(data)/'providers/analysis',artifacts,VertexAuth(credentials,project),identity,project,conn['model'],conn['pricing'],location=conn.get('location','global'),policy=policy,max_bytes=conn.get('max_bytes',20*1024*1024))
+    conn=qualified('audiovisual_analysis_flashcut')
+    if conn and conn.get('project') and conn.get('model')=='gemini-3.8-flash' and conn.get('pricing') and artifacts:
+        from ..analysis.flashcut_vertex import FlashcutAnalyzer
+        from .vertex_auth import VertexAuth,AuthError
+        identity,project=conn['account_id'],conn['project']
+        def credentials(project=project,identity=identity):
+            import google.auth
+            from google.auth.transport.requests import Request
+            creds,_=google.auth.default(scopes=['https://www.googleapis.com/auth/cloud-platform'])
+            creds.refresh(Request())
+            observed=_observed_google_identity(creds)
+            if observed!=identity:
+                raise AuthError('account_mismatch_or_unavailable')
+            return {'kind':'oauth','identity':observed,'project':project,'scopes':['cloud-platform'],'access_token':creds.token}
+        providers['audiovisual_analysis_flashcut']=FlashcutAnalyzer(
+            Path(data)/'providers/analysis-flashcut',artifacts,VertexAuth(credentials,project),identity,project,
+            conn['pricing'],location=conn.get('location','global'),policy=policy,limits=conn.get('limits'))
+    conn=qualified('jev_decisions')
+    if conn and conn.get('model')=='jev-1.13.0' and conn.get('pricing'):
+        from ..analysis.jev import JevDecisions
+        providers['jev_decisions']=JevDecisions(Path(data)/'providers/jev-decisions',
+            credentials=credential_loader(root,['TYPESAFE_API_KEY','JEV_API_KEY']),policy=policy,
+            account=conn['account_id'],pricing=conn['pricing'])
     conn=qualified('shopify')
     if conn and conn.get('shop') and artifacts:
         from ..integrations.shopify import configured_shopify
@@ -209,5 +244,12 @@ def configured_auxiliary(root,data,mode,artifacts=None):
     for name,adapter in providers.items():
         connection=settings.get('youtube_analytics' if name=='youtube_reporting' else name,{})
         adapter.qualified=True
+        if name in ('audiovisual_analysis_flashcut','jev_decisions') and connection.get('acceptance_scope'):
+            from .flashcut_qualification import acceptance_scope,require_acceptance_binding
+            scope=acceptance_scope(artifacts.db,connection)
+            if scope:
+                adapter.qualified=False
+                adapter.acceptance_run_id=scope['run_id']
+                adapter.acceptance_guard=lambda request,scope=scope:require_acceptance_binding(artifacts.db,scope,request)
         adapter.contract_evidence=connection.get('contract_evidence')
     return providers,publisher,analytics,extra

@@ -184,7 +184,7 @@ def _publishable(application, policy_extra=None):
         assert r.status_code == 201, r.text
         r = act('post', f'/api/variants/{vid}/deliver',
                 {'folder_id': 'folder', 'reviewer': 'fixture-operator',
-                 'account': 'offline-drive',
+                 'account': 'fixture-drive',
                  'valid_until': (datetime.now(timezone.utc) +
                                  timedelta(hours=1)).isoformat(),
                  'artifact_id': final['artifact_id'],

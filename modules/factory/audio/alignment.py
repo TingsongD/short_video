@@ -3,9 +3,10 @@ text to the exact returned waveform; derive captions through the fit
 transform so cues land on the right frames.
 """
 import json
+from fractions import Fraction
 
 from ..domain.errors import ContractError
-from ..domain.records import CaptionSet, WordAlignment
+from ..domain.records import CaptionSet, WordAlignment, content_hash
 from .fit import apply_fit
 
 
@@ -58,7 +59,7 @@ class AlignmentService:
         return json.loads(row["body"]) if row else None
 
     def captions(self, segment_id, speech_get, fit, clock,
-                 speech_hash="", now=""):
+                 speech_hash="", now="", preset="words.v1", *, exact=False):
         """Map aligned words through the fit into frame cues. One cue
         per word for now — grouping is a presentation decision above."""
         al = self.get(segment_id)
@@ -78,9 +79,21 @@ class AlignmentService:
                  "end_frame": start + int(round(w["end_s"] * fps)),
                  "text": w["w"], "word_refs": [i]}
                 for i, w in enumerate(mapped)]
+        if exact:
+            final=self.final_alignment(segment_id,speech_get,clock,speech_hash)
+            cues=[{**w,'word_refs':[i]} for i,w in enumerate(final['words'])]
         end=tgt.get("end_frame",tgt.get("end"))
         if not cues or any(not start <= c["start_frame"] < c["end_frame"] <= end for c in cues):
             raise ContractError("caption_coverage_invalid", "cues")
+        if preset == 'phrases.v1':
+            from .phrase_captions import phrase_cues
+            # Provider character timestamps cover its exact submitted text;
+            # an injected aligner covers the normalized text it was given.
+            # Neither path uses the seed video's transcript.
+            spoken = (seg.get('source_text') or seg['text']) if seg.get('raw_alignment') else seg['text']
+            cues = phrase_cues(cues, spoken, start, end)
+        elif preset != 'words.v1':
+            raise ContractError('unsupported_caption_preset', 'preset')
         cs = CaptionSet(schema_version="caption_set.v1",
                         id=f"caps:{segment_id}", created_at=now,
                         segment_id=segment_id, speech_hash=speech_hash,
@@ -88,7 +101,43 @@ class AlignmentService:
                         transform={"rate": fit["rate"],
                                    "trim_s": fit.get("trim_s", 0.0),
                                    "pad_s": fit.get("pad_s", 0.0)})
+        if preset != 'words.v1':
+            cs.transform['caption_preset'] = preset
         cs.validate_or_raise()
         with self.db.uow() as u:
             u.records.put(cs)
         return cs
+
+    def final_alignment(self,segment_id,speech_get,clock,speech_hash):
+        """Export existing measurements once onto the final rational clock.
+
+        Pure read/validation: never aligns again, estimates missing times, clamps
+        words or applies the fit twice. Legacy caption behavior is unchanged.
+        """
+        al=self.get(segment_id);seg=speech_get(segment_id)
+        if not al or not seg or seg.get('status') not in ('fitted','approved') or not seg.get('fit',{}).get('fits'):
+            raise ContractError('fitted_waveform_required','segment_id')
+        if speech_hash!=seg['speech_hash'] or al['audio_sha256']!=seg.get('raw_audio_sha256',seg['audio_sha256']):
+            raise ContractError('stale_alignment','segment_id')
+        spoken=(seg.get('source_text') or seg['text']) if seg.get('raw_alignment') else seg['text']
+        if ' '.join(w['w'] for w in al['words']).split()!=spoken.split():
+            raise ContractError('semantic_text_mismatch','segment_id')
+        target=seg['target'];start=target.get('start_frame',target.get('start',0));end=target.get('end_frame',target.get('end'))
+        rate=Fraction(str(seg['fit']['rate']));trim=Fraction(str(seg['fit'].get('trim_s',0)))
+        fps=Fraction(clock.num,clock.den);previous=Fraction(0);last=start;words=[]
+        for w in al['words']:
+            low=(Fraction(str(w['start_s']))-trim)/rate
+            high=(Fraction(str(w['end_s']))-trim)/rate
+            if not previous<=low<high<=Fraction(end-start,1)/fps:
+                raise ContractError('semantic_word_timing_invalid','segment_id','Final speech timings are outside the fitted waveform.')
+            first,final=start+round(low*fps),start+round(high*fps)
+            if not last<=first<final<=end:
+                raise ContractError('semantic_word_timing_invalid','segment_id','A word is ambiguous on the final frame clock.')
+            words.append({'text':w['w'],'start_frame':first,'end_frame':final})
+            previous=high;last=final
+        if not words:
+            raise ContractError('missing_alignment','segment_id')
+        binding={'raw_alignment_hash':content_hash(al),'fit':seg['fit'],'clock':{'num':clock.num,'den':clock.den},
+                 'speech_hash':speech_hash,'audio_sha256':seg['audio_sha256'],'target':target,'policy':'final_alignment.v1'}
+        return {'artifact_id':seg['artifact_id'],'sha256':seg['audio_sha256'],'speech_hash':speech_hash,
+                'alignment_hash':content_hash(binding),'text':spoken,'words':words,'in_frame':start,'out_frame':end}

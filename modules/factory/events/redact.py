@@ -45,3 +45,17 @@ def redact(value):
     if isinstance(value, (list, tuple)):
         return [redact(v) for v in value]
     return value
+
+
+def redact_log(value):
+    """Logs need no query values; domain commands may need non-secret queries."""
+    value = re.sub(r'(https?://)[^/@\s]+@', r'\1[redacted]@', str(value), flags=re.I)
+    value = re.sub(r"((?:https?://|/)[^\s\"'<>?#]*)(?:\?|%3[fF])[^\s\"'<>]*",
+                   r'\1?[redacted]', value)
+    # Raw request headers and stringified credential dictionaries must be
+    # safe too; dict-key redaction alone cannot sanitize exception strings.
+    value = re.sub(r'\b(authorization|proxy-authorization|cookie|set-cookie)[\"\']?\s*[:=]\s*[^\r\n]+',
+                   r'\1: [redacted]', value, flags=re.I)
+    value = re.sub(r'\b(access_token|refresh_token|id_token|client_secret|password|api_key|confirmation_token|code)[\"\']?\s*[:=]\s*(?:"[^"\r\n]*"|\'[^\'\r\n]*\'|[^\s,;}]+)',
+                   r'\1: [redacted]', value, flags=re.I)
+    return redact(value)

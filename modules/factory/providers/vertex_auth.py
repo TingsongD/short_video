@@ -19,6 +19,33 @@ class AuthError(Exception):
         super().__init__(reason)
 
 
+def credential_failure_reason(error):
+    """Only return allow-listed codes; OAuth exception text can contain secrets.
+
+    Import lazily so a missing optional Google SDK can itself be diagnosed.
+    This classification describes credentials, NOT whether a paid request ran.
+    """
+    if isinstance(error, ImportError):
+        return "credential_dependency_missing"
+    try:
+        from google.auth.exceptions import (DefaultCredentialsError,
+                                             RefreshError, TransportError)
+    except ImportError:
+        return "loader_failed"
+    if isinstance(error, DefaultCredentialsError):
+        return "no_credentials"
+    if isinstance(error, TransportError):
+        return "credential_transport_failed"
+    if isinstance(error, RefreshError):
+        # Inspect privately; never persist/return the provider payload or URL.
+        text = str(error).lower()
+        if any(marker in text for marker in
+               ("reauth", "invalid_rapt", "invalid_grant")):
+            return "reauth_required"
+        return "credential_refresh_failed"
+    return "loader_failed"
+
+
 class VertexAuth:
     """Session state for the configured Cloud identity + project."""
 
@@ -37,8 +64,9 @@ class VertexAuth:
             self._cred = self._loader()
         except AuthError as e:
             self._cred = {"kind": "error", "reason": e.reason}
-        except Exception:
-            self._cred = {"kind": "error", "reason": "loader_failed"}
+        except Exception as e:
+            self._cred = {"kind": "error",
+                          "reason": credential_failure_reason(e)}
 
     def refresh(self):
         """Re-run the loader (e.g. after user reauthentication)."""

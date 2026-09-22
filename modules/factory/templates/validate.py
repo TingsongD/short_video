@@ -39,7 +39,7 @@ def validate_template(tpl, total_frames=None, available_fonts=None,
     if total_frames:
         for e in check_partition(ivs, total_frames):
             problems.append({"flag": e.code, "detail": e.detail})
-    cap = capability_report(tpl.slots)
+    cap = capability_report(tpl.slots, renderer_policy=tpl.constraints.get('renderer_policy'))
     for u in cap["unsupported"]:
         problems.append({"flag": "unsupported_effect",
                          "detail": f"{u['slot']}: {u['effects']}"})

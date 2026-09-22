@@ -1,4 +1,4 @@
-import React,{useState} from 'react';
+import React,{useEffect,useState} from 'react';
 import {call} from '../../api/client';
 type Row=Record<string,any>;
 type Props={data:Record<string,Row[]>;selected:Row|null;reviewer:string;act:(fn:()=>Promise<unknown>,message?:string)=>Promise<unknown>};
@@ -11,13 +11,15 @@ const PLATFORMS=['youtube','tiktok','instagram','facebook'] as const;
 export function PublishingScreen({data,selected,reviewer,act}:Props){
   const [accounts,setAccounts]=useState<Record<string,string>>({youtube:'',tiktok:'',instagram:'',facebook:''});
   const [enabled,setEnabled]=useState<Record<string,boolean>>({youtube:true,tiktok:false,instagram:false,facebook:false});
-  const [publication,setPublication]=useState<Row|null>(null);
+  const [publicationId,setPublicationId]=useState<string|null>(null);
   const [pkg,setPkg]=useState<Row|null>(null);
   const [context,setContext]=useState('');
   const eid=selected?.experiment?.experiment_id||selected?.id,rev=selected?.revision;
   const variants=(selected?.variants||[]) as Row[];
   const finals=variants.filter(v=>v.final);
   const pubs=(data.publications||[]) as Row[];
+  const publication=pubs.find(p=>p.id===publicationId && variants.some(v=>v.id===p.variant_plan_id));
+  useEffect(()=>{setPublicationId(null);setPkg(null);},[eid]);
   const packages=(data.metadatapackages||[]) as Row[];
   const checkpoints=(data.checkpoints||[]) as Row[];
   function reviewed(){if(!reviewer.trim())throw new Error('Enter your reviewer name first.');return reviewer.trim();}
@@ -59,7 +61,7 @@ export function PublishingScreen({data,selected,reviewer,act}:Props){
     <button disabled={!destinations.length} onClick={()=>act(()=>post(`/api/experiments/${eid}/publications`,{reviewer:reviewed(),destinations},rev),'Publication batch planned')}>Plan {finals.length}×{destinations.length} batch</button>
     <table><thead><tr><th>Variant</th>{PLATFORMS.map(p=><th key={p}>{p}</th>)}</tr></thead><tbody>
       {variants.map(v=><tr key={v.id}><td>{v.variant_key}</td>
-        {PLATFORMS.map(p=>{const s=slotFor(v.id,p);return <td key={p} title={s?.id||''}>{slotStatus(s)}{s&&<button onClick={()=>setPublication(s)}>open</button>}</td>;})}
+        {PLATFORMS.map(p=>{const s=slotFor(v.id,p);return <td key={p} title={s?.id||''}>{slotStatus(s)}{s&&<button onClick={()=>setPublicationId(s.id)}>open</button>}</td>;})}
       </tr>)}
     </tbody></table>
     {publication&&<details open><summary>Publication {publication.id}</summary>

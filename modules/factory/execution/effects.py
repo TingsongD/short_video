@@ -87,7 +87,18 @@ class EffectService:
                 self.budget.create_budget(bid, unit, "experiment", record_id, cap)
                 ids.append(bid)
             experiment = u.records.get("experimentrevision", f"exp:{body.get('experiment_id')}") if body.get("experiment_id") else None
-            if experiment and experiment["revision"] != body.get("experiment_revision", body.get("revision")):
+            experiment_revision = body.get('experiment_revision', body.get('revision'))
+            if record_kind == 'composition' and experiment:
+                parent = u.records.get('productionplan', body.get('plan_id'))
+                parent_body = json.loads(parent['body']) if parent else {}
+                if (parent_body.get('experiment_id') != body.get('experiment_id')
+                        or parent_body.get('plan_hash') != body.get('source_revisions', {}).get('plan_hash')
+                        or parent_body.get('stale_reason')):
+                    raise ContractError('stale_plan', 'composition')
+                # Composition revisions and experiment revisions are separate
+                # clocks. Delivery binds to the plan's experiment revision.
+                experiment_revision = parent_body.get('experiment_revision')
+            if experiment and experiment["revision"] != experiment_revision:
                 raise ContractError("stale_plan", "experiment_revision")
             authorization.binding = {"experiment": {"id": experiment["id"], "revision": experiment["revision"], "digest": content_hash(json.loads(experiment["body"]))} if experiment else None, "kind": record_kind, "id": record_id,
                 "revision": record["revision"], "plan_hash": plan_hash, "record_digest": content_hash(body),
@@ -134,14 +145,47 @@ class EffectService:
             self._lease(job_id, fencing, worker_id)
             existing = u.conn.execute("SELECT attempt_id FROM effect_bindings WHERE authorization_id=? AND operation_key=?", (authority_id, operation_key)).fetchone()
             if existing:
-                attempt = u.conn.execute("SELECT job_id,status FROM attempts WHERE id=?", (existing["attempt_id"],)).fetchone()
+                attempt = u.conn.execute("SELECT job_id,status,remote_id FROM attempts WHERE id=?", (existing["attempt_id"],)).fetchone()
                 if attempt["job_id"] != job_id:
                     raise ContractError("operation_identity_conflict", "job_id", job_id)
                 if attempt["status"] == "prepared":
                     u.conn.execute("UPDATE effect_bindings SET worker_id=?,fencing=? WHERE attempt_id=?", (worker_id, fencing, existing["attempt_id"]))
-                return existing["attempt_id"]
+                    return existing["attempt_id"]
+                # A pre-acceptance failure never reached the provider
+                # (no remote_id). Free the unique (auth, operation)
+                # slot so a new attempt can be prepared after the local
+                # cause is fixed. Remote-accepted attempts stay bound.
+                if attempt["status"] in ("failed", "cancelled") \
+                        and not attempt["remote_id"]:
+                    if attempt_seq is None and not self.executor.fallback_allowed(existing['attempt_id']):
+                        raise ContractError('attempt_unresolved', 'attempt_id', existing['attempt_id'])
+                    if attempt_seq is None:
+                        proof = u.conn.execute("SELECT 1 FROM events WHERE stream=? AND (type='request_not_sent' OR (type='submit_failed' AND json_extract(body,'$.class')='pre_acceptance'))", ('attempt:' + existing['attempt_id'],)).fetchone()
+                        if not proof:
+                            raise ContractError('pre_acceptance_evidence_required', 'attempt_id', existing['attempt_id'])
+                    body = json.loads(u.conn.execute(
+                        "SELECT body FROM attempts WHERE id=?",
+                        (existing["attempt_id"],)).fetchone()[0] or "{}")
+                    rid = body.get("reservation_id")
+                    if rid and attempt_seq is not None:
+                        try:
+                            self.budget.release(
+                                rid, evidence="pre-acceptance failure; "
+                                "no remote_id so no provider charge")
+                        except ContractError:
+                            pass
+                    u.conn.execute(
+                        "DELETE FROM remote_holds WHERE attempt_id=?",
+                        (existing["attempt_id"],))
+                    u.conn.execute(
+                        "DELETE FROM effect_bindings WHERE attempt_id=?",
+                        (existing["attempt_id"],))
+                else:
+                    return existing["attempt_id"]
             if u.conn.execute("SELECT 1 FROM meta WHERE key IN ('restore_pending','spend_overrun')").fetchone():
                 raise ContractError("dispatch_blocked", "reconciliation")
+            if attempt_seq is None:
+                attempt_seq = u.conn.execute('SELECT COALESCE(MAX(attempt_seq),0)+1 FROM attempts WHERE job_id=?', (job_id,)).fetchone()[0]
             price = self._price(spec)
             rid = None
             if spec["kind"] in PAID:
@@ -149,7 +193,8 @@ class EffectService:
                 applicable = self._budgets(auth, spec, price)
                 # A zero quote still needs an auditable settlement; an
                 # unexpected nonzero charge must become an overrun, not vanish.
-                rid = self.budget.reserve(f"effect:{authority_id}:{operation_key}",
+                rid = self.budget.reserve(
+                    f"effect:{authority_id}:{operation_key}:{attempt_seq}",
                     [(bid, price.reserve_amount) for bid in applicable], auth.id)
             capacity = REMOTE_CAPACITY.get(spec["provider"]) if spec["kind"] == "generation" else None
             if capacity:

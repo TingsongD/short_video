@@ -46,6 +46,26 @@ class BudgetService:
 
     # ------------------------------------------------------------ budgets
 
+    def selection_info(self, budget_id):
+        internal = str(budget_id).startswith('authority:')
+        run_guardrail = str(budget_id).startswith('run_guardrail:')
+        retired = bool(self.db.conn.execute('SELECT 1 FROM meta WHERE key=?',
+            ('retired:budget:' + budget_id,)).fetchone())
+        classification = ('internal_authority' if internal else
+                          'run_guardrail' if run_guardrail else 'reusable')
+        return {'classification': classification,
+                'selection_eligible': not internal and not run_guardrail and not retired,
+                'retired': retired}
+
+    def require_selection(self, ids):
+        if not isinstance(ids, list) or any(not isinstance(i, str) for i in ids):
+            raise ContractError('invalid_budget_selection', 'budget_ids')
+        for bid in ids:
+            self.available(bid)
+            if not self.selection_info(bid)['selection_eligible']:
+                raise ContractError('budget_not_selectable', 'budget_ids',
+                    'Choose a reusable, non-retired budget; internal authorization ceilings and run guardrails cannot fund another action.')
+
     def create_budget(self, bid, unit, scope, scope_key="", cap=None):
         """Create a ceiling, or raise an existing ceiling with the same id.
 
@@ -81,6 +101,33 @@ class BudgetService:
                 "created_at) VALUES(?,?,?,?,?,?)",
                 (bid, unit, scope, scope_key, cap, utcnow()))
         return bid
+
+    def tighten_budget(self, bid, cap, expected_cap, reviewer, evidence):
+        """Explicit audited reduction, separate from the existing top-up API.
+
+        Serializes with reservations and preserves all historical amounts.
+        Already committed work (including ambiguous holds) must still fit.
+        """
+        if type(cap) is not int or cap < 0:
+            raise ContractError('invalid_cap', 'ceiling')
+        if not isinstance(reviewer, str) or not reviewer.strip() or not isinstance(evidence, str) or not evidence.strip():
+            raise ContractError('budget_scope_required', 'reviewer/evidence')
+        with self.db.uow() as u:
+            self.require_selection([bid])
+            old = u.conn.execute('SELECT cap_amount FROM budgets WHERE id=?', (bid,)).fetchone()[0]
+            if type(expected_cap) is not int or old != expected_cap:
+                raise ContractError('stale_budget_ceiling', 'expected_ceiling')
+            if old is None or cap >= old:
+                raise ContractError('budget_not_tightened', 'ceiling')
+            committed = self._committed(u.conn, bid)
+            if cap < committed:
+                raise ContractError('budget_below_committed', 'ceiling', str(committed))
+            u.conn.execute('UPDATE budgets SET cap_amount=? WHERE id=?', (cap, bid))
+            result = {'budget_id': bid, 'previous_ceiling': old, 'ceiling': cap,
+                      'committed': committed, 'available': cap - committed}
+            u.events.append('budget:' + bid, 'budget_ceiling_tightened',
+                            dict(result, reviewer=reviewer, evidence=evidence))
+        return result
 
     def _committed(self, conn, budget_id):
         """Amounts held, ambiguous or already settled against a budget."""
@@ -413,7 +460,12 @@ class BudgetService:
             "COALESCE(SUM(CASE WHEN r.status IN ('held','ambiguous') "
             "THEN l.amount ELSE 0 END),0) AS held, "
             "COALESCE(SUM(CASE WHEN r.status='settled' "
-            "THEN l.settled_amount ELSE 0 END),0) AS settled "
+            "THEN l.settled_amount ELSE 0 END),0) AS settled, "
+            "COALESCE(SUM(CASE WHEN r.status='held' THEN l.amount ELSE 0 END),0) AS pending_estimates, "
+            "COALESCE(SUM(CASE WHEN r.status='ambiguous' THEN l.amount ELSE 0 END),0) AS unresolved_holds, "
+            "COALESCE(SUM(CASE WHEN r.status='settled' AND l.kind='usage_estimate' THEN l.settled_amount ELSE 0 END),0) AS estimated_usage, "
+            "COALESCE(SUM(CASE WHEN r.status='settled' AND l.kind IN ('reported_usage','invoice_confirmed') THEN l.settled_amount ELSE 0 END),0) AS confirmed_usage, "
+            "COALESCE(SUM(CASE WHEN r.status='settled' AND l.kind='native_quote' THEN l.settled_amount ELSE 0 END),0) AS quoted_usage "
             "FROM budgets b LEFT JOIN reservation_lines l ON l.budget_id=b.id "
             "LEFT JOIN reservations r ON l.reservation_id=r.id "
             "GROUP BY b.id").fetchall()

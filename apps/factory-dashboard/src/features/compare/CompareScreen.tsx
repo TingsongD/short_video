@@ -27,7 +27,7 @@ export interface CompareEntry {
   details?: CompareDetails;
 }
 
-/** Source + A/B/C/D synchronized playback; declared changed regions
+/** Source + A/B/C/D linked seeking; declared changed regions
  * are visibly marked so unchanged content stays comparable. */
 export function CompareScreen({ entries }: { entries: CompareEntry[] }) {
   const videos = useRef<Record<string, HTMLVideoElement | null>>({});
@@ -91,7 +91,7 @@ export function CompareScreen({ entries }: { entries: CompareEntry[] }) {
           </figure>
         ))}
       </div>
-      <output aria-label="sync position">{syncT.toFixed(1)}s</output>
+      <output aria-label="sync position">Linked seeking: {syncT.toFixed(1)}s (play/pause separately)</output>
     </section>
   );
 }

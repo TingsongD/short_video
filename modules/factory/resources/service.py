@@ -15,6 +15,7 @@ import time
 from datetime import datetime, timezone
 
 from ...batch.local import process_table, same_process, descendants
+from ..domain.errors import ContractError
 
 
 def _now():
@@ -23,16 +24,30 @@ def _now():
 
 def scan_listeners():
     """→ {port: pid} for TCP listeners (real implementation)."""
-    r = subprocess.run(["lsof", "-nP", "-iTCP", "-sTCP:LISTEN", "-FpFn"],
-                       capture_output=True, text=True)
+    try:
+        r = subprocess.run(["lsof", "-nP", "-iTCP", "-sTCP:LISTEN", "-FpFn"],
+                           capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise ContractError('listener_inspection_unavailable', 'ports', type(error).__name__) from error
+    if r.stderr.strip() or r.returncode not in (0, 1) or (r.returncode == 1 and r.stdout.strip()):
+        raise ContractError('listener_inspection_unavailable', 'ports', 'Listener inspection failed or was partial.')
     out, pid = {}, None
     for line in r.stdout.splitlines():
         if line.startswith("p"):
+            if not line[1:].isdigit():
+                raise ContractError('listener_inspection_unavailable', 'ports', 'Malformed process identity.')
             pid = int(line[1:])
         elif line.startswith("n") and pid is not None:
             m = re.search(r":(\d+)$", line)
             if m:
-                out[int(m.group(1))] = pid
+                port = int(m.group(1))
+                if port in out and out[port] != pid:
+                    raise ContractError('listener_inspection_unavailable', 'ports', 'Multiple listener owners.')
+                out[port] = pid
+            else:
+                raise ContractError('listener_inspection_unavailable', 'ports', 'Malformed listener address.')
+        elif line and not line.startswith('f'):
+            raise ContractError('listener_inspection_unavailable', 'ports', 'Incomplete listener record.')
     return out
 
 
@@ -121,7 +136,16 @@ class CleanupService:
     def cleanup(self, owner, now="", resource_ids=None, include_application=False):
         """Capture descendants before stopping parents; retain identities until exit is verified."""
         import hashlib
-        now=now or _now(); table=self.table(); listeners_before=self.ports()
+        now=now or _now(); table=self.table()
+        try:
+            listeners_before=self.ports()
+        except ContractError as error:
+            if error.code != 'listener_inspection_unavailable': raise
+            receipt={'owner':owner,'at':now,'before':{},'stopped':[], 'retained':[],
+                     'pid_reuse_untouched':[], 'survivors':[], 'ports_checked':[],
+                     'ports_verified':False, 'port_conflicts':[], 'state':'blocked', 'error':error.code}
+            self._receipt(owner, receipt)
+            return receipt
         mine=[r for r in self.reg.for_owner(owner) if resource_ids is None or r["id"] in resource_ids]
         before={"resources":len(mine),"listeners":listeners_before}
         stopped,retained,unrelated,killable=[],[],[],[]
@@ -169,10 +193,18 @@ class CleanupService:
         for r in killable:
             if r["pid"] not in survivors:
                 stopped.append({"id":r["id"],"pid":r["pid"]}); self.reg.set_status(r["id"],"stopped")
-        conflicts=sorted(p for p in ports if p in self.ports())
+        inspection_error = None
+        try:
+            listeners_after = self.ports()
+            conflicts=sorted(p for p in ports if p in listeners_after)
+        except ContractError as error:
+            if error.code != 'listener_inspection_unavailable': raise
+            inspection_error, conflicts = error.code, []
         receipt={"owner":owner,"at":now,"before":before,"stopped":stopped,"retained":retained,
                  "pid_reuse_untouched":unrelated,"survivors":survivors,"ports_checked":sorted(ports),
-                 "port_conflicts":conflicts,"state":"verified" if not survivors and not conflicts else "blocked"}
+                 "port_conflicts":conflicts, 'ports_verified':not inspection_error,
+                 "state":"verified" if not survivors and not conflicts and not inspection_error else "blocked"}
+        if inspection_error: receipt['error'] = inspection_error
         self._receipt(owner,receipt)
         return receipt
 

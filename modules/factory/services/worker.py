@@ -13,6 +13,7 @@ from ..domain.records import content_hash
 from ..execution.effects import EffectService
 from ..store.uow import utcnow
 from ..testing.fakes import ProviderError
+from ..diagnostics import event
 
 # Result-state contract for tick(): a handler may only complete a job
 # through an explicitly successful outcome — or by returning data with no
@@ -37,6 +38,7 @@ class ApplicationWorker:
         self.scheduler.reclaim_expired()
         job = self.scheduler.claim('collect') or self.scheduler.claim('observe') or self.scheduler.claim()
         if not job: return None
+        event("job_started", job_id=job['id'], stage=job['phase'])
         try:
             with self.scheduler.heartbeat(job['id'],job['fencing_token']):
                 row=self.s.db.uow().records.get('appcommand',job['id'])
@@ -51,7 +53,7 @@ class ApplicationWorker:
                 with self.s.db.uow() as u:
                     u.conn.execute('DELETE FROM capacity_holds WHERE job_id=?',(job['id'],))
             elif outcome in DEFERRED:
-                self.scheduler.defer(job['id'],job['fencing_token'],outcome,result.get('defer_s',2))
+                self.scheduler.defer(job['id'],job['fencing_token'],result.get('reason') or outcome,result.get('defer_s',2))
             elif outcome is None or outcome in SUCCEEDED:
                 self.s.commands.finish(job['id'],result)
                 self.scheduler.complete(job['id'],job['fencing_token'])
@@ -61,11 +63,24 @@ class ApplicationWorker:
                 with self.s.db.uow() as u:
                     u.conn.execute('DELETE FROM meta WHERE key=?',('local_work:'+job['id'],))
                     u.events.append('factory','command_failed',{'job_id':job['id'],'error':reason})
+            event("job_result", job_id=job['id'], status=outcome or 'succeeded')
             return {'job_id':job['id'], **result}
         except ContractError as error:
             if error.code in ('remote_unfinished','capacity_full','retry_backoff'):
-                self.scheduler.defer(job['id'],job['fencing_token'],error.code)
+                delay = 2
+                if error.code == 'retry_backoff':
+                    from datetime import datetime
+                    try:
+                        delay = max(1, (datetime.fromisoformat(error.detail) - self.scheduler.clock()).total_seconds())
+                    except (ValueError, TypeError):
+                        pass
+                self.scheduler.defer(job['id'],job['fencing_token'],error.code,delay)
+                event('job_waiting', job_id=job['id'], code=error.code, status='pending')
+                with self.s.db.uow() as u:
+                    u.events.append('factory','command_waiting',{'job_id':job['id'],'reason':error.code})
+                return {'job_id':job['id'],'status':'pending','reason':error.code}
             else:
+                event("job_blocked", job_id=job['id'], code=error.code)
                 self.scheduler.fail(job['id'],job['fencing_token'],error.code)
                 with self.s.db.uow() as u:
                     u.conn.execute('DELETE FROM meta WHERE key=?',('local_work:'+job['id'],))
@@ -73,6 +88,7 @@ class ApplicationWorker:
                 u.events.append('factory','command_blocked',{'job_id':job['id'],'error':error.code,'detail':error.detail})
             return {'job_id':job['id'],'status':'blocked','error':error.code,'detail':error.detail}
         except ProviderError as error:
+            event("provider_failed", job_id=job['id'], code=error.code)
             # Only observation/transfer failures may repeat. A submit timeout
             # remains an unresolved attempt and is reconciled by its identity.
             retryable=error.transient and error.code in ('download_transport_failed','poll_failed')
@@ -81,6 +97,7 @@ class ApplicationWorker:
                 u.conn.execute('DELETE FROM meta WHERE key=?',('local_work:'+job['id'],))
             return {'job_id':job['id'],'status':'retry' if retryable and job['retry_count']<5 else 'failed','error':error.code}
         except Exception as error:
+            event("job_failed", job_id=job['id'], error_type=type(error).__name__)
             # Local, unpaid, re-entrant render work (compose nodes) that hit
             # a subprocess timeout is retried with the scheduler's bounded
             # backoff; every paid or ambiguous path stays terminal here.
@@ -100,6 +117,7 @@ class ApplicationWorker:
             from .recovery import retry_local,release_local
             return (retry_local if kind=='retry_local' else release_local)(s,body['job_id'],body['reviewer'])
         if kind=='analysis_collect':return s.analysis_work.collect(body)
+        if kind=='source_evidence':return s.source_work.execute(body,job)
         if kind=='speech_fit':return s.audio_work.fit(body)
         if kind=='publish':return s.publication_work.execute(body,job)
         if kind=='publication_observe':
@@ -132,7 +150,16 @@ class ApplicationWorker:
         if kind=='readback':
             chk=getattr(s,'checkpoints',None)
             if chk is not None:
-                snap=chk.collect(body['publication_id'],body['horizon'])
+                try:
+                    snap=chk.collect(body['publication_id'],body['horizon'])
+                except ContractError as error:
+                    if error.code=='horizon_not_due':
+                        delay=chk.seconds_until_due(
+                            body['publication_id'], body['horizon'])
+                        return {'status':'pending','error':'horizon_not_due',
+                                'horizon':body.get('horizon'),
+                                'defer_s':delay}
+                    raise
                 snap=snap.to_dict() if hasattr(snap,'to_dict') else snap
                 if snap.get('completeness')=='complete':
                     self._after_readback(s,body)
@@ -179,7 +206,8 @@ class ApplicationWorker:
         if kind=='analyze':
             return {'blueprint':s.analysis.import_observations(body['seed_id'],body['observations'],body['reviewer']).to_dict()}
         if kind=='analysis_evidence':
-            return {'analysis':s.ref_analysis.run_machine_stages(body['seed_id']).to_dict()}
+            binding = {'expected_binding': body, 'job_id': job['id']} if body.get('edit_token') else {}
+            return {'analysis':s.ref_analysis.run_machine_stages(body['seed_id'], **binding).to_dict()}
         if kind=='quote':
             exp=s._current(body['experiment_id'],body['revision']); fps=exp.output_clock['num']/exp.output_clock['den']
             takes=[]
@@ -191,6 +219,9 @@ class ApplicationWorker:
                         req.update(artifact_id=picture['artifact_id'],sha256=art['sha256'],source_in_s=picture.get('source_in_s',0))
                     elif not req:
                         raise ContractError('missing_picture','segment',seg['id'])
+                    if exp.packaging.get('workflow', {}).get('reference_policy') == 'first_clip.v1':
+                        from ..creative.references import bound_request
+                        req = bound_request(s, exp, key, seg, req, body.get('reference_bindings') or {})
                     takes.append({'variant':key,'slot':seg['id'],'duration_s':(seg['target']['end_frame']-seg['target']['start_frame'])/fps,
                                   'handle_s':picture.get('handle_s',0),'request':req})
             provider='google_vertex' if exp.provider_policy.choice=='vertex' else 'jimeng_canvas'
@@ -209,10 +240,16 @@ class ApplicationWorker:
                 durations=adapter.capabilities(model).get('durations_s',[])
                 if not durations: raise ContractError('model_catalog_unavailable','model',model)
             s.production.adapter=adapter
-            pid='plan-'+content_hash([exp.experiment_id,exp.revision,exp.content_hash])[:24]
+            output_binding=None
+            if exp.packaging.get('flashcut_policy'):
+                from .editorial_work import output_binding as editorial_binding
+                output_binding=editorial_binding(s,exp)
+            pid='plan-'+content_hash([exp.experiment_id,exp.revision,exp.content_hash,
+                body.get('reference_bindings')])[:24] if body.get('reference_bindings') else 'plan-'+content_hash([exp.experiment_id,exp.revision,exp.content_hash])[:24]
+            if output_binding:pid='plan-'+content_hash([pid,output_binding])[:24]
             old=s.production._plan(pid)
             if old: return s.production.status(pid)
-            return s.production.plan(pid,exp.experiment_id,exp.revision,takes,provider,model,durations,now=utcnow())
+            return s.production.plan(pid,exp.experiment_id,exp.revision,takes,provider,model,durations,now=utcnow(),output_binding=output_binding)
         if kind=='run':
             s.verify_run_gate(body['plan_id'])
             return {'jobs':s.production.submit(body['plan_id']),'plan_id':body['plan_id']}
@@ -263,10 +300,25 @@ class ApplicationWorker:
                 u.conn.execute("UPDATE jobs SET status='succeeded',lease_owner=NULL,lease_expires=NULL WHERE id=? AND status='awaiting_review'",(plan['id']+':del:'+v['variant_key'],))
                 u.events.append('factory','video_completed',{'variant_id':v['id'],'delivery_id':body['delivery_id'],'link':receipt['drive_link']})
             return {'status':'verified','cleanup':result,'link':receipt['drive_link']}
+        if kind=='delivery_reconcile':
+            v,final,path,binding=s._final(body['variant_id'])
+            exp=s._current(v['experiment_id'],v['experiment_revision'])
+            if binding != body['binding']: raise ContractError('stale_revision','delivery')
+            if exp.packaging.get('delivery_tracking') != 'verified_receipts.v1':
+                raise ContractError('historical_delivery_unchanged','variant_id')
+            account=getattr(s.delivery.drive,'expected_account','') or ('fixture-drive' if s.config.get('mode','offline')=='offline' else '')
+            if body['folder_id'] != s.config.get('drive_folder_id') or body['account'] != account:
+                raise ContractError('destination_not_authorized','folder_id/account')
+            s.external_delivery_acceptance(v,final,path,binding)
+            result=s.delivery.reconcile_external(body['delivery_id'],path,body['name'],body['folder_id'],body['file_id'],
+                variant_plan_id=v['id'],experiment_revision=v['experiment_revision'],
+                queue_job_id=final['plan_id']+':del:'+v['variant_key'])
+            if result['status']!='verified':return result
+            return self._finish_delivery(v,body['delivery_id'],result)
         if kind=='delivery':
             v,final,path,binding=s._final(body['variant_id'])
             if binding != body['binding']: raise ContractError('stale_revision','delivery')
-            s.quality.accept(path,body['check_ids'],binding)
+            s.delivery_acceptance(v,final,path,binding,body['check_ids'])
             effects=EffectService(s.db,s.executor)
             def scope(request,*unused):
                 att=effects.prepare(body['authorization_id'],'delivery',job['id'],job['fencing_token'],self.scheduler.worker_id)
@@ -274,13 +326,17 @@ class ApplicationWorker:
                 return att
             s.delivery.effects=scope
             result=s.delivery.deliver(body['delivery_id'],path,body['name'],body['folder_id'],
-                      variant_plan_id=v['id'],experiment_revision=v['experiment_revision'])
+                      variant_plan_id=v['id'],experiment_revision=v['experiment_revision'],
+                      queue_job_id=(final['plan_id']+':del:'+v['variant_key']) if s._current(v['experiment_id']).packaging.get('delivery_tracking') == 'verified_receipts.v1' else '')
             if result['status']!='verified': return result
             return self._finish_delivery(v,body['delivery_id'],result)
         if kind=='delivery_retry':
             v,final,path,binding=s._final(body['variant_id'])
             original=s.commands.get(body['delivery_id'])['command']
             if not original or original['kind']!='delivery':raise ContractError('unknown_delivery','delivery_id')
+            if binding != original['input']['binding']:
+                raise ContractError('stale_revision','delivery')
+            s.delivery_acceptance(v,final,path,binding,original['input']['check_ids'])
             effects=EffectService(s.db,s.executor)
             def retry_scope(request,*unused):
                 att=effects.prepare(original['input']['authorization_id'],'delivery',job['id'],job['fencing_token'],self.scheduler.worker_id)
@@ -454,6 +510,8 @@ class ApplicationWorker:
             source_art=s.db.uow().artifacts.get(pictures[0]['artifact_id']); probe=json.loads(source_art['probe'])
             video=next(x for x in probe['streams'] if x['codec_type']=='video')
             clock={'fps':fps,'width':video['width'],'height':video['height'],'total_frames':variant.target_frames}
+        if 'run_policies' in exp.packaging:
+            clock['caption_preset'] = exp.packaging['run_policies']['captions']
         # Native-quality evidence: an input smaller than the canvas is
         # upscaled by the renderer — scaling never restores detail, so
         # each upscaled input is recorded as a check limitation.
@@ -466,8 +524,24 @@ class ApplicationWorker:
             if pv and (pv['width']<clock['width'] or pv['height']<clock['height']):
                 upscaled.append(f"{p['id']}: {pv['width']}x{pv['height']} → {clock['width']}x{clock['height']}")
         renderer='hypit' if any(x.get('transition_out') not in ('cut','none','') or 'kenburns' in x.get('effects',[]) for x in pictures) else 'ffmpeg_fast'
+        render_options = {}
+        flashcut = exp.packaging.get('flashcut_policy')
+        if flashcut:
+            from ..templates.capabilities import renderer_order
+            from .editorial_work import prepare_editorial
+            from .editorial_work import output_binding
+            compose=next(n for n in nodes.values() if n['kind']=='compose' and key in n['consumers'])
+            if compose['request'].get('output_binding')!=output_binding(s,exp):
+                raise ContractError('stale_editorial_plan','composition','Quote the changed final speech, edit plan or author package before rendering.')
+            editorial_record,editorial,captions=prepare_editorial(s,exp,variant,pictures,mixed)
+            pictures=[{**p,'src':str(s.artifacts.verified_path(p['artifact_id'])),
+                       'frames':p['out_frame']-p['in_frame'],'media_kind':'video'} for p in editorial['pictures']]
+            segments=[*editorial['pictures'],audio[0]]
+            clock.update(fps_num=exp.output_clock['num'],fps_den=exp.output_clock['den'],caption_preset='phrases.v1')
+            renderer = renderer_order(flashcut['renderer'])[0]
+            render_options = {'renderer_policy': flashcut['renderer'], 'premix': audio[0],'native_editorial':editorial}
         cid='comp-'+content_hash([plan['id'],key])[:24]
-        result=s.composition.compile(cid,exp.experiment_id,key,plan['id'],segments,captions,clock,renderer,plan_hash=plan['plan_hash'],now=utcnow())
+        result=s.composition.compile(cid,exp.experiment_id,key,plan['id'],segments,captions,clock,renderer,plan_hash=plan['plan_hash'],now=utcnow(),**render_options)
         if result['diagnostics']: raise ContractError('compile_failed','diagnostics',json.dumps(result['diagnostics']))
         comp=result['composition']; bid='build-'+content_hash([cid,comp['content_hash']])[:24]
         if not s.db.uow().records.get('renderbuild',bid): s.rendering.register(bid,comp,now=utcnow())
@@ -488,6 +562,8 @@ class ApplicationWorker:
             mix={'profile_id':profile_id,'profile_hash':mixed['profile_hash'],
                  'measured':mixed['measured'],'artifact_id':mixed['artifact_id'],
                  'clipped':mixed['clipped']})
+        if flashcut:
+            final.update(editorial_plan_id=editorial_record['id'],editorial_manifest=editorial_record['manifest'])
         path=s.artifacts.verified_path(final['artifact_id']); binding=s.quality.binding(path,cid,final['artifact_id'])
         # Image artifacts placed by the authorized plan are intentional
         # stills — QC must not flag them as accidental freezes. Adjacent
@@ -510,6 +586,10 @@ class ApplicationWorker:
                 if region.start>cursor: regions.append({'start_frame':cursor,'end_frame':region.start})
                 cursor=max(cursor,region.end)
             if cursor<variant.target_frames: regions.append({'start_frame':cursor,'end_frame':variant.target_frames})
+            full_video = None
+            if exp.packaging.get('run_policies', {}).get('variation') == 'full_video':
+                from ..quality.variation import full_video_evidence
+                full_video, regions = full_video_evidence(s, plan, variant)
             check='regions-'+bid
             if not s.quality._get(check):
                 # Audio evidence comes from the deterministic mix WAVs —
@@ -521,7 +601,7 @@ class ApplicationWorker:
                     if (a.get('mix') or {}).get('artifact_id') else None
                 s.quality.check_regions(check,apath,path,regions,fps,
                     binding=binding,a_audio=a_audio,
-                    b_audio=s.artifacts.verified_path(mixed['artifact_id']))
+                    b_audio=s.artifacts.verified_path(mixed['artifact_id']), full_video=full_video)
             checks.append(check)
         final.update(check_ids=checks,binding=binding)
         with s.db.uow() as u:

@@ -33,7 +33,67 @@ def make(tmp_path, project="factory-proj", state=None):
     return loader, transport, ad
 
 
+def test_reference_route_requires_separate_gate_and_inline_hash_binding(tmp_path):
+    import copy
+    from modules.factory.artifacts.registry import ArtifactStore
+    from modules.factory.store import Database
+    from modules.factory.testing.fixtures import _png
+    db = Database(tmp_path / 'references.db')
+    arts = ArtifactStore(tmp_path / 'arts', db)
+    source = tmp_path / 'reference.png'
+    _png(source)
+    art = arts.intake_file(source, provenance='generated_frame', source_key='B:host', requested_kind='image')
+    _, transport, ad = make(tmp_path)
+    ad.artifacts = arts
+    req = dict(REQ, reference_artifact_ids=[art.id], reference_roles={art.id:'image'},
+               reference_hashes={art.id: art.sha256})
+    with pytest.raises(ProviderError, match='input_mode_not_qualified'):
+        ad.submit(req)
+    ad._caps = copy.deepcopy(CAPS)
+    ad._caps[REQ['model']].update(reference_enabled=True, qualified_modes=['text', 'image_ref'])
+    ad.rates = dict(RATES, image_input_tokens_est=1024)
+    ad.transport = lambda *args: (200, {'id': 'offline-reference', 'status': 'in_progress'})
+    op = ad.submit(req)
+    assert op['operation_id']
+    payload = ad._payload(req, REQ['model'])
+    assert payload['generation_config']['video_config']['task'] == 'reference_to_video'
+    assert payload['input'][1]['data'] == base64.b64encode(source.read_bytes()).decode()
+    assert 'uri' not in payload['input'][1]
+    assert ad.price(req,4).amount > ad.price(REQ,4).amount
+    with pytest.raises(ProviderError, match='reference_hash_mismatch'):
+        ad.submit(dict(req, reference_hashes={art.id:'0'*64}))
+
+
 # ------------------------------------------------------------- auth --
+
+def test_authority_required_is_pre_acceptance():
+    from modules.factory.execution.retry import classify
+    assert classify("authority_required") == "pre_acceptance"
+
+
+def test_live_binding_uses_oauth_account_not_gcp_project(tmp_path):
+    loader = FakeOAuthLoader(tmp_path / "oauth.json", project="sentientweb1")
+    auth = VertexAuth(loader, project="sentientweb1")
+    transport = FakeVertexTransport(tmp_path / "vertex.json", loader)
+    ad = VertexAdapter(auth, transport, {}, RATES, capabilities=dict(CAPS),
+                       project="sentientweb1",
+                       account="david.dai@robanka.com")
+    assert ad._binding_authorized({
+        "provider": "google_vertex",
+        "account": "david.dai@robanka.com"})
+    assert not ad._binding_authorized({
+        "provider": "google_vertex", "account": "sentientweb1"})
+    assert not ad._binding_authorized(None)
+
+
+def test_adapter_exposes_configured_account(tmp_path):
+    loader = FakeOAuthLoader(tmp_path / "oauth.json", project="factory-proj")
+    auth = VertexAuth(loader, project="factory-proj")
+    transport = FakeVertexTransport(tmp_path / "vertex.json", loader)
+    ad = VertexAdapter(auth, transport, {}, RATES, capabilities=dict(CAPS),
+                       account="david.dai@robanka.com")
+    assert ad.account == "david.dai@robanka.com"
+
 
 def test_readiness_ok(tmp_path):
     _, _, ad = make(tmp_path)
@@ -120,6 +180,17 @@ def test_submit_observe_download(tmp_path):
     assert obs["reported_usage"]["kind"] == "reported_estimate"
     dl = ad.download(out["operation_id"])
     assert base64.b64encode(dl["bytes"]).decode() and dl["sha256"]
+
+
+@pytest.mark.parametrize('status', [408,429,500,502,503,504])
+def test_transient_get_failure_is_a_retryable_observation(tmp_path, status):
+    _, _, ad = make(tmp_path)
+    op = ad.submit(REQ)
+    ad.transport = lambda *args: (status, {})
+    with pytest.raises(ProviderError) as error:
+        ad.observe(op['operation_id'])
+    assert error.value.code == 'poll_failed'
+    assert error.value.transient
 
 
 def test_http200_terminal_error_parsed(tmp_path):

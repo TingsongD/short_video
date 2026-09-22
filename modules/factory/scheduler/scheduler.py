@@ -19,7 +19,7 @@ from .graph import validate_dag, dependents
 
 LEASE_S = 120
 CAPACITIES = {"jimeng_submit": 5, "vertex_submit": 1,
-              "local_render": 1, "download": 4, "dispatch": 4,
+              "local_render": 1, "local_media": 1, "download": 4, "dispatch": 4,
               "observe": 8}
 
 # job phase -> capacity pool
@@ -34,6 +34,7 @@ PHASE_CAPACITY = {
     "observe": "observe",
     "collect": "download",
     "analyze": "dispatch",
+    "analyze_dense": "local_media",
     "plan": "dispatch",
     "review": "dispatch",
     "decide": "dispatch",
@@ -244,7 +245,7 @@ class Scheduler:
         if keep_unfinished:
             local = u.conn.execute("SELECT 1 FROM meta WHERE key=?", ('local_work:'+job_id,)).fetchone()
             if local:
-                u.conn.execute("UPDATE capacity_holds SET retained_reason='unfinished_local_work' WHERE job_id=? AND capacity='local_render'", (job_id,))
+                u.conn.execute("UPDATE capacity_holds SET retained_reason='unfinished_local_work' WHERE job_id=? AND capacity IN ('local_render','local_media')", (job_id,))
                 return
             has_unfinished = u.conn.execute(
                 "SELECT COUNT(*) FROM attempts WHERE job_id=? AND status "
@@ -291,7 +292,7 @@ class Scheduler:
                 own = u.conn.execute("SELECT 1 FROM capacity_holds WHERE capacity=? AND job_id=?", (capacity, row["id"])).fetchone()
                 if capacity and not own and self._capacity_free(u, capacity) <= 0:
                     continue
-                if queue == "dispatch" and capacity == "local_render":
+                if queue == "dispatch" and capacity in ("local_render", "local_media"):
                     ok, reason = self.resources.ok()
                     if not ok:
                         u.conn.execute(
@@ -389,6 +390,19 @@ class Scheduler:
         their capacity hold (retained_reason) until reconciled."""
         now = self.now()
         with self.db.uow() as u:
+            # A crash/older worker may have committed terminal status before
+            # dropping its retained dispatch slot. Never infer remote outcome
+            # from elapsed time, and never touch local-work holds here.
+            stale = u.conn.execute("""SELECT DISTINCT h.job_id FROM capacity_holds h
+                JOIN jobs j ON j.id=h.job_id
+                WHERE h.retained_reason='unfinished_remote_op'
+                AND j.status IN ('succeeded','failed','cancelled')
+                AND EXISTS (SELECT 1 FROM attempts a WHERE a.job_id=j.id)
+                AND NOT EXISTS (SELECT 1 FROM attempts a WHERE a.job_id=j.id
+                    AND a.status NOT IN ('succeeded','downloaded','failed','cancelled'))""").fetchall()
+            for row in stale:
+                u.conn.execute("DELETE FROM capacity_holds WHERE job_id=? AND retained_reason='unfinished_remote_op'", (row['job_id'],))
+                u.events.append('job:' + row['job_id'], 'terminal_capacity_recovered', {'by': self.worker_id})
             rows = u.conn.execute(
                 "SELECT id, status FROM jobs WHERE lease_expires IS NOT "
                 "NULL AND lease_expires<? AND status IN ('reserved',"

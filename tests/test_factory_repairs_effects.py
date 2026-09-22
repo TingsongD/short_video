@@ -104,6 +104,37 @@ def funded_stack(tmp_path, count=1, cap=100):
     return db, sched, budget, ex, effects
 
 
+def test_unknown_without_remote_id_is_not_recycled_as_pre_acceptance(tmp_path):
+    """Ambiguous ack-lost (unknown, no remote_id) must not free the
+    unique (auth, operation) slot or mint a new attempt_seq. Only
+    failed/cancelled without remote_id may recycle."""
+    from modules.factory.testing.fakes import ProviderError
+    db, sched, budget, ex, effects = funded_stack(tmp_path)
+    job = sched.claim()
+    aid = effects.prepare(
+        "auth:test", "op0", job["id"], job["fencing_token"], "w")
+    with pytest.raises(ProviderError):
+        ex.submit(aid, lambda: (_ for _ in ()).throw(
+            ProviderError("response_lost")))
+    row = ex._attempt(aid)
+    assert row["status"] == "unknown"
+    assert not row["remote_id"]
+    before = db.conn.execute("SELECT count(*) FROM attempts").fetchone()[0]
+    bound = db.conn.execute(
+        "SELECT attempt_id FROM effect_bindings WHERE "
+        "authorization_id=? AND operation_key=?",
+        ("auth:test", "op0")).fetchone()["attempt_id"]
+    again = effects.prepare(
+        "auth:test", "op0", job["id"], job["fencing_token"], "w",
+        attempt_seq=2)
+    assert again == aid == bound
+    assert db.conn.execute("SELECT count(*) FROM attempts").fetchone()[0] \
+        == before
+    assert db.conn.execute(
+        "SELECT attempt_seq FROM attempts WHERE id=?", (aid,)
+        ).fetchone()[0] == 1
+
+
 def test_scoped_effect_is_atomic_idempotent_and_fenced(tmp_path):
     db, sched, budget, ex, effects = funded_stack(tmp_path)
     job = sched.claim()

@@ -61,6 +61,32 @@ def _own(reg, rid, pid, os_, owner, cls="per_job", holders=(),
                  cls=cls, holders=holders, ports=ports)
 
 
+def test_listener_inspection_failure_does_not_claim_free_ports(monkeypatch):
+    from types import SimpleNamespace
+    from modules.factory.resources.service import scan_listeners
+    from modules.factory.domain.errors import ContractError
+    monkeypatch.setattr('subprocess.run', lambda *a, **k: SimpleNamespace(returncode=2, stdout='', stderr='denied'))
+    with pytest.raises(ContractError, match='listener_inspection_unavailable'):
+        scan_listeners()
+
+
+def test_cleanup_preserves_stop_evidence_when_final_inspection_fails(env):
+    from modules.factory.domain.errors import ContractError
+    _, reg, os_, svc = env
+    _own(reg, 'render', 100, os_, 'future', ports=(8105,))
+    scans = iter([{8105: 100}, None])
+    def scan():
+        result = next(scans)
+        if result is None:
+            raise ContractError('listener_inspection_unavailable')
+        return result
+    svc.ports = scan
+    result = svc.cleanup('future')
+    assert result['state'] == 'blocked'
+    assert result['stopped'] == [{'id':'render','pid':100}]
+    assert result['ports_verified'] is False
+
+
 def test_per_job_cleanup_kills_and_frees_port(env):
     _, reg, os_, svc = env
     _own(reg, "r-render-a", 100, os_, "expA", ports=(8123,))

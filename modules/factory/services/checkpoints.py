@@ -137,6 +137,28 @@ class CheckpointService:
                       query_version=getattr(snap, "query_version", ""))
         return snap
 
+    def seconds_until_due(self, publication_id, horizon):
+        """Seconds until the observation clock reaches this horizon.
+
+        A scheduler clock that is ahead of the readback clock can claim
+        the job early; the worker defers by this amount instead of
+        failing a horizon that is honestly not due yet.
+        """
+        sid = f"chk-{publication_id}-{horizon}"
+        row = self.db.uow().records.get("checkpointschedule", sid)
+        if row is None:
+            return 60.0
+        due = _parse(json.loads(row["body"])["due_at"])
+        rb = self.readback
+        clock = getattr(rb, "clock", None)
+        if callable(clock):
+            now = clock()
+        else:
+            now = datetime.now(timezone.utc)
+        if isinstance(now, str):
+            now = _parse(now)
+        return max(1.0, (due - now).total_seconds())
+
     def next_delay(self, publication_id, horizon):
         """(defer_seconds, status) for a checkpoint after a collect —
         'retrying' yields a bounded backoff for the worker to defer

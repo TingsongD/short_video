@@ -74,6 +74,46 @@ class TestSubmitClassification:
 
 
 class TestPollAndDownload:
+    def test_auth_error_does_not_reset_future_observation_budget(self, env):
+        db, provider = env
+        clock = FakeClock()
+        ex = Executor(db, provider, clock)
+        aid = _prepare(ex, req={'workflow_version': 2})
+        ex.submit(aid, call=lambda: provider.submit({'workflow_version': 2}))
+        codes = iter(['poll_failed', 'auth_required', 'poll_failed', 'poll_failed', 'poll_failed', 'poll_failed', 'poll_failed'])
+        def fail(*args, **kwargs):
+            raise ProviderError(next(codes), transient=True)
+        provider.poll = fail
+        with pytest.raises(ContractError, match='retry_backoff'):
+            ex.poll(aid)
+        clock.advance(1)
+        with pytest.raises(ProviderError, match='auth_required'):
+            ex.poll(aid)
+        for delay in (2, 4, 8, 16):
+            with pytest.raises(ContractError, match='retry_backoff'):
+                Executor(db, provider, clock).poll(aid)
+            clock.advance(delay)
+        with pytest.raises(ContractError, match='retry_exhausted'):
+            Executor(db, provider, clock).poll(aid)
+
+    def test_future_observation_retries_share_a_restart_safe_budget(self, env):
+        db, provider = env
+        clock = FakeClock()
+        ex = Executor(db, provider, clock)
+        aid = _prepare(ex, req={'workflow_version': 2})
+        ex.submit(aid, call=lambda: provider.submit({'workflow_version': 2}))
+        def unavailable(*args, **kwargs):
+            raise ProviderError('poll_failed', transient=True)
+        provider.poll = unavailable
+        provider.reconcile = unavailable
+        for i, delay in enumerate((1, 2, 4, 8, 16)):
+            ex = Executor(db, provider, clock)
+            with pytest.raises(ContractError, match='retry_backoff'):
+                (ex.poll if i % 2 == 0 else ex.reconcile)(aid)
+            clock.advance(delay)
+        with pytest.raises(ContractError, match='retry_exhausted'):
+            Executor(db, provider, clock).poll(aid)
+        assert provider.effect_counts()['submit'] == 1
     def test_poll_maps_remote_states(self, env):
         db, provider = env
         ex = Executor(db, provider)

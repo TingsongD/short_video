@@ -7,6 +7,209 @@ decisions) is my direct work.
 
 ---
 
+## 2026-09-22 — Future-run hardening in progress
+
+- Added a server-issued, versioned **$50 cumulative USD guardrail** to each
+  newly created automatic run. The ceiling is stored as a run-owned budget,
+  counts held/ambiguous and settled usage, cannot be selected by another run,
+  and cannot be removed when a paused run is resumed with replacement budgets.
+  Existing runs without the policy retain their saved behavior.
+- The run guardrail is an approval boundary, not a way around safety limits:
+  lower applicable aggregate, provider or category ceilings still block work.
+  Provider-credit units continue to require their own selected authority.
+- Added run-status and dashboard accounting views for cap, committed amount and
+  remaining headroom. Per-run guardrails are separated from reusable funding.
+- Changed narration repair so a completed but unusable rewrite preserves its
+  receipt and may use the distinct second bounded attempt. Unknown outcomes
+  remain paused and are never replayed; attempt counters persist.
+- Added a conservative editorial-plan fallback for completed but structurally
+  unusable provider output. It can retain source-bound scene coverage and exact
+  observed cuts only when variant ownership, clip ranges and event placement are
+  unambiguous. Conflicts still pause; invalid JSON, unknown submissions and
+  transport failures are never disguised as a successful plan.
+- Added future-run automatic planning for the existing bounded saved-response
+  recovery when audiovisual analysis completes but exceeds its response cap.
+  It preserves the original request and hold, requires the saved run guardrail,
+  and does not replay HTTP 500 or other unknown outcomes. End-to-end
+  qualification of this last slice is still running.
+- Focused verification so far: future-policy, budget-selection and editorial
+  planning checks **33 passed**; narration repair checks **4 passed**; dashboard
+  future-policy checks **6 passed**. The complete dashboard suite **72 passed**
+  and its production build passed. A clean complete backend release result has
+  not yet been obtained, so this is not a release sign-off. No live provider
+  calls, generation, publishing, service restart, historical reconciliation or
+  deployment has occurred in this hardening session.
+- Work tracker: [future-run hardening](docs/factory-reports/FUTURE-RUN-HARDENING-2026-09-22.md).
+
+## 2026-09-22 — AVvVLM5b-mE completion and documentation consolidation
+
+- Completed `auto-2c9de6ddf2e34d5c`: four revision-3 720×1280 finals,
+  424 frames each, QC-passed, Compare-visible and verified on Drive. Owned
+  video services cleaned up; publishing/scheduling remained disabled.
+- Recovery fixes covered truncated/structured analysis, continuous overlapping
+  window coverage, evidence-backed capacity release, and actionable errors.
+  Native Hypit premix trim now uses exact frames. Final QC distinguishes source
+  overlays from intended replacement captions; B passed a fresh recheck.
+- Run-specific assistant interventions corrected narration, scene-local prompts
+  and an incomplete editorial plan. These are not proof of general unattended
+  recovery. Unknown provider outcomes and financial holds remain preserved.
+- Focused evidence: 105 coverage/recovery checks, 36 rendering/composition checks,
+  31 final-review/context/quality checks (not an additive full-suite count).
+  Actual local renders and final decode/audio checks passed. No claim of a new
+  complete backend/frontend suite run after the final patches.
+- Historical final hashes/records remained intact; five older budget-row changes
+  are prior explicit authorizations. Completion headroom was $33.479344 and
+  9,361 prepaid TTS credits; estimates/holds are not confirmed invoice charges.
+- Consolidated current status and limitations, linked historical reports, and
+  updated operator recovery/Compare guidance. The follow-on hardening cycle is
+  tracked separately and excludes Chinese-language fixes; its offline $50
+  guardrail and recovery changes do not imply deployment or broad route
+  qualification.
+- This documentation update changes no runtime, services, records or budgets
+  and makes no provider calls. See
+  [current handover](docs/factory-reports/FLASHCUT-CURRENT-STATUS.md).
+
+## 2026-09-20 — Run prevention and dashboard recovery
+
+Implemented source-bound approval reuse across recovery/restart, centralized
+saved-response recovery with separate paid-retry approval, provider-only
+structured analysis output, evidence-led scene cards, non-billable readiness
+checks and guarded terminal queue-slot cleanup. Provider self-review claims
+cannot bypass local anchors. The current `7udu-FBXoy8` run remains paused for
+human blueprint review; no paid work, creative approval, budget changes or
+publication were initiated by this implementation.
+
+Verification: full offline suite 1,212 passed; final focused safety/pipeline
+suite 65 passed; dashboard 48 passed plus production build. Final API/worker
+restart at 20:16 UTC is healthy. Before/after run, budget, reservation and
+attempt hashes match. Browser shows eight flagged-scene cards at 29% progress.
+
+See [repair evidence](docs/factory-reports/REPAIR-2026-09-20-RUN-PREVENTION.md)
+for verification, deployment and remaining limits. Existing recovery reports
+and original receipts remain intact.
+
+## 2026-09-20 — Live browser production: YouTube Shorts nFfa1wMBruo
+
+Sequential builder on `feat/factory`. Dedicated labeled experiment; prior
+production rows were snapshotted and left intact. Social publishing was
+out of scope. Human creative acceptance was **not** invented: mandatory
+technical/region QC plus automated visual QC ran on the current artifacts;
+Compare frames were inspected. Identity is not consistent across t2v clips.
+
+### Run identities
+
+- Seed URL: `https://www.youtube.com/shorts/nFfa1wMBruo`
+- Label: `live test 2026-09-20 nFfa1wMBruo`
+- Autorun `auto-22d6ceaed2f2433c` → status `succeeded`, stage `done`
+- Seed `seed-youtube-48bdcb215139aa69`
+- Experiment `exp-auto-22d6ceaed2f2433c` revision 2
+- Production plan `plan-765b55e953da76389c206052`
+- Voice: ElevenLabs `eleven_v3` / Jessica `cgSgspJ2msm6clMCkdW9`
+- Video generation: Vertex Omni 1.1 Flash (`gemini-omni-1.1-flash-preview`),
+  account `david.dai@robanka.com`, project `sentientweb1`
+- Source: 1080×1920 h264, 31.86s, 30fps
+- Finals A–D: 720×1280 30fps, 31.8667s, h264+aac
+  - A `art:29f3dfa202c6b63e` sha256 `29f3dfa202c6b63e…`
+  - B `art:f4c8e53e0d746e13` sha256 `f4c8e53e0d746e13…`
+  - C `art:bea5498a91627be9` sha256 `bea5498a91627be9…`
+  - D `art:ca9e5144df4e76aa` sha256 `ca9e5144df4e76aa…`
+
+### Browser-driven stages
+
+Dashboard origin `http://127.0.0.1:8100` (Playwright Chrome). Pause/resume
+was exercised where the run actually paused: WhisperX looped sung source
+(`analysis_blocked` → YouTube auto-captions), blueprint flags (operator
+accept with allow_flags after grid inspection), speech-fit pad, Vertex
+account/scope, reservation-identity, incomplete_submission_set, native-rate
+mix QC, and review-revision conflict. Resume sent `pause_at`. TTS was reused
+on fit retry (222 credits, 5 unique lines). First Vertex clip: pre-acceptance
+`authority_required` released with no remote_id; attempt_seq 2 recovered a
+real remote_id after binding recycle. Autorun note still says done is not
+verified Drive delivery — Drive verification was done via the authorized CLI
+workflow, not by the autorun `_finish` path.
+
+### Recorded video-generation and TTS spend
+
+Ledger holds, not invoice-settled. Amounts are per reservation (several
+budget lines each hold the same amount; they are not summed).
+
+**TTS (this grant):** 5 reservations, 222 ElevenLabs credits held/downloaded
+(`58+17+40+51+56`). Auth `auth-91fe33c10ac84b1fb1a249b6e60b8a82`. No second
+synthesis after fit retry.
+
+**Vertex generation (this grant):** plan quote **7,134,640 usd_micros**.
+8 downloaded holds totaling **7,134,640** (clip quotes 765,130 / 765,130 /
+765,130 / 1,271,930 / 1,018,530 / 765,130 / 765,130 / 1,018,530). One
+additional reservation **765,130 released** (`rsv:470de0dc203b4e32`,
+pre-acceptance, no remote_id, evidence: no provider charge). Seq1 of the
+first clip remains `unknown` with no remote_id. Invoice-confirmed actuals:
+none.
+
+**Analysis / visual QC (existing class, not this VG/TTS grant):** 6 × 250,000
+usd_micros held (2 source/script analysis + 4 automated visual QC).
+
+Budgets created/raised for this task: `nffa1-live-test-20260920-usd` 40e6,
+`nffa1-live-test-20260920-tts` 30k; raised `syp34-vertex-approved-4590780` to
+55,366,950, `syp34-vertex-approved-6886170` to 50,776,170,
+`lezys-tts-approved-2000` to 34,000. No subscription or prepaid package
+purchase.
+
+### Drive delivery (parent `1XQU20m_xk5030kAxbbIumeHYkrRPkPbs`)
+
+Verified parent, name, bytes, MD5 against local exports. Preview/render
+ports 5184–5188 free; studio sessions empty. Factory `:8100` and hypit left
+running as shared runtime.
+
+- A https://drive.google.com/file/d/160widdMyjdseOTSsR577NG2itC4C_k1X/view (9,793,538 B, md5 `a218ce5c7953d72d93229c68c854be46`)
+- B https://drive.google.com/file/d/1E0TKx-Tv5J4yBtM2IUu9t9i7XVAWnfK7/view (10,664,131 B, md5 `5b53c1e96bb4cac36dffaa4ec19dc854`)
+- C https://drive.google.com/file/d/1afax4XlvTXXkv5ARM46QteOshPvxG8vS/view (9,964,426 B, md5 `e6bb09d413ac375eb9635f2b601cfcb4`)
+- D https://drive.google.com/file/d/1y_At_z7DgaSAyEJQFccMCvQ2YI2_msKL/view (10,110,718 B, md5 `54bba741f523509e933778162eda8967`)
+
+### Code fixes from this run (offline regressions, mocked providers)
+
+- SSE collection-refresh storm → `coalesce` in the dashboard.
+- WhisperX loop on sung source → YouTube caption import; `transcript_suspect`
+  is a blocking code.
+- Resume idempotency empty-body replay → Resume sends `pause_at`.
+- Speech-fit `pad_exceeds_limit` → sparse pad; bounded TTS-fit retry so a
+  second failure pauses instead of re-queueing forever.
+- Vertex live submit account vs GCP project; recycle no-remote bindings;
+  reservation hash includes `attempt_seq`; download ignores empty remote_id.
+- Mix QC resampled 22,050 Hz WAVs to 48 kHz and smeared beat boundaries →
+  compare at native mix rate.
+- QC-policy resume re-ran failed region checks; `_put` bumps review revision.
+- **Readback `horizon_not_due`:** a wall-clock-due 72h job was failed while
+  the observation clock was still before that horizon. Worker now defers
+  until the readback clock reaches `due_at`. Publish-wait ignores that
+  deferred observation instead of treating it as a publication failure.
+- **Crash after provider accept:** `dispatching`/`unknown` with no
+  `remote_id` was polled (needs remote_id) or, for `unknown`, recycled as
+  pre-acceptance and resubmitted. Recovery now reconciles by request hash;
+  only `failed`/`cancelled` without remote_id may mint a new attempt_seq.
+  `EffectService.prepare` had the same hole (it recycled `unknown`); it
+  now matches `plan.py`. Offline tests drive `_stage_tts` (one fit retry
+  of the bought waveform, second failure pauses), `check_regions` twice
+  on the same id (revision bump, no UNIQUE conflict), and `prepare` on
+  an unknown-without-remote_id attempt (no new attempt_seq).
+
+### Suites (offline)
+
+- `make test`: **1139 passed**, 2 warnings, 703.44s
+- dashboard vitest: **35 passed**
+- dashboard `tsc -b && vite build`: green
+
+### Remaining limitations
+
+- t2v identity drifts across clips (different faces/wardrobe per beat).
+- Holds are reserved, not invoice-confirmed.
+- Autorun `_finish` still does not perform Drive upload (W01 code path).
+- F01/F02/F03/F04/F05 (export-vs-mix audio), F06–F12, W02–W06, L01–L04
+  were not closed by this seed unless they reproduced here. F05's
+  native-rate mix smear reproduced and was fixed; export-audio content
+  check is still open. No social publish.
+
+---
+
 ## 2026-09-19 — Review-finding patch: all 16 items (REVIEW-2026-09-19)
 
 Second independent review found 16 code/recovery issues; all verified
@@ -1562,3 +1765,148 @@ separately approved rerun.
   rewind restores the pipeline's own checked output).
 - Full suite: **1107 passed**, 0 failed, all offline (fakes + local
   ffmpeg). Dashboard `tsc --noEmit` clean.
+
+## 2026-09-20 — Credential, preview and diagnostic recovery
+
+- Added safe, typed Google credential failure reasons and an explicit
+  readiness refresh; dashboard and autorun messages distinguish authentication,
+  connectivity, dependencies and historical unknown failures.
+- Synchronous Vertex analysis now persists attempt/request-bound proof of a
+  credential failure before transport. Executor reconciliation closes only
+  matching not-sent attempts and releases their holds atomically/idempotently.
+  Unknown outcomes and mismatched receipts never authorize release or retry.
+- Preview hashing uses a separate read-only connection and one metadata
+  snapshot, avoiding cross-thread access to the API writer and a second,
+  unchecked artifact lookup. The precise historical InterfaceError cause
+  remains unconfirmed; concurrent and disappearing-record cases are covered.
+- Manual API/worker CLI sessions now write bounded, private JSON diagnostics
+  independently of the launcher console logs; raw payloads and credential
+  exception text are not logged.
+- Regression-first verification: 28 new backend regressions, 42 total
+  dashboard tests, and production dashboard build pass. Full offline suite:
+  **1168 passed**, 2 dependency deprecation warnings, 734.29s, with process
+  inspection permitted for local supervisor tests. One further disappearing-
+  record regression was added after full-suite collection and passed in the
+  final 28-test targeted run (1169 backend tests now collected). The initial
+  sandbox-limited run was stopped after process inspection was denied; no
+  production process was stopped or restarted.
+- Production was not restarted or resumed. Read-only verification confirmed
+  run `auto-bbf59fdd645e4bdb` remains paused at video analysis and reservation
+  `rsv:4054f3d9ad71465d` remains ambiguous. Google reauthentication and historical
+  hold reconciliation remain operator actions. No paid requests, budget
+  changes, frozen-contract edits or generation retries.
+- Details: `docs/factory-reports/REPAIR-2026-09-20-AUTH-MEDIA-LOGGING.md`.
+
+## 2026-09-20 — Approved live recovery
+
+- With explicit user authorization, restored the patched API and exactly one
+  worker; both pass health checks and write private diagnostic logs.
+- User completed Google's native approval. Explicit credential readiness
+  refresh passes for Vertex and audiovisual analysis with the configured
+  identity and project; no analysis/generation request was used for this check.
+- Resolved only historical attempt
+  `att:effect-42bf99b105395d074d9fb913ba9d9a95cecd70edf94270c7837fbad67730766b:0:1`
+  as `confirmed_no_effect` using reviewed request-bound local code-path evidence.
+  Existing audited operator services released reservation
+  `rsv:4054f3d9ad71465d` ($0.25) in the same guarded transaction. This releases
+  reserved budget, not a provider refund. Original receipt/events are preserved.
+- Verified the evidence snapshot hash against audit event 5808. Run
+  `auto-bbf59fdd645e4bdb` remains paused at video analysis, with no runnable jobs;
+  no generation retry, budget-ceiling change, scheduling or publication.
+- Outcome: `docs/factory-reports/RECOVERY-2026-09-20-GOOGLE-HOLD-RESULT.md`.
+
+## 2026-09-20 — Analysis timing-response repair and approved retry
+
+- Reproduced zero-duration response entries offline. Vertex now supplies the
+  verified media duration, requests independent local word alignment, and
+  narrowly discards an optional word-timing list containing zero-length words
+  with an explicit uncertainty note. Scene/passage timing and all other word
+  bounds remain strict; no fabricated duration or silent scene repair.
+- Preserve private redacted response evidence before validation, bound to the
+  attempt/request. Errors retain the field name, which the original incident
+  event omitted. The missing historical payload was not fabricated.
+- Add guarded operator reconciliation for completed but unusable synchronous
+  analysis. It settles the full conservative estimate atomically with terminal
+  resolution, preserves original evidence, refuses unrelated/unknown transport
+  failures, and cannot enqueue or reopen the paid attempt. Dashboard recovery
+  messages explain the potentially billable outcome and settlement requirement.
+- Offline full suite: **1188 passed**, two dependency warnings, 786.45s.
+  Final timing/auth regressions: **38 passed**, including the stale-reconcile
+  guard added after full-suite collection. Frontend: **44 passed**, build green.
+  An initially sandbox-limited render test timed out; the identical test passed
+  with process inspection permitted in 19.18s. No frozen contracts changed.
+- With user approval, restarted only the registered API/worker (one each),
+  settled `rsv:d37e1550136e4807` at **$0.25 usage_estimate** (not invoice-confirmed
+  or refunded), and resumed `auto-bbf59fdd645e4bdb` with unchanged $25 / 5,000
+  credit ceilings. The older credential hold remains released.
+- Evidence and live outcome: `docs/factory-reports/REPAIR-2026-09-20-ANALYSIS-TIMING.md`.
+
+## 2026-09-20 — Recover saved analysis locally and unblock dispatch
+
+- The approved retry returned ten valid scenes but an empty zero-length
+  transcript placeholder. The private saved response made exact reproduction
+  possible. Drop only that empty placeholder with a recorded uncertainty;
+  preserve all real speech and strict scene/passage timing.
+- Add guarded, source/request-bound local response recovery: no provider call,
+  original receipts unchanged, conservative settlement and recovered run state
+  committed atomically. Missing evidence and mismatches leave state unchanged.
+- Fix terminal remote-operation capacity cleanup, preserving unfinished sibling
+  attempts and local-work holds. Two already-resolved current-run stale slots
+  were safely cleared using their resolution events; unrelated unknown work
+  was not changed.
+- Offline integration regressions: **144 passed** in 328.67s; final recovery
+  cases: **29 passed** (overlapping coverage, not additive). Full suite 1188 and
+  frontend 44/build results above predate this bounded local-recovery refinement.
+- Approved restart yielded one healthy API and worker. Event 5857 records local
+  response adoption; `rsv:02a61fc8b71a4dc7` settled at $0.25 usage estimate.
+  Two completed analysis calls total $0.50 estimated; historical authentication
+  hold remains released. Limits unchanged; $24.50 / 5,000 credits available.
+- Resumed without a new analysis request; run `auto-bbf59fdd645e4bdb` now pauses
+  at blueprint review (29%, eight uncertain scenes and one missing speech link).
+  UI status verified. No creative approval fabricated, no final videos yet,
+  no scheduling/publication.
+
+## 2026-09-20 — AI scene correction, verification and explicit recovery
+
+- Added source-grounded, two-pass AI review for flagged blueprint scenes:
+  correct observations, verify against the source again, then refresh derived
+  analysis and continue. Both paid calls use existing authority and durable
+  identities; no unbounded review retries or automatic flag overrides.
+- If AI cannot verify the result, pause with its reason in the live status bar
+  and offer Manual fix / Proceed anyways. The latter requires named, explicit
+  content-risk consent for the exact blueprint. Missing source, authentication,
+  unknown provider outcomes, budgets and technical checks are not bypassed.
+- Manual fixes can explicitly adopt an already accepted blueprint and rebind
+  its derived analysis without buying another AI review. Human review/override
+  and automated AI verdicts remain distinct in durable provenance.
+- Full offline suite: 1,227 passed (776.66s). Focused backend regressions:
+  32 passed; provider/receipt/accounting checks: 71 passed. Dashboard: 52 passed
+  and production build green. Final response-shape and corrected-language
+  refinements received focused checks after full-suite collection; see report.
+  No frozen contracts changed.
+- Resumed the approved `7udu-FBXoy8` run. The AI verifier reported missing
+  speech in b4 at about 21.5s and stopped the run, as requested. Both recovery
+  options were verified in the live UI; no override was submitted. No finals
+  or publishing. Remaining authority $24 / 5,000 credits after conservative
+  accounting for the two review calls.
+- Evidence: `docs/factory-reports/REPAIR-2026-09-20-AI-SCENE-REVIEW.md`.
+
+## 2026-09-20 — Reversible dashboard history cleanup
+
+- Added top-level Clean up with an exact preview and confirmation, Show archived,
+  and Restore archived history. Archive markers persist in dashboard-only metadata;
+  Queue/Auto hide them without changing execution records or deleting files.
+- Eligibility protects nonterminal jobs, paused/running runs, unfinished provider
+  attempts, retained capacity and related experiment/dependency history. Confirmation
+  rechecks the preview atomically. Changed or reopened records become visible again.
+- Optional selection reset clears only the saved experiment selection and refreshes
+  the dashboard; media, generation caches, pending request identities and event
+  cursors are preserved. Delayed results cannot restore a cleared selection.
+- Offline API/scheduler/archive regressions: 54 passed (including 25 new archive
+  cases). Entire dashboard suite: 55 passed; TypeScript/Vite build passed.
+- Reloaded the verified idle API only (PID 965, port 8100); worker PID 57756
+  remained running. Archived 148 eligible jobs and one completed run through the
+  live UI, event 5921. Verified persistence and Show archived in the browser.
+- Exact before/after hashes of jobs, current paused run, budgets, reservations,
+  attempts and artifact records were unchanged. No generation, reconciliation,
+  budget changes, publishing or deletion. Current AI-review pause remains intact.

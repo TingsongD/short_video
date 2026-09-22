@@ -36,6 +36,12 @@ def svc(tmp_path):
 
 
 class TestAuthoring:
+    def test_saved_hypit_policy_controls_simple_cut_preview(self, svc):
+        tpl = svc.author(_blueprint(), 'native', renderer_policy='hypit_primary.v1')
+        assert tpl.constraints['renderer_policy'] == 'hypit_primary.v1'
+        assert svc.preview(tpl.id)['spec']['renderer'] == 'hypit'
+        assert svc.preview(svc.author(_blueprint(), 'legacy').id)['spec']['renderer'] == 'ffmpeg_fast'
+
     def test_structure_without_source_content(self, svc):
         tpl = svc.author(_blueprint(), "ft-haul")
         assert len(tpl.slots) == 5

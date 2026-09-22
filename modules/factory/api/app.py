@@ -10,6 +10,7 @@ import hashlib
 import tempfile
 import mimetypes
 from ..events.redact import redact
+from ..diagnostics import event
 from pathlib import Path
 
 from fastapi import FastAPI, Header, Request, Response
@@ -38,6 +39,8 @@ def create_app(services, session_token=None):
 
     @app.exception_handler(ContractError)
     async def contract_error(request, exc):
+        event("request_blocked", code=exc.code,
+              route=getattr(request.scope.get('route'), 'path', 'unmatched'))
         status = 409 if exc.code in (
             "stale_revision", "idempotency_conflict", "not_authorized",
             "locked_field", "no_quote", "idempotency_unresolved") else \
@@ -50,6 +53,8 @@ def create_app(services, session_token=None):
 
     @app.exception_handler(Exception)
     async def generic_error(request, exc):
+        event("request_failed", error_type=type(exc).__name__,
+              route=getattr(request.scope.get('route'), 'path', 'unmatched'))
         return JSONResponse({"error": "internal",
                              "detail": "unexpected error"},
                             status_code=500)
@@ -90,7 +95,13 @@ def create_app(services, session_token=None):
         if not key:
             raise ContractError("missing_idempotency_key",
                                 "Idempotency-Key", "required")
-        return idem.run_local(key, request.method, request.url.path, {"payload": body, "expected_revision": request.headers.get("x-expected-revision")}, fn)
+        def guarded():
+            from ..budget.service import BudgetService
+            for field in ('budget_ids', 'add_budget_ids'):
+                if field in body:
+                    BudgetService(services.db).require_selection(body[field])
+            return fn()
+        return idem.run_local(key, request.method, request.url.path, {"payload": body, "expected_revision": request.headers.get("x-expected-revision")}, guarded)
 
     def expected_rev(request: Request):
         raw = request.headers.get("x-expected-revision")
@@ -190,6 +201,13 @@ def create_app(services, session_token=None):
         status,resp=mutation(request,body,lambda:(200,services.require('audio_work').attach(eid,expected_rev(request),body.get('speech_ids'))))
         return JSONResponse(resp,status_code=status)
 
+    @app.post('/api/attempts/{attempt_id}/reconcile-invalid-analysis')
+    async def reconcile_invalid_analysis(attempt_id: str, request: Request):
+        body = await json_command(request)
+        status, resp = mutation(request, body, lambda: (200,
+            services.reconcile_invalid_analysis(attempt_id, body)))
+        return JSONResponse(resp, status_code=status)
+
     @app.post('/api/jobs/{job_id}/retry-local')
     async def retry_local_job(job_id:str,request:Request):
         from ..services.recovery import retry_local
@@ -256,10 +274,20 @@ def create_app(services, session_token=None):
         def create():
             from ..budget import BudgetService
             if not body.get('reviewer') or not body.get('evidence') or not {'id','unit','scope','scope_key','ceiling'}<=body.keys():raise ContractError('budget_scope_required','reviewer/evidence/budget')
+            if str(body['id']).startswith('authority:'):
+                raise ContractError('budget_not_selectable','id','Internal authorization ceilings are managed by the effect ledger.')
             result=BudgetService(services.db).create_budget(body['id'],body['unit'],body['scope'],body['scope_key'],body['ceiling'])
             with services.db.uow() as u:u.events.append('factory','budget_scope_recorded',body)
             return 201,{'budget_id':body['id']}
         status,resp=mutation(request,body,create)
+        return JSONResponse(resp,status_code=status)
+
+    @app.post('/api/budgets/{budget_id}/tighten')
+    async def tighten_budget(budget_id:str,request:Request):
+        body=await json_command(request)
+        from ..budget import BudgetService
+        status,resp=mutation(request,body,lambda:(200,BudgetService(services.db).tighten_budget(
+            budget_id,body.get('ceiling'),body.get('expected_ceiling'),body.get('reviewer'),body.get('evidence'))))
         return JSONResponse(resp,status_code=status)
 
     @app.post('/api/reservations/{reservation_id}/settle')
@@ -356,6 +384,13 @@ def create_app(services, session_token=None):
         status,resp=mutation(request,body,lambda:(200,{"run":services.autorun.resume(run_id,body)}))
         return JSONResponse(resp,status_code=status)
 
+    @app.post('/api/autoruns/{run_id}/recover-analysis-response')
+    async def autorun_recover_analysis(run_id: str, request: Request):
+        body = await json_command(request)
+        status, resp = mutation(request, body, lambda: (200,
+            {'run': services.autorun.recover_analysis_response(run_id, body)}))
+        return JSONResponse(resp, status_code=status)
+
     @app.post("/api/blueprints/{blueprint_id}/review")
     async def review_blueprint(blueprint_id: str,request: Request):
         body=await json_command(request)
@@ -382,9 +417,24 @@ def create_app(services, session_token=None):
     async def collection(name: str):
         return {"items":services.collection(name)}
 
+    @app.get('/api/dashboard/history')
+    async def dashboard_history():
+        from ..services.history import DashboardHistory
+        return DashboardHistory(services.db).snapshot()
+
+    @app.post('/api/dashboard/history')
+    async def update_dashboard_history(request: Request):
+        from ..services.history import DashboardHistory
+        body = await json_command(request)
+        status, resp = mutation(request, body, lambda: (
+            200, DashboardHistory(services.db).update(body)))
+        return JSONResponse(resp, status_code=status)
+
     @app.post("/api/experiments", status_code=201)
     async def create_experiment(request: Request):
         body = await json_command(request)
+        body['workflow'] = {'version': 2, 'prompt_policy': 'scene.v2',
+                            'qc_policy': 'visual.v2', 'visual_qc': False}
         eid = body.get("id") or "exp-"+__import__("uuid").uuid4().hex
         status, resp = mutation(request, body, lambda: (201, {
             "experiment": services.create_experiment_draft(eid, body)}))
@@ -461,6 +511,13 @@ def create_app(services, session_token=None):
             "revision": services.create_variant_revision(
                 variant_id, body.get("reason", ""),
                 body.get("patch", {}))}))
+        return JSONResponse(resp, status_code=status)
+
+    @app.post('/api/variants/{variant_id}/delivery/reconcile', status_code=202)
+    async def reconcile_delivery(variant_id: str, request: Request):
+        body = await json_command(request)
+        status, resp = mutation(request, body, lambda: (202,
+            services.reconcile_external_delivery(variant_id, body, expected_rev(request))))
         return JSONResponse(resp, status_code=status)
 
     @app.post("/api/variants/{variant_id}/deliver", status_code=202)
@@ -656,11 +713,8 @@ def create_app(services, session_token=None):
 
     @app.get("/api/assets/{asset_id}/media")
     async def media(asset_id: str, request: Request):
-        row=services.db.uow().artifacts.get(asset_id)
-        if row is None:
-            raise ContractError("unknown_artifact","artifact_id",asset_id)
-        p = await run_in_threadpool(services.media_path,asset_id)
-        size=Path(p).stat().st_size; start,end=0,size-1; status=200
+        p, row = await run_in_threadpool(services.media_info, asset_id)
+        size=row['byte_count']; start,end=0,size-1; status=200
         headers={"accept-ranges":"bytes","content-type":"application/octet-stream"}
         probe=json.loads(row['probe'] or '{}'); fmt=probe.get('format_name','')
         codec=next((x.get('codec_name','') for x in probe.get('streams',[]) if x.get('codec_type')=='video'),'')

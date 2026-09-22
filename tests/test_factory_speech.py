@@ -91,6 +91,10 @@ def test_fit_pad_and_rate(stack):
     too = fit_plan(6.0, 4.0)
     assert too["fits"] is False and too["reason"] == "speech_too_long"
     assert "revise copy" in too["action"]
+    # A short punchline on a long visual beat pads; it does not block.
+    sparse = fit_plan(2.0, 9.0)
+    assert sparse["fits"] is True and sparse["pad_s"] == 7.0
+    assert sparse["sparse"] is True
 
 
 def test_trim_limit(stack):

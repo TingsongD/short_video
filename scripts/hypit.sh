@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Run the project's pinned Hypit without changing its selected video workspace.
 set -euo pipefail
+umask 077
 project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 hypit_entry="$project_root/vendor/hypit-runtime/node_modules/.bin/hypit"
 if [[ ! -x "$hypit_entry" ]]; then

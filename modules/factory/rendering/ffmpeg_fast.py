@@ -48,12 +48,30 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
 
 
-def captions_ass(captions, fps=30):
+def captions_ass(captions, fps=30, preset='words.v1'):
+    if preset not in ('words.v1', 'phrases.v1'):
+        raise ValueError('unsupported caption preset')
+    phrase = preset == 'phrases.v1'
+    header = ASS_HEADER
+    if phrase:
+        # ASS coordinates are 1080x1920: 72px scales to 48px at 720p.
+        header = header.replace('Arial,54,', 'Arial,72,').replace(
+            ',1,0.6,2,8,86,86,0,1', ',1,3,2,8,86,86,0,1')
+
+    def caption_text(text):
+        if not phrase:
+            return _literal(text)
+        lines = text.split('\n')
+        from ..audio.phrase_captions import fits_line
+        if len(lines) > 2 or any(not line or not fits_line(line) for line in lines):
+            raise ValueError('phrase caption exceeds readable layout')
+        return r'\N'.join(_literal(line) for line in lines)
+
     events = [f"Dialogue: 0,{_ass_time(c['start_frame'], fps)},"
               f"{_ass_time(c['end_frame'], fps)},Caption,,0,0,0,,"
-              + "{\\pos(540,1306)}" + _literal(c["text"])
+              + "{\\pos(540,1306)}" + caption_text(c["text"])
               for c in sorted(captions, key=lambda c: c["start_frame"])]
-    return ASS_HEADER + "\n".join(events) + "\n"
+    return header + "\n".join(events) + "\n"
 
 
 class RenderTimeout(Exception):
@@ -198,7 +216,7 @@ class FastPathRenderer:
             f"duration {frames / fps:.12f}\n"
             for p, frames in inputs))
         ass = ws / "captions.ass"
-        ass.write_text(captions_ass(captions, fps))
+        ass.write_text(captions_ass(captions, fps, clock.get('caption_preset', 'words.v1')))
         total = sum(f for _, f in inputs)
         tmp = ws / (final_name + ".pending.mp4")
         audio_args, filter_a = [], ""

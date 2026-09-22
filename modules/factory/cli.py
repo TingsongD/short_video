@@ -48,23 +48,29 @@ def main(argv=None):
 
     if args.cmd in ("serve","worker"):
         from .bootstrap import bootstrap
-        services=bootstrap(root)
-        if args.cmd=="serve":
-            from .api import create_app
-            import uvicorn
-            uvicorn.run(create_app(services),host="127.0.0.1",port=args.port,timeout_graceful_shutdown=5)
-        else:
-            from .domain.errors import ContractError
-            from .services.worker import ApplicationWorker
+        from .diagnostics import event, service_logging
+        with service_logging(root, "api" if args.cmd == "serve" else "worker"):
+            services=bootstrap(root)
             try:
-                ApplicationWorker(services).run(once=args.once)
-            except ContractError as e:
-                if e.code == "worker_already_running":
-                    print(f"worker refused to start: {e.detail} — "
-                          "an existing worker owns this database; it is "
-                          "never killed automatically", file=sys.stderr)
-                    return 2
-                raise
+                if args.cmd=="serve":
+                    from .api import create_app
+                    import uvicorn
+                    uvicorn.run(create_app(services),host="127.0.0.1",port=args.port,timeout_graceful_shutdown=5,log_config=None)
+                else:
+                    from .domain.errors import ContractError
+                    from .services.worker import ApplicationWorker
+                    try:
+                        ApplicationWorker(services).run(once=args.once)
+                    except ContractError as e:
+                        if e.code == "worker_already_running":
+                            event("worker_start_refused", code=e.code)
+                            print(f"worker refused to start: {e.detail} — "
+                                  "an existing worker owns this database; it is "
+                                  "never killed automatically", file=sys.stderr)
+                            return 2
+                        raise
+            finally:
+                services.db.close()
         return 0
     if args.cmd == "doctor":
         out = doctor(root)

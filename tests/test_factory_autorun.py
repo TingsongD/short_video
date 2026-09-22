@@ -50,6 +50,148 @@ SCRIPT = {"variants": {
 REVIEW = {"verdict": "pass", "notes": ["content matches script"]}
 
 
+def test_failed_speech_fit_is_retried_after_policy_fix(application):
+    """A failed measured fit is re-queued once against the already-bought
+    waveform by AutoRunService._stage_tts; a second failure pauses and
+    Resume does not buy TTS again."""
+    s, c, act, w, root = stack(application)
+    impl = s.providers["elevenlabs"].impl
+    orig = impl.submit
+
+    def slow(request):
+        out = orig(request)
+        impl.doc["ops"][out["operation_id"]]["duration_s"] = 6.0
+        impl._save()
+        return out
+    impl.submit = slow
+    seed = make_seed(act, root)
+    run = launch(act, seed)
+    drive(s, w)
+    run = autorun(s, run["id"])
+    assert run.status == "paused"
+    assert run.pause["code"] == "speech_fit_failed", run.pause
+    retried = run.state.get("tts_fit_retried") or []
+    assert retried, "shipped _stage_tts must retry a failed fit once"
+    synth = run.state["tts_synth_jobs"]
+    assert len(synth) == 6
+    ops = json.loads((root / "tts.json").read_text())["ops"]
+    assert len(ops) == 6, "retry must reuse the paid waveform"
+    fit_cmds = s.db.conn.execute(
+        "SELECT count(*) FROM records WHERE kind='appcommand' AND "
+        "json_extract(body,'$.kind')='speech_fit'").fetchone()[0]
+    assert fit_cmds == 2 * len(retried)
+    for fkey in retried:
+        _key, _seg, norm = fkey.split(":", 2)
+        fit_jid = run.state["tts_fits"][fkey]
+        cmd = json.loads(
+            s.db.uow().records.get("appcommand", fit_jid)["body"])
+        assert cmd["input"]["job_id"] == synth[norm]
+    r = act("post", f"/api/autoruns/{run.id}/resume", {})
+    assert r.status_code in (200, 202), r.text
+    drive(s, w)
+    run = autorun(s, run.id)
+    assert run.status == "paused"
+    assert run.pause["code"] == "speech_fit_failed"
+    assert len(json.loads((root / "tts.json").read_text())["ops"]) == 6
+    fit_again = s.db.conn.execute(
+        "SELECT count(*) FROM records WHERE kind='appcommand' AND "
+        "json_extract(body,'$.kind')='speech_fit'").fetchone()[0]
+    assert fit_again == fit_cmds
+
+
+def test_evidence_requeues_after_transcript_recovery():
+    """After WhisperX loops, importing a transcript leaves analysis
+    in_progress with evidence not done. Resume must not treat the old
+    succeeded evidence job as current — it enqueues a new identity."""
+    from types import SimpleNamespace
+    from modules.factory.autorun.service import AutoRun, AutoRunService
+
+    class Jobs:
+        def get(self, jid):
+            return {"id": jid, "status": "succeeded", "blocked_reason": ""}
+
+    class Analysis:
+        def __init__(self):
+            self.started = []
+            self.a = SimpleNamespace(
+                status="in_progress", blocking=[],
+                stages={"transcript": {"done": True},
+                        "evidence": {}})
+        def start(self, seed_id, reviewer, **kwargs):
+            self.started.append((seed_id, reviewer))
+        def get(self, seed_id):
+            return self.a
+
+    class Commands:
+        def __init__(self):
+            self.ids = []
+        def enqueue(self, kind, body, **kw):
+            ident = kw["identity"]
+            self.ids.append(ident)
+            return {"job_id": ident}
+
+    class Uow:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def records(self): return self
+        @property
+        def jobs(self):
+            return Jobs()
+
+    class DB:
+        def uow(self):
+            return type("U", (), {
+                "records": type("R", (), {"get": lambda *a, **k: {"version": 1},
+                                          "put": lambda *a, **k: None})(),
+                "__enter__": lambda self: self,
+                "__exit__": lambda *a: False,
+            })()
+        def __init__(self):
+            self.uow = lambda: type("U", (), {
+                "__enter__": lambda s: s,
+                "__exit__": lambda *a: False,
+                "records": type("R", (), {
+                    "get": staticmethod(lambda *a, **k: {"version": 1}),
+                    "put": staticmethod(lambda *a, **k: None),
+                })(),
+            })()
+
+    analysis = Analysis()
+    commands = Commands()
+    jobs = Jobs()
+    s = SimpleNamespace(
+        ref_analysis=analysis, commands=commands,
+        db=SimpleNamespace(
+            uow=lambda: type("U", (), {
+                "__enter__": lambda inner: inner,
+                "__exit__": lambda *a: False,
+                "jobs": jobs,
+                "records": type("R", (), {
+                    "get": staticmethod(lambda *a, **k: {"version": 1}),
+                    "put": staticmethod(lambda *a, **k: None),
+                })(),
+            })()))
+    svc = AutoRunService.__new__(AutoRunService)
+    svc.s = s
+    svc.budgets = None
+    run = AutoRun(id="auto-looprecov", created_at="t",
+                  seed_id="seed-x", stage="evidence", status="running",
+                  state={"evidence_job": "auto:auto-looprecov:evidence"})
+    first = svc._stage_evidence(run)
+    assert first == "next"
+    assert "evidence_job" not in run.state
+    assert run.state["evidence_seq"] == 1
+    second = svc._stage_evidence(run)
+    assert second == "wait"
+    assert commands.ids == ["auto:auto-looprecov:evidence:1"]
+    analysis.a.status = "evidence_ready"
+    analysis.a.stages = {"evidence": {"done": True}}
+    run.state["evidence_job"] = commands.ids[0]
+    third = svc._stage_evidence(run)
+    assert third == "next"
+    assert run.stage == "video_analysis"
+
+
 def test_declared_uncertainty_needs_local_evidence():
     """Transcript overlap is not visual evidence — a provider-declared
     uncertain/unresolved beat keeps its confidence unless local machine
@@ -143,10 +285,17 @@ def scripted_transport(results):
                        for p in body["contents"][0]["parts"])
         if "split test" in text:
             result = results["script"]
-        elif "Review this finished" in text:
+        elif "Review this finished" in text or 'Review only the supplied finished' in text:
             result = results["review"]
         else:
             result = results["analyze"]
+            if 'creative_context' in body.get('generationConfig', {}).get('responseSchema', {}).get('properties', {}):
+                import copy
+                result = copy.deepcopy(result)
+                result['creative_context'] = {'version': 'scene.v2', 'roles': [{'id': 'dog', 'appearance': 'brown dog'}],
+                    'scenes': [{'beat_id': b['id'], 'physical_scene': b['visual_event'], 'cast': ['dog'],
+                        'wardrobe': [], 'allowed_transition': 'same dog, next action', 'source_overlays': [],
+                        'environmental_text': []} for b in result['beats']]}
         return 200, {}, json.dumps({"candidates": [{
             "finishReason": "STOP",
             "content": {"parts": [{"text": json.dumps(result)}]}}]}).encode()
@@ -496,15 +645,14 @@ def test_autorun_chunks_tts_plans_over_twenty_lines(application):
     """Effect plans cap at 20 operations — a run needing more unique
     narration lines must dispatch multiple persisted batches."""
     n = 21
-    # b0–b12 are provider-uncertain and get anchored by the detected cut
-    # at each start (evidence caps at 12 boundaries); the provider marks
-    # the tail reviewed itself.
+    # Evidence extraction caps at 12 boundaries. The test operator must
+    # review the unanchored tail; a provider cannot review its own claims.
     beats = [{"id": f"b{i}",
               "role": "hook" if i == 0 else "cta" if i == n - 1
                       else "body",
               "start_s": i * 9 / n, "end_s": (i + 1) * 9 / n,
               "visual_event": f"beat {i}",
-              "confidence": "uncertain" if i <= 12 else "reviewed"}
+              "confidence": "uncertain"}
              for i in range(n)]
     analyze = {"beats": beats,
                "transcript": [{"id": f"t{i}", "start_s": b["start_s"],
@@ -522,10 +670,17 @@ def test_autorun_chunks_tts_plans_over_twenty_lines(application):
                                script_result=script)
     s.ref_analysis.hypit = HypitMany(n, 9)
     seed = make_seed(act, root)
-    run = launch(act, seed)
+    run = launch(act, seed, ai_scene_review=False)
     for _ in range(800):
         out = w.tick()
-        st = autorun(s, run["id"]).state
+        current = autorun(s, run["id"])
+        if current.status == 'paused' and current.pause.get('code') == 'blueprint_flags':
+            bp = s.analysis.get(current.state['blueprint_id'])
+            s.blueprints.accept(bp.id, bp.content_hash, 'test-operator',
+                                allow_flags=True, notes='Reviewed synthetic tail for TTS batching test')
+            s.autorun.resume(current.id)
+            continue
+        st = current.state
         if st.get("tts_batch_tags"):
             break
         if out is None:
@@ -681,8 +836,7 @@ def test_autorun_pauses_when_requested_music_unavailable(application):
 
 
 def test_autorun_pauses_when_visual_qc_route_lost(application):
-    """Requested visual QC with a missing provider pauses; the operator
-    may explicitly finish on technical checks only."""
+    """Future runs retain their frozen QC requirement during recovery."""
     s, c, act, w, root = stack(application)
     seed = make_seed(act, root)
     rid = launch(act, seed)["id"]
@@ -709,11 +863,15 @@ def test_autorun_pauses_when_visual_qc_route_lost(application):
     assert run.pause["code"] == "capability_unavailable"
     r = act("post", f"/api/autoruns/{rid}/resume",
             {"set_params": {"visual_reviews": False}})
+    assert r.status_code == 400 and r.json()['error'] == 'new_draft_required', r.text
+    assert autorun(s, rid).status == 'paused'
+    s.providers['audiovisual_analysis'] = provider
+    r = act('post', f'/api/autoruns/{rid}/resume', {})
     assert r.status_code == 200, r.text
     drive(s, w)
     run = autorun(s, rid)
     assert run.status == "succeeded", run.pause
-    assert any("technical checks only" in n for n in run.notes)
+    assert not any("technical checks only" in n for n in run.notes)
 
 
 def test_autorun_pauses_for_missing_media(application):
@@ -890,7 +1048,7 @@ def test_generated_copy_bounded_before_and_after_tts(application):
     # 9 words: inside the 3s beat's budget (ceil(7.5*1.1)=9) but the fake
     # voice needs 0.3+9*0.38=3.72s > 3.3s allowed at RATE_MAX.
     script["variants"]["B"]["b0"] = \
-        "you will not believe what this dog does next"
+        "you cannot believe what this dog will do next"
     # 12 words: rejected before spend.
     script["variants"]["C"]["b1"] = \
         "he runs so fast that you will not even see him move today"
@@ -907,14 +1065,13 @@ def test_generated_copy_bounded_before_and_after_tts(application):
     ops = json.loads((root / "tts.json").read_text())["ops"].values()
     texts = [o["request"]["text"] for o in ops]
     assert len(texts) == len(set(texts)), texts        # no repeat charge
-    assert "you will not believe what this dog does next" in texts
+    assert "you cannot believe what this dog will do next" in texts
     assert "he runs so fast that you will not even see him move today" \
         not in texts
     # A×3 + B long (measured, then repaired) + B fallback +
-    # C trimmed-to-budget (the variation is preserved, then the
-    # measured fit still rejects it) + C fallback + D
-    assert len(texts) == 8
-    assert "he runs so fast that you will not even" in texts
+    # C complete source-derived fallback + D. Never buy truncated copy.
+    assert len(texts) == 7
+    assert "he runs so fast that you will not even" not in texts
     assert "he runs fast" in texts                      # C deterministic
     b = s.experiments._variant(run.experiment_id, "B")
     assert next(x["copy"] for x in b.segments if x["id"] == "b0") == \

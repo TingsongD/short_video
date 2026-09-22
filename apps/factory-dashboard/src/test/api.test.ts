@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { api, session, ApiError } from "../api/client";
+import { api, session, ApiError, coalesce } from "../api/client";
 
 /** Client↔F27 contract: paths, headers, idempotency, revisions. */
 
@@ -93,6 +93,34 @@ describe("api client contract", () => {
   });
 });
 
+it("resume action keys differ per pause instance", async () => {
+  const { actionKey } = await import("../api/client");
+  const a = await actionKey("POST", "/api/autoruns/r1/resume", { pause_at: "t1" });
+  const b = await actionKey("POST", "/api/autoruns/r1/resume", { pause_at: "t2" });
+  const c = await actionKey("POST", "/api/autoruns/r1/resume", {});
+  expect(a).not.toBe(b);
+  expect(a).not.toBe(c);
+});
+
+describe("coalesce", () => {
+  it("replays a burst as a single trailing call", () => {
+    vi.useFakeTimers();
+    const fn = vi.fn();
+    const schedule = coalesce(fn, 250);
+    for (let i = 0; i < 80; i++) schedule();
+    expect(fn).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(249);
+    expect(fn).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(fn).toHaveBeenCalledTimes(1);
+    schedule();
+    schedule();
+    vi.advanceTimersByTime(250);
+    expect(fn).toHaveBeenCalledTimes(2);
+    vi.useRealTimers();
+  });
+});
+
 it("reuses one durable logical action across module reload and keeps revisions separate", async()=>{
   const first=await import('../api/client');
   const a=await first.actionKey('POST','/run',{x:1,y:2},1);
@@ -115,4 +143,65 @@ it("retains uncertain retries but advances an acknowledged action",async()=>{
   await client.call('POST','/pause-recovery',{body:{}});
   await client.call('POST','/pause-recovery',{body:{}});
   expect(keys[0]).toBe(keys[1]);expect(keys[2]).not.toBe(keys[1]);
+});
+
+it('recovers concurrent csrf rejections once without changing the logical actions', async () => {
+  const client = await import('../api/client');
+  let sessions = 0;
+  const requests: RequestInit[] = [];
+  globalThis.fetch = vi.fn(async (url: any, init: any) => {
+    if (url === '/api/session') return new Response(JSON.stringify({session_token: `token-${++sessions}`}));
+    requests.push({...init, headers: {...init.headers}});
+    return init.headers['x-csrf-token'] === 'token-1'
+      ? new Response(JSON.stringify({error:'csrf'}), {status:403}) : new Response('{}');
+  }) as any;
+  await client.session();
+  await Promise.all([client.call('POST','/repair-a',{body:{x:1},rev:7,key:'a'}), client.call('POST','/repair-b',{body:{x:2},rev:9,key:'b'})]);
+  expect(sessions).toBe(2);
+  expect(requests).toHaveLength(4);
+  for (const first of requests.slice(0,2)) {
+    const retry = requests.slice(2).find(r => r.body === first.body)!;
+    expect(retry.headers).toEqual({...first.headers, 'x-csrf-token':'token-2'});
+  }
+});
+
+it.each(['origin', 'csrf'])('does not loop on a persistent %s refusal', async code => {
+  const client = await import('../api/client'); let attempts=0;
+  globalThis.fetch = vi.fn(async (url: any) => {
+    if (url === '/api/session') return new Response(JSON.stringify({session_token:'t'}));
+    attempts++; return new Response(JSON.stringify({error:code}),{status:403});
+  }) as any;
+  await client.session();
+  await expect(client.call('POST','/refused')).rejects.toBeInstanceOf(client.ApiError);
+  expect(attempts).toBe(code === 'csrf' ? 2 : 1);
+});
+
+it('retries an upload only after csrf rejection with the same file and key', async()=>{
+  const client=await import('../api/client'); let token='old'; const uploads:RequestInit[]=[];
+  const file=new File(['fixture bytes'],'fixture.mp4');
+  Object.defineProperty(file,'arrayBuffer',{value:async()=>new TextEncoder().encode('fixture bytes').buffer});
+  globalThis.fetch=vi.fn(async(url:any,init:any)=>{
+    if(url==='/api/session')return new Response(JSON.stringify({session_token:token}));
+    uploads.push({...init,headers:{...init.headers}});
+    token='new';
+    return uploads.length===1 ? new Response(JSON.stringify({error:'csrf'}),{status:403}) : new Response('{}');
+  }) as any;
+  await client.session();await client.api.importFile(file);
+  expect(uploads).toHaveLength(2);
+  expect(uploads[0].body).toBe(file);expect(uploads[1].body).toBe(file);
+  expect(uploads[1].headers).toEqual({...uploads[0].headers,'x-csrf-token':'new'});
+});
+
+it('explains failed session reconnection without replaying the rejected command',async()=>{
+  const client=await import('../api/client');let sessions=0,commands=0;
+  globalThis.fetch=vi.fn(async(url:any)=>{
+    if(url==='/api/session') {
+      if(++sessions>1)throw new TypeError('Failed to fetch');
+      return new Response(JSON.stringify({session_token:'old'}));
+    }
+    commands++;return new Response(JSON.stringify({error:'csrf'}),{status:403});
+  }) as any;
+  await client.session();
+  await expect(client.call('POST','/reconnect',{key:'same'})).rejects.toThrow('Check the API service');
+  expect(commands).toBe(1);
 });

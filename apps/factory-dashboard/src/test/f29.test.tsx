@@ -2,7 +2,7 @@ import React from "react";
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 
-import { QueueScreen, reduceJobs, elapsedBreakdown, JobEvent }
+import { QueueScreen, reduceJobs, elapsedBreakdown, JobEvent, queueJobView }
   from "../features/queue/QueueScreen";
 import { CompareScreen } from "../features/compare/CompareScreen";
 import { ReviewsScreen } from "../features/reviews/ReviewsScreen";
@@ -13,6 +13,13 @@ const ev = (seq: number, type: string, at: string): JobEvent =>
   ({ seq, type, at });
 
 describe("queue reducer", () => {
+  it('labels deferred jobs as waiting without offering unsafe retries', () => {
+    render(<QueueScreen jobs={['remote_unfinished','capacity_full','retry_backoff'].map((reason,i)=>queueJobView({id:String(i),status:'ready',phase:'generate',blocked_reason:reason}))}/>);
+    expect(screen.getByText('Waiting for provider')).toBeInTheDocument();
+    expect(screen.getByText('Waiting for capacity')).toBeInTheDocument();
+    expect(screen.getByText('Waiting for retry backoff')).toBeInTheDocument();
+    expect(screen.queryByText('Reconcile')).toBeNull();
+  });
   it("replays events into honest stage labels and counts", () => {
     const jobs = reduceJobs([
       ev(1, "job-A:queued", "2026-09-17T00:00:00Z"),

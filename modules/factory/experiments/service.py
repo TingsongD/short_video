@@ -59,7 +59,8 @@ class ExperimentService:
     def create(self, experiment_id, seed_id, blueprint, template,
                products, segments, voice=None, music=None,
                provider_policy=None, presenter="fictional_or_authorized",
-               output_profile=None):
+               output_profile=None, run_policies=None, source_timing=None, workflow=None, creative_context=None,
+               flashcut_policy=None, flashcut_editorial=None):
         """products: [ProductSnapshot]. segments: per-beat plan entries
         {id, slot_id, role, target, copy, speech, captions, picture,
         transition, claims}. Control A is implicit variant_key 'A'."""
@@ -87,6 +88,27 @@ class ExperimentService:
             # one — it derives then pins, once.
             "output_profile": dict(output_profile or {}),
         }
+        if run_policies is not None:
+            from ..autorun.policies import validate_policies
+            plan_body['run_policies'] = validate_policies(run_policies)
+        if workflow is not None:
+            if (not isinstance(workflow, dict) or workflow.get('version') != 2
+                    or workflow.get('prompt_policy') != 'scene.v2'
+                    or workflow.get('qc_policy') != 'visual.v2'
+                    or type(workflow.get('visual_qc')) is not bool):
+                raise ContractError('unsupported_workflow', 'workflow.version')
+            plan_body['workflow'] = copy.deepcopy(workflow)
+        if creative_context is not None:
+            plan_body['creative_context'] = copy.deepcopy(creative_context)
+        if flashcut_policy is not None:
+            from ..analysis.evidence_policy import validate_flashcut_policy
+            plan_body['flashcut_policy'] = validate_flashcut_policy(flashcut_policy)
+            if not isinstance(flashcut_editorial, dict) or not flashcut_editorial.get('understanding'):
+                raise ContractError('editorial_intent_required', 'flashcut_editorial')
+            plan_body['flashcut_editorial'] = copy.deepcopy(flashcut_editorial)
+        plan_body['delivery_tracking'] = 'verified_receipts.v1'
+        if source_timing is not None:
+            plan_body['source_timing'] = dict(source_timing)
         rev = ExperimentRevision(
             schema_version="experiment.v1", id=f"exp:{experiment_id}",
             created_at=utcnow(), experiment_id=experiment_id,
@@ -211,7 +233,7 @@ class ExperimentService:
         slots = [Slot(id=s["id"], effects=s.get("effects") or [],
                       transition_out=s.get("transition", "cut"))
                  for s in control.packaging["segments"]]
-        cap = capability_report(slots)
+        cap = capability_report(slots, renderer_policy=(control.packaging.get('flashcut_policy') or {}).get('renderer'))
         if cap["unsupported"]:
             problems.append({"flag": "unsupported_shot",
                              "detail": json.dumps(cap["unsupported"])})

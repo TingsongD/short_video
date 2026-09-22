@@ -20,7 +20,8 @@ ALLOWED_IMPORTS = {
     "@hypit/media-pipeline@1", "@hypit/media-track@1",
     "@hypit/typography-track@1", "@hypit/film@1",
     "@hypit/render-hyperframes@1", "@hypit/run-markup@1",
-    "@hypit/svs@1", "@hypit/audio-track@1", "./style.svs"}
+    "@hypit/svs@1", "@hypit/audio-track@1", "./style.svs",
+    "@hypit/script@1", "@factory/aligned-speech@1", "@hypit/caption-fine@1"}
 
 # declared renderer capabilities — effects a renderer can express
 RENDERER_EFFECTS = {
@@ -54,7 +55,7 @@ class CompositionService:
 
     def compile(self, comp_id, experiment_id, variant_key, plan_id,
                 segments, captions, clock, renderer="hypit",
-                plan_hash="", now=""):
+                plan_hash="", now="", *, renderer_policy=None, premix=None, native_editorial=None):
         """segments: [{id,kind:picture|audio,artifact_id,sha256,
                       in_frame,out_frame,source_in_s,source_out_s,
                       effects?}]
@@ -62,6 +63,28 @@ class CompositionService:
         → {"composition": dict, "diagnostics": [...]} — diagnostics
         non-empty ⇒ status failed and NO files are emitted."""
         clock=dict(clock)
+        package_files={}
+        if native_editorial is not None:
+            from .native import frozen_package, validate_editorial
+            if renderer_policy!='hypit_primary.v1':
+                raise ContractError('native_renderer_required','renderer_policy')
+            validate_editorial(native_editorial,variant_key,clock,self.artifacts,captions,segments)
+            package_files,package_hash=frozen_package()
+            clock.update(author_package_hash=package_hash,editorial_hash=content_hash(native_editorial))
+        if renderer_policy is not None:
+            from ..templates.capabilities import renderer_order
+            renderer = renderer_order(renderer_policy)[0]
+            if not isinstance(premix, dict) or premix.get('kind') != 'audio':
+                raise ContractError('premix_required', 'composition')
+            total = clock.get('total_frames')
+            if (premix.get('in_frame') != 0 or premix.get('out_frame') != total
+                    or premix.get('source_in_s') != 0 or premix.get('gain', 1) != 1
+                    or not premix.get('sha256')):
+                raise ContractError('invalid_premix_binding', 'composition')
+            if native_editorial is not None and abs(premix.get('source_out_s', -1) - total / clock['fps']) > 1e-9:
+                raise ContractError('invalid_premix_binding', 'source_out_s')
+            segments = [s for s in segments if s['kind'] != 'audio'] + [dict(premix)]
+            clock['renderer_policy'] = renderer_policy
         if captions:
             fonts=[clock.get("font_path",""), "/System/Library/Fonts/Supplemental/Arial.ttf",
                    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"]
@@ -81,14 +104,21 @@ class CompositionService:
             [s["out_frame"] for s in segments]
             + [c["end_frame"] for c in captions] + [0])
         svml, bindings = self._emit_svml(segments, captions, clock,
-                                       total_frames)
+                                       total_frames, native_editorial)
         svs = self._emit_svs(segments, fps)
+        if native_editorial is not None:
+            from .native import caption_recipe
+            svs=svs.replace('</sheet>',caption_recipe(clock['width'])+'</sheet>')
+        if clock.get('caption_preset') == 'phrases.v1':
+            svs = svs.replace('size: 64;', f'size: {48 * clock["width"] / 720:g};').replace('align: start;', 'align: center;').replace('weight: 600;', 'weight: 400;')
         svrun = ('<?svml using="@hypit/run-markup@1"?>\n'
                  '<svrun version="1">\n'
                  '  <author source="./video.svml"/>\n'
                  '  <target output="final.video"/>\n</svrun>\n')
         files = {"video.svml": svml, "style.svs": svs,
-                 "render.svrun": svrun}
+                 "render.svrun": svrun, **package_files}
+        if native_editorial is not None:
+            files['editorial.json']=json.dumps(native_editorial,sort_keys=True,indent=1)+'\n'
         file_hashes = {k.split(".")[-1].replace("svml", "svml"):
                        hashlib.sha256(v.encode()).hexdigest()
                        for k, v in files.items()}
@@ -117,6 +147,7 @@ class CompositionService:
         out_dir = self.root / comp_id / f"r{revision}"
         out_dir.mkdir(parents=True, exist_ok=True)
         for name, text in files.items():
+            (out_dir / name).parent.mkdir(parents=True,exist_ok=True)
             (out_dir / name).write_text(text)
         # materialize bound assets — sources are relative to the svml
         assets_dir = out_dir / "assets"
@@ -128,6 +159,9 @@ class CompositionService:
             ext = _asset_ext(self.db.uow().artifacts.get(s["artifact_id"]))
             dst = assets_dir / f"{s['id']}.{ext}"
             dst.write_bytes(Path(src).read_bytes())
+        if native_editorial is not None:
+            for p in native_editorial['passages']:
+                (assets_dir/f'speech-{p["id"]}.wav').write_bytes(self.artifacts.verified_path(p['artifact_id']).read_bytes())
         comp = self._persist(comp_id, experiment_id, variant_key,
                              plan_id, clock, renderer, "draft",
                              bindings, file_hashes, plan_hash, [], now,
@@ -201,6 +235,11 @@ class CompositionService:
             if audio["out_frame"]>cursor:
                 diags.append({"code":"audio_exceeds_timeline","at":audio["id"],"detail":""})
         for c in captions:
+            if clock.get('caption_preset') == 'phrases.v1':
+                from ..audio.phrase_captions import fits_line
+                lines = c['text'].split('\n')
+                if len(lines) > 2 or any(not line or not fits_line(line) for line in lines):
+                    diags.append({'code': 'caption_layout_invalid', 'at': c['id'], 'detail': 'Split the phrase; do not reduce readable type size.'})
             if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*",c["id"]) or c.get("placement","heading") not in ("heading","full"):
                 diags.append({"code":"invalid_caption_binding","at":c["id"],"detail":""})
             if not 0 <= c["start_frame"] < c["end_frame"] <= cursor:
@@ -210,11 +249,12 @@ class CompositionService:
 
     # --------------------------------------------------------- emit --
 
-    def _emit_svml(self, segments, captions, clock, total_frames):
+    def _emit_svml(self, segments, captions, clock, total_frames, native_editorial=None):
         from fractions import Fraction
         fps, w, h = clock["fps"], clock["width"], clock["height"]
-        native_rate=str(Fraction(fps).limit_denominator(100000))
-        end_s = _sec(total_frames, fps)
+        native_rate=str(Fraction(clock['fps_num'],clock['fps_den'])) if 'fps_num' in clock else str(Fraction(fps).limit_denominator(100000))
+        timecode=(lambda frames:f'{frames}f') if native_editorial is not None else (lambda frames:_sec(frames,fps))
+        end_s = timecode(total_frames)
         pics = sorted((s for s in segments if s["kind"] == "picture"),
                       key=lambda s: s["in_frame"])
         auds = sorted((s for s in segments if s["kind"] == "audio"),
@@ -243,6 +283,14 @@ class CompositionService:
                  '  <space:Frame id="heading" within={canvas} left="7%"'
                  ' top="74%" right="93%" bottom="86%"/>', '']
         bindings = []
+        if native_editorial is not None:
+            lines=[line for line in lines if '<time:Timeline ' not in line]
+            lines[2:2]=['  <import as="script" from="@hypit/script@1"/>',
+                        '  <import as="aligned" from="@factory/aligned-speech@1"/>',
+                        '  <import as="caption-fine" from="@hypit/caption-fine@1"/>']
+        if clock.get('caption_preset') == 'phrases.v1':
+            lines = [line.replace('top="74%" right="93%" bottom="86%"',
+                                  'top="68%" right="93%" bottom="78%"') for line in lines]
         # explicit asset elements, one per segment binding
         for s in pics+auds:
             art=self.db.uow().artifacts.get(s["artifact_id"])
@@ -257,15 +305,21 @@ class CompositionService:
                 source=f"still-{s['id']}.video"
             policy='video="primary-moving" audio="none" span-authority="video"' if s["kind"]=="picture" else 'video="none" audio="default" span-authority="audio"'
             lines.append(f'  <pipeline:Normalize id="norm-{s["id"]}" source={{{source}}} clock={{clock}} {policy}/>')
+        if native_editorial is not None:
+            from .native import declarations
+            native_lines,native_bindings=declarations(native_editorial,clock,self.artifacts)
+            lines+=native_lines;bindings+=native_bindings
         lines += ['  <media:Track id="footage" timeline={program.timeline} canvas={canvas}>']
         use_sequence=any(s.get("transition_out")=="crossfade" or "crossfade" in s.get("effects",[]) for s in pics)
         if use_sequence:
             lines.append(f'    <media:Sequence id="sequence" frame={{full}} appearance={{look.media.full}} until="{end_s}">')
         for i,s in enumerate(pics):
             if use_sequence:
-                tag="Member"; placement=f'at="{_sec(s["in_frame"],fps)}"'
+                tag="Member"; placement=f'at="{timecode(s["in_frame"])}"'
             else:
-                tag="Item"; placement=f'frame={{full}} start="{_sec(s["in_frame"],fps)}" end="{_sec(s["out_frame"],fps)}"'
+                tag="Item"; placement=f'frame={{full}} start="{timecode(s["in_frame"])}" end="{timecode(s["out_frame"])}"'
+                if native_editorial is not None and s.get('semantic_start'):
+                    placement=f'frame={{full}} at={{story.moment.{s["semantic_start"]}}} for="{s["out_frame"]-s["in_frame"]}f"'
             lines.append(f'    <media:{tag} id="{s["id"]}" media={{norm-{s["id"]}.media}} appearance={{look.media.{s["id"]}}} {placement}>')
             if "kenburns" in s.get("effects",[]):
                 lines += ['      <media:Sampling at="start" zoom="1"/>','      <media:Sampling at="end" zoom="1.1"/>']
@@ -279,9 +333,19 @@ class CompositionService:
             lines.append('  <audio:Track id="sound" timeline={program.timeline}>')
             for s in auds:
                 gain=s.get("gain",10**(s.get("gain_db",0)/20))
-                lines.append(f'    <audio:Item id="{s["id"]}" source={{norm-{s["id"]}.media}} start="{_sec(s["in_frame"],fps)}" end="{_sec(s["out_frame"],fps)}" trim-start="{s.get("source_in_s",0)}s" trim-end="{s["source_out_s"]}s" gain="{gain}"/>')
+                # Native authoring has exactly one validated full-program
+                # premix. Keep its trim on the same rational frame clock;
+                # repeating float seconds can exceed Hypit's safe arithmetic.
+                trim_start = '0f' if native_editorial is not None else f'{s.get("source_in_s",0)}s'
+                trim_end = f'{total_frames}f' if native_editorial is not None else f'{s["source_out_s"]}s'
+                lines.append(f'    <audio:Item id="{s["id"]}" source={{norm-{s["id"]}.media}} start="{timecode(s["in_frame"])}" end="{timecode(s["out_frame"])}" trim-start="{trim_start}" trim-end="{trim_end}" gain="{gain}"/>')
             lines.append('  </audio:Track>')
-        if captions:
+        if captions and native_editorial is not None:
+            from .native import caption_track
+            lines+=caption_track(native_editorial)
+            bindings.extend({'binding':c['id'],'role':'caption','track':'captions','artifact_id':'',
+                'sha256':hashlib.sha256(c['text'].encode()).hexdigest(),'in_frame':c['start_frame'],'out_frame':c['end_frame']} for c in captions)
+        elif captions:
             lines += ['', '  <asset:Font id="caption-font" src="./assets/caption.ttf" weight="400" style="normal"/>',
                       '  <typo:Style id="cap" font={caption-font} '
                       'recipe={look.text.caption}>',
@@ -292,6 +356,8 @@ class CompositionService:
             for c in sorted(captions,
                             key=lambda c: c["start_frame"]):
                 text = escape_markup_text(c["text"])
+                if clock.get('caption_preset') == 'phrases.v1':
+                    text = '<typo:P>' + '<typo:Break/>'.join(escape_markup_text(line) for line in c['text'].split('\n')) + '</typo:P>'
                 place = c.get("placement", "heading")
                 lines.append(
                     f'    <typo:Area id="{c["id"]}" '
@@ -315,6 +381,9 @@ class CompositionService:
             lines.append('    <film:Track source={sound.audio}/>')
         if captions:
             lines.append('    <film:Track source={captions.track}/>')
+        if captions and clock.get('caption_preset') == 'phrases.v1' and native_editorial is None:
+            fill = lines.index('    <typo:Fill color="#ffffff"/>')
+            lines.insert(fill, f'    <typo:Stroke color="#000000" width="{2 * w / 720:g}" placement="outside"/>')
         lines += ['  </film:Film>',
                   '  <render:Video id="final" '
                   'composition={main.composition} '

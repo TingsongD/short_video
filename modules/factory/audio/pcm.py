@@ -84,6 +84,31 @@ def sine(duration_s, freq=110.0, rate=RATE, amp=9000):
             for i in range(n)]
 
 
+def wav_rate(path, default=RATE):
+    """Native sample rate of a WAV mix, or `default` for non-WAV media."""
+    try:
+        with wave.open(str(path), "rb") as w:
+            rate = w.getframerate()
+            if rate > 0:
+                return rate
+    except (wave.Error, FileNotFoundError, OSError, EOFError):
+        pass
+    return default
+
+
+def samples_at_rate(path, rate, channels=1):
+    """PCM at `rate` without resampling a WAV that is already that rate."""
+    from pathlib import Path
+    if wav_rate(path, 0) == rate:
+        try:
+            native, samples = read_wav(Path(path).read_bytes())
+            if native == rate:
+                return samples
+        except (AssertionError, wave.Error, OSError, struct.error):
+            pass
+    return decode(path, rate, channels)
+
+
 def decode(path, rate=RATE, channels=1):
     """Decode any supported media to interleaved floating-point PCM, at the output clock."""
     import array

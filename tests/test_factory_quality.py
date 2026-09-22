@@ -117,6 +117,69 @@ def test_region_gate_finals_real(stack):
     assert bad["diffs"][0]["region"] == "30-60"
 
 
+def test_mix_native_rate_does_not_smear_beat_boundary(stack):
+    """A 22.05 kHz mix that changes exactly at 1.0s must pass an
+    unchanged 0–1s region. Resampling that mix to 48 kHz smears the
+    change backward (~34 samples) and is not the mix substrate."""
+    db, qc, tmp = stack
+    from modules.factory.audio import pcm
+    rate = 22050
+    n = int(2.0 * rate)
+    silent = [0] * n
+    changed = [0] * n
+    for i in range(rate, n):
+        changed[i] = 200
+    aw, bw = tmp / "mix-a.wav", tmp / "mix-b.wav"
+    aw.write_bytes(pcm.write_wav(silent, rate=rate))
+    bw.write_bytes(pcm.write_wav(changed, rate=rate))
+    pic_a = tmp / "pic-a.mp4"
+    pic_b = tmp / "pic-b.mp4"
+    _color_mp4(pic_a, 2.0, rate=30, color="0x000000", size="360x640")
+    _color_mp4(pic_b, 2.0, rate=30, color="0x010101", size="360x640")
+    unchanged = [{"start_frame": 0, "end_frame": 30}]
+    native = qc.check_regions("chk-native", pic_a, pic_b, unchanged, 30,
+                              a_audio=aw, b_audio=bw)
+    assert native["verdict"] == "pass", native.get("audio")
+    smeared = qc.check_regions("chk-48k", pic_a, pic_b, unchanged, 30,
+                               a_audio=aw, b_audio=bw, audio_rate=48000)
+    assert smeared["verdict"] == "fail"
+    assert smeared["audio"][0]["code"] == "undeclared_change"
+
+
+def test_check_regions_rerun_bumps_revision_without_conflict(stack):
+    """Re-running the same check_id after a QC-policy fix must not hit
+    UNIQUE (kind,id,revision); the later native-rate pass is what _get
+    returns."""
+    db, qc, tmp = stack
+    from modules.factory.audio import pcm
+    rate = 22050
+    n = int(2.0 * rate)
+    silent = [0] * n
+    changed = [0] * n
+    for i in range(rate, n):
+        changed[i] = 200
+    aw, bw = tmp / "mix-a2.wav", tmp / "mix-b2.wav"
+    aw.write_bytes(pcm.write_wav(silent, rate=rate))
+    bw.write_bytes(pcm.write_wav(changed, rate=rate))
+    pic_a = tmp / "pic-a2.mp4"
+    pic_b = tmp / "pic-b2.mp4"
+    _color_mp4(pic_a, 2.0, rate=30, color="0x000000", size="360x640")
+    _color_mp4(pic_b, 2.0, rate=30, color="0x010101", size="360x640")
+    unchanged = [{"start_frame": 0, "end_frame": 30}]
+    first = qc.check_regions("regions-build-rerun", pic_a, pic_b,
+                             unchanged, 30, a_audio=aw, b_audio=bw,
+                             audio_rate=48000)
+    assert first["verdict"] == "fail"
+    rev0 = db.uow().records.get("review", "regions-build-rerun")["revision"]
+    second = qc.check_regions("regions-build-rerun", pic_a, pic_b,
+                              unchanged, 30, a_audio=aw, b_audio=bw)
+    assert second["verdict"] == "pass", second.get("audio")
+    row = db.uow().records.get("review", "regions-build-rerun")
+    assert row["revision"] == rev0 + 1
+    got = qc._get("regions-build-rerun")
+    assert got["verdict"] == "pass"
+
+
 def test_audio_region_leak(stack):
     db, qc, tmp = stack
     from modules.factory.audio import pcm
@@ -152,11 +215,20 @@ def test_acceptance_hash_bound(stack):
     tech=qc.inspect("tech",final,EXPECTED,binding=binding)
     with pytest.raises(ContractError,match="missing_required_review:creative"):
         qc.accept(final,["tech"],binding=binding)
+    with pytest.raises(ContractError,match='missing_required_review:automated_visual'):
+        qc.accept(final,['tech'],binding=binding,automated_delivery=True)
+    qc.record_verdict('visual',tech['target_hash'],'automated_visual','uncertain',binding=binding,reviewer='fixture AI',reviewer_type='automated')
+    with pytest.raises(ContractError,match='automated_visual:uncertain'):
+        qc.accept(final,['tech','visual'],binding=binding,automated_delivery=True)
+    qc.record_verdict('visual',tech['target_hash'],'automated_visual','pass',binding=binding,reviewer='fixture AI',reviewer_type='automated')
+    assert qc.accept(final,['tech','visual'],binding=binding,automated_delivery=True)['accepted']
     qc.record_verdict("creative",tech["target_hash"],"creative","pass",binding=binding,reviewer="fixture operator")
     assert qc.accept(final,["tech","creative"],binding=binding)["accepted"]
     stale={**binding,"plan_hash":"stale"}
     with pytest.raises(ContractError,match="stale_composition_binding"):
         qc.accept(final,["tech","creative"],binding=stale)
+    with pytest.raises(ContractError,match='stale_composition_binding'):
+        qc.accept(final,['tech','visual'],binding=stale,automated_delivery=True)
 
 
 def test_stale_review_rejected(stack):

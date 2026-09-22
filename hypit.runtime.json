@@ -24,7 +24,10 @@
       "use": "@hypit/provider-hyperframes-local"
     },
     "whisperx.local": {
-      "use": "@hypit/provider-whisperx-local"
+      "use": "@hypit/provider-whisperx-local",
+      "config": {
+        "serviceCommand": ["bash", "../../../scripts/factory-whisperx-launch.sh"]
+      }
     }
   },
   "bindings": {

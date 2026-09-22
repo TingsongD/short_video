@@ -1,6 +1,7 @@
 import React from "react";
 import type { ProviderReadiness } from "../../api/client";
 import { Blocked, Empty, Loading } from "../../components/States";
+import { credentialRecovery } from "./recovery";
 
 /** Granular readiness — installed/authenticated/catalog/tested/
  * qualified are separate truths; operator-language actions. */
@@ -22,7 +23,7 @@ export function ProvidersScreen(
           const blocked = !p.installed
             ? `${name} is not installed`
             : !p.authenticated
-              ? `Reconnect ${["vertex","google_vertex"].includes(name) ? "Google" : name === "jimeng_canvas" ? "Jimeng" : name}`
+              ? `Reconnect ${["vertex","google_vertex","audiovisual_analysis"].includes(name) ? "Google" : name === "jimeng_canvas" ? "Jimeng" : name}`
               : !p.qualified
                 ? `${name} is not qualified for this mode`
                 : null;
@@ -38,9 +39,9 @@ export function ProvidersScreen(
               </ul>
               {blocked
                 ? <Blocked why={blocked}
-                           action={name === "vertex"
+                           action={credentialRecovery(String(p.detail?.reason || "")) || (name === "vertex"
                              ? "Set Google budget to enable Vertex."
-                             : "Re-run connection check."} />
+                             : "Re-run connection check.")} />
                 : <span>Ready</span>}
               {Boolean(p.detail?.reason)&&<p>{String(p.detail?.reason)}</p>}
               <p>Provider changes require a revised plan and a new quote.</p>

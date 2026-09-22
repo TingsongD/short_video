@@ -36,7 +36,7 @@ def classify(provider_code, http_status=None, where="submit"):
     # be safely re-planned after local reauthentication.
     if provider_code in ("account_mismatch_or_unavailable", "no_credentials",
                          "expired", "wrong_project", "missing_permission",
-                         "api_key_only"):
+                         "api_key_only", "authority_required"):
         return "pre_acceptance"
     if provider_code == "analysis_http_error" and http_status is not None \
             and 400 <= http_status < 500:

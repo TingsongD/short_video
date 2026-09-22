@@ -64,8 +64,60 @@ def _passage_intervals(transcript):
             start, end = float(start), float(end)
         except (TypeError, ValueError):
             continue
-        out.append({"start_s": start, "end_s": end, "text": text})
+        out.append({"start_s": start, "end_s": end, "text": text,
+                    "words": t.get("words") or []})
     return out
+
+
+def _assign_script_passages(beats, transcript):
+    """Keep each sentence intact, using complete timed-word evidence when
+    available. Equal word votes avoid treating a long silence-alignment word
+    as many seconds of spoken evidence. Ties keep legacy start ownership.
+    This chooses a script scene; it does not certify or rewrite word timing.
+    """
+    passages = _passage_intervals(transcript)
+    result = {"by_beat": {b['id']: [] for b in beats}, "unplaced": [],
+              "timing_warnings": []}
+    for passage in passages:
+        fallback = assign_passages(beats, [passage])
+        owner = next((bid for bid, entries in fallback['by_beat'].items() if entries), None)
+        words = passage['words']
+        complete = (isinstance(words, list) and words and
+            all(isinstance(w, dict) for w in words) and
+            _norm_words(' '.join(str(w.get('text', w.get('word', ''))) for w in words)) ==
+            _norm_words(passage['text']))
+        votes = {}
+        last_start = -1
+        for word in words if complete else []:
+            start = word.get('start_s', word.get('start_seconds', word.get('start')))
+            end = word.get('end_s', word.get('end_seconds', word.get('end')))
+            if not (type(start) in (int, float) and type(end) in (int, float)
+                    and math.isfinite(start) and math.isfinite(end)
+                    and passage['start_s'] <= start < end <= passage['end_s']
+                    and start >= last_start):
+                votes = {}
+                break
+            last_start = start
+            if end - start > 2:
+                result['timing_warnings'].append(
+                    f"Passage at {passage['start_s']:.3f}s has a word interval "
+                    "longer than two seconds; original timing retained, not certified as repaired.")
+            midpoint = (start + end) / 2
+            beat = next((b for b in beats if b['start_s'] <= midpoint < b['end_s']), None)
+            if beat is None:
+                votes = {}
+                break
+            votes[beat['id']] = votes.get(beat['id'], 0) + 1
+        if votes:
+            winners = [bid for bid, count in votes.items() if count == max(votes.values())]
+            if len(winners) == 1:
+                owner = winners[0]
+        if owner is None:
+            result['unplaced'].append(passage)
+        else:
+            result['by_beat'][owner].append(passage)
+    result['timing_warnings'] = list(dict.fromkeys(result['timing_warnings']))
+    return result
 
 
 def beat_copy(beat, transcript, _assigned=None):
@@ -74,13 +126,12 @@ def beat_copy(beat, transcript, _assigned=None):
     A passage can be longer than a very short visual beat.  Using any
     overlap (``end > start`` and ``start < end``) would copy that passage
     into every adjacent beat, duplicating narration across the draft.
-    Ownership is single: the beat containing the passage's start, then
-    its midpoint, then its end; a passage owned by no beat is 'unplaced'
-    and reported, never silently duplicated or dropped.
+    Ownership is single. Complete timed-word evidence can select the scene
+    containing most words; otherwise passage start, midpoint and end remain
+    the fallback. Unplaced passages are reported, never silently dropped.
     """
     if _assigned is None:
-        _assigned = assign_passages(
-            [beat], _passage_intervals(transcript))
+        _assigned = _assign_script_passages([beat], transcript)
     return " ".join(p["text"] for p in
                     _assigned["by_beat"].get(beat.get("id")) or [])
 
@@ -184,14 +235,15 @@ def adapt(beats, transcript):
     B/C/D dicts contain ONLY their changed beat's copy."""
     if not beats:
         raise ContractError("script_no_beats", "beats")
-    assigned = assign_passages(beats, _passage_intervals(transcript))
+    assigned = _assign_script_passages(beats, transcript)
     a = {b["id"]: " ".join(
         p["text"] for p in assigned["by_beat"].get(b["id"]) or [])
         for b in beats}
     n = len(beats)
     out = {"A": a, "B": {}, "C": {}, "D": {}, "hypotheses": {},
            "factors": {}, "metrics": {}, "changed": {},
-           "unplaced": [p["text"] for p in assigned["unplaced"]]}
+           "unplaced": [p["text"] for p in assigned["unplaced"]],
+           "timing_warnings": assigned["timing_warnings"]}
     for key in ("B", "C", "D"):
         idx = changed_index(key, n)
         beat = beats[idx]
@@ -230,6 +282,21 @@ def picture_request(beat, factor="control", settings=None):
             "settings": dict(settings or {"aspect": "9:16"})}
 
 
+def variant_picture_request(beat, key, settings=None):
+    """Variant identity lives in the actual creative request, not only labels."""
+    looks = {
+        'B': 'Close immersive handheld camera, warm daylight, expressive reactions.',
+        'C': 'Steady medium-wide camera, cool daylight, clear step-by-step action.',
+        'D': 'Low-angle cinematic tracking, golden-hour light, playful anticipation.',
+    }
+    request = picture_request(beat, FACTORS[key], settings)
+    request['prompt'] += (' Variant ' + key + ' continuous visual treatment: ' + looks[key]
+        + ' Keep character species, wardrobe, markings and setting consistent across this variant.'
+        + ' No subtitles, captions, title cards, decorative lettering, logos or watermarks.'
+        + ' Convey the story through action only; text will be added separately.')
+    return request
+
+
 def llm_request(model, beats, transcript, a_copy, changed):
     """Script-adaptation request for the qualified analysis route —
     text-only generateContent on the same provider/model."""
@@ -237,6 +304,7 @@ def llm_request(model, beats, transcript, a_copy, changed):
             "script_input": {
                 "beats": [{"id": b["id"], "role": b["role"],
                            "start_s": b["start_s"], "end_s": b["end_s"],
+                           "max_words": word_budget(b, a_copy.get(b["id"], "")),
                            "visual_event": b.get("visual_event", "")}
                           for b in beats],
                 "transcript": transcript,
