@@ -76,3 +76,22 @@ def test_mismatched_alignment_lengths_rejected(tmp_path):
     doc = _doc("good boy wins", normalized=bad)
     with pytest.raises(ProviderError):
         _adapter(tmp_path, doc).execute(dict(REQ))
+
+
+def test_voice_catalog_is_read_only_paginated_and_bound_to_account(tmp_path):
+    calls=[]
+    def transport(method,url,body,headers):
+        assert method=='GET' and body is None
+        assert headers['xi-api-key']=='fixture'
+        calls.append(url)
+        page={'voices':[{'voice_id':'voice1','name':'One'}], 'has_more':True,'next_page_token':'page two'} if len(calls)==1 else {'voices':[{'voice_id':'voice2'}], 'has_more':False}
+        return 200,{},json.dumps(page).encode()
+    adapter=ElevenLabsAdapter(tmp_path/'voices',credentials=lambda:{'ELEVENLABS_API_KEY':'fixture'},transport=transport)
+    assert [v['voice_id'] for v in adapter.voices()]==['voice1','voice2']
+    assert len(calls)==2 and 'next_page_token=page+two' in calls[1]
+
+
+def test_voice_catalog_refuses_incomplete_pagination(tmp_path):
+    doc=json.dumps({'voices':[],'has_more':True,'next_page_token':'same'}).encode()
+    with pytest.raises(ProviderError,match='voice_catalog_incomplete'):
+        _adapter(tmp_path,doc).voices()

@@ -14,6 +14,7 @@ from pathlib import Path
 from modules.assemble.hypit_markup import escape_markup_text
 from ..domain.errors import ContractError
 from ..domain.records import Composition, content_hash
+from ..audio import caption_style
 
 ALLOWED_IMPORTS = {
     "@hypit/media@1", "@hypit/timeline-author@1", "@hypit/spatial@1",
@@ -86,12 +87,9 @@ class CompositionService:
             segments = [s for s in segments if s['kind'] != 'audio'] + [dict(premix)]
             clock['renderer_policy'] = renderer_policy
         if captions:
-            fonts=[clock.get("font_path",""), "/System/Library/Fonts/Supplemental/Arial.ttf",
-                   "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"]
-            font=next((Path(f) for f in fonts if f and Path(f).is_file()),None)
-            if font is None:
-                raise ContractError("caption_font_required","font_path")
+            font = caption_style.font_path(clock.get('font_path'))
             clock["font_sha256"]=hashlib.sha256(font.read_bytes()).hexdigest()
+            clock['caption_style_version'] = caption_style.STYLE_VERSION
         fps = clock["fps"]
         diags = self._diagnose(segments, captions, clock, renderer)
         if diags:
@@ -105,12 +103,10 @@ class CompositionService:
             + [c["end_frame"] for c in captions] + [0])
         svml, bindings = self._emit_svml(segments, captions, clock,
                                        total_frames, native_editorial)
-        svs = self._emit_svs(segments, fps)
+        svs = self._emit_svs(segments, fps, clock['width'])
         if native_editorial is not None:
             from .native import caption_recipe
-            svs=svs.replace('</sheet>',caption_recipe(clock['width'])+'</sheet>')
-        if clock.get('caption_preset') == 'phrases.v1':
-            svs = svs.replace('size: 64;', f'size: {48 * clock["width"] / 720:g};').replace('align: start;', 'align: center;').replace('weight: 600;', 'weight: 400;')
+            svs=svs.replace('</sheet>',caption_recipe(clock['width'], clock.get('font_path'))+'</sheet>')
         svrun = ('<?svml using="@hypit/run-markup@1"?>\n'
                  '<svrun version="1">\n'
                  '  <author source="./video.svml"/>\n'
@@ -238,7 +234,7 @@ class CompositionService:
             if clock.get('caption_preset') == 'phrases.v1':
                 from ..audio.phrase_captions import fits_line
                 lines = c['text'].split('\n')
-                if len(lines) > 2 or any(not line or not fits_line(line) for line in lines):
+                if len(lines) > 2 or any(not line or not fits_line(line, font_path=clock.get('font_path')) for line in lines):
                     diags.append({'code': 'caption_layout_invalid', 'at': c['id'], 'detail': 'Split the phrase; do not reduce readable type size.'})
             if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*",c["id"]) or c.get("placement","heading") not in ("heading","full"):
                 diags.append({"code":"invalid_caption_binding","at":c["id"],"detail":""})
@@ -288,9 +284,13 @@ class CompositionService:
             lines[2:2]=['  <import as="script" from="@hypit/script@1"/>',
                         '  <import as="aligned" from="@factory/aligned-speech@1"/>',
                         '  <import as="caption-fine" from="@hypit/caption-fine@1"/>']
-        if clock.get('caption_preset') == 'phrases.v1':
-            lines = [line.replace('top="74%" right="93%" bottom="86%"',
-                                  'top="68%" right="93%" bottom="78%"') for line in lines]
+        scale = w / caption_style.BASE_WIDTH
+        text_bottom = caption_style.BOTTOM * h
+        text_top = text_bottom - (2 * caption_style.FONT_SIZE * caption_style.LINE_HEIGHT + 2 * caption_style.PAD_Y) * scale
+        inset = (1 - caption_style.BOX_WIDTH) * w / 2
+        lines = [line if '<space:Frame id="heading"' not in line else
+                 f'  <space:Frame id="heading" within={{canvas}} left="{inset:g}px" '
+                 f'top="{text_top:g}px" right="{w-inset:g}px" bottom="{text_bottom:g}px"/>' for line in lines]
         # explicit asset elements, one per segment binding
         for s in pics+auds:
             art=self.db.uow().artifacts.get(s["artifact_id"])
@@ -321,7 +321,13 @@ class CompositionService:
                 if native_editorial is not None and s.get('semantic_start'):
                     placement=f'frame={{full}} at={{story.moment.{s["semantic_start"]}}} for="{s["out_frame"]-s["in_frame"]}f"'
             lines.append(f'    <media:{tag} id="{s["id"]}" media={{norm-{s["id"]}.media}} appearance={{look.media.{s["id"]}}} {placement}>')
-            if "kenburns" in s.get("effects",[]):
+            if 'reframe_zoom' in s:
+                zoom = s['reframe_zoom']
+                if type(zoom) not in (int, float) or not 1 <= zoom <= 1.25:
+                    raise ContractError('editorial_reframe_invalid', s['id'])
+                lines += [f'      <media:Sampling at="start" zoom="{zoom}"/>',
+                          f'      <media:Sampling at="end" zoom="{zoom}"/>']
+            elif "kenburns" in s.get("effects",[]):
                 lines += ['      <media:Sampling at="start" zoom="1"/>','      <media:Sampling at="end" zoom="1.1"/>']
             lines.append(f'    </media:{tag}>')
         if use_sequence:
@@ -346,10 +352,12 @@ class CompositionService:
             bindings.extend({'binding':c['id'],'role':'caption','track':'captions','artifact_id':'',
                 'sha256':hashlib.sha256(c['text'].encode()).hexdigest(),'in_frame':c['start_frame'],'out_frame':c['end_frame']} for c in captions)
         elif captions:
-            lines += ['', '  <asset:Font id="caption-font" src="./assets/caption.ttf" weight="400" style="normal"/>',
+            lines += ['', '  <asset:Font id="caption-font" src="./assets/caption.ttf" weight="700" style="normal"/>',
                       '  <typo:Style id="cap" font={caption-font} '
                       'recipe={look.text.caption}>',
-                      '    <typo:Fill color="#ffffff"/>',
+                      f'    <typo:Box target="content" color="{caption_style.BACKGROUND}" '
+                      f'padding="{caption_style.PAD_Y*scale:g} {caption_style.PAD_X*scale:g}" radius="{caption_style.RADIUS*scale:g}"/>',
+                      f'    <typo:Fill color="{caption_style.FILL}"/>',
                       '  </typo:Style>',
                       '  <typo:Track id="captions" '
                       'timeline={program.timeline}>']
@@ -381,16 +389,13 @@ class CompositionService:
             lines.append('    <film:Track source={sound.audio}/>')
         if captions:
             lines.append('    <film:Track source={captions.track}/>')
-        if captions and clock.get('caption_preset') == 'phrases.v1' and native_editorial is None:
-            fill = lines.index('    <typo:Fill color="#ffffff"/>')
-            lines.insert(fill, f'    <typo:Stroke color="#000000" width="{2 * w / 720:g}" placement="outside"/>')
         lines += ['  </film:Film>',
                   '  <render:Video id="final" '
                   'composition={main.composition} '
                   'timeline={program.timeline}/>', '</svml>', '']
         return "\n".join(lines), bindings
 
-    def _emit_svs(self, segments, fps):
+    def _emit_svs(self, segments, fps, width):
         recipes=[]
         pics=[s for s in segments if s["kind"]=="picture"]
         for s in pics:
@@ -408,9 +413,9 @@ class CompositionService:
                 '<sheet version="1">\n'
                 '  film.main { background: #000000; }\n'
                 '  media.full { stack-order: 0; fit: cover; }\n'
-                '  text.caption { size: 64; weight: 600; '
-                'line-height: 1.2; align: start; '
-                'block-align: center; stack-order: 20; }\n'
+                f'  text.caption {{ size: {caption_style.FONT_SIZE*width/caption_style.BASE_WIDTH:g}; weight: 700; '
+                f'line-height: {caption_style.LINE_HEIGHT:g}; align: center; '
+                'block-align: end; block-size: hug; stack-order: 20; }\n'
                 + "\n".join(recipes) + '\n</sheet>\n')
 
     # -------------------------------------------------------- persist

@@ -102,12 +102,12 @@ class RenderService:
         obs = self.hypit.observe(b["remote_build_id"], b["hypit_workspace"])
         if obs["status"] == "unknown":
             self._set(build_id, status="observer_lost",
-                      problem="observer_timeout")
+                      problem=obs.get("reason") or "observer_timeout")
         elif obs["status"] == "succeeded":
             self._set(build_id, status="succeeded")
         elif obs["status"] == "failed":
             self._set(build_id, status="failed",
-                      problem=json.dumps(obs.get("raw"))[:200])
+                      problem=str(obs.get("reason") or "native_build_failed")[-2000:])
         return obs
 
     def collect(self, build_id, now=""):

@@ -1,6 +1,19 @@
 # Flash-cut implementation record
 
-Status (2026-09-22): the narrowly authorized `AVvVLM5b-mE` acceptance run is
+Current-state addendum (2026-09-22 21:34 UTC): commit `89204bd` is on local and
+remote `main`. The later hardening release passed 1,573 backend tests (seven
+helper imports separately covered by 27 Python 3.11 tests), 73 dashboard tests
+and production build, and 16 real local Hypit/FFmpeg render tests. A code-only
+local rollout and protected-state verification passed. Its agent-managed API
+and worker then ended when the task closed; neither was running at the dated
+health check. Start them from durable operator terminals before using the
+dashboard. The future v3 Gemini media route still needs separately authorized
+live qualification; code release is not general route promotion. See the
+[current status](FLASHCUT-CURRENT-STATUS.md),
+[hardening record](FUTURE-RUN-HARDENING-2026-09-22.md) and
+[live-only checklist](FLASHCUT-LIVE-ONLY-ACCEPTANCE.md).
+
+The narrowly authorized `AVvVLM5b-mE` acceptance run is
 complete, but the profile is **not globally live-qualified**. The run encoded
 all 423 source frames with PE, completed audio analysis, used Jev in shadow
 mode, and produced four current 720×1280 A/B/C/D finals. All four passed the
@@ -15,9 +28,10 @@ plus some assistant-authored corrections. Unknown request identities and holds
 were preserved rather than replayed or erased. Follow-on offline hardening now
 adds a per-new-run $50 guardrail, second-attempt narration repair, conservative
 editorial fallback and automatic planning for safe completed-response recovery.
-Those changes are not deployed or broadly live-qualified. See
-`FLASHCUT-CURRENT-STATUS.md` for the completed outcome and
-`FUTURE-RUN-HARDENING-2026-09-22.md` for current verification and rollout state.
+Those code changes were released locally, but are not broadly live-qualified
+and do not keep a local service running on their own. See
+`FLASHCUT-CURRENT-STATUS.md` for the completed outcome and current operating
+check, and `FUTURE-RUN-HARDENING-2026-09-22.md` for release verification.
 The older $3.26/seed89iXP setup below is superseded historical context.
 
 Credential follow-up (2026-09-21): the connector accepts `JEV_API_KEY` as an
@@ -29,6 +43,10 @@ exposing it or contacting the provider. Secret files and running services were
 not changed. This is not authentication, spending approval or live qualification.
 
 Scope: the approved Hypit-first audiovisual flash-cut implementation plan, including native semantic authoring. One sequential writer; offline development only until a fresh acceptance quote is approved. Acceptance seed: `89iXPZsKn9M`, one new A/B/C/D run.
+
+The implementation checkpoints below preserve what was known at each stage.
+Their earlier “pending” test and deployment statements are not the latest
+operating status; use the dated addendum above.
 
 ## Baseline
 
@@ -58,7 +76,7 @@ The approved plan supplies the test boundaries: public composition/capability in
 | 4 — editorial/native semantic authoring | Native package, final-speech timing, durably quoted semantic editorial planning, immutable resolved plans and compiler/worker integration exercised end to end offline |
 | 5 — autorun/dashboard/QC | Profile, honest progress, independent phase status, frozen template policy and authoritative final-QC context implemented; mocked browser walkthrough passed |
 | Offline release checks | Complete backend 1,491 passed; isolated helper 23 passed; frontend 70 passed/build passed; protected-state checker regression also passed |
-| Paid acceptance and deployment | Not authorized / not performed |
+| Paid acceptance and deployment | At this historical checkpoint: not authorized / not performed. See the current-state addendum for the later AVv acceptance and code-only rollout. |
 
 ## Native authoring evidence
 

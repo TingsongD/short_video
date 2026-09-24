@@ -8,8 +8,8 @@
 #
 # Workspace scoping: processes are launched via this checkout's absolute
 # .venv path, so their command lines contain the checkout directory.
-# All liveness/pgrep checks match on that absolute path — another
-# checkout's factory processes never match.
+# Liveness checks verify the interpreter and working directory, including
+# virtual environments that resolve to a shared system Python.
 set -u
 umask 077
 cd "$(dirname "$0")/.."
@@ -21,12 +21,11 @@ export PYTHONUNBUFFERED=1
 mkdir -p .run
 
 pid_alive() {
-  # alive && cmdline belongs to THIS checkout's venv
   local pid="$1" want="$2"
-  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null || return 1
-  ps -p "$pid" -o command= 2>/dev/null | grep -q "$PYBIN.*$want"
+  [ -n "$pid" ] && [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+  [ -n "$("$PYBIN" -m modules.factory.operations.processes "$ROOT" "$want" --pid "$pid")" ]
 }
-scoped_pgrep() { pgrep -f "$PYBIN -m modules.factory.cli $1" || true; }
+scoped_pgrep() { "$PYBIN" -m modules.factory.operations.processes "$ROOT" "$1"; }
 
 echo "== hypit runtime (local programs) =="
 ./scripts/hypit.sh runtime up || echo "  (runtime up reported issues; programs status below shows what is live)"

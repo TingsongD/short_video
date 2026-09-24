@@ -16,6 +16,7 @@ import json
 from ..domain.clocks import FPS_30, FrameInterval, RationalRate
 from ..domain.errors import ContractError
 from ..domain.records import Beat, ReferenceBlueprint
+from ..media.analysis_clock import analysis_media, require_output_30
 from ..media.audio import audio_characteristics
 from ..media.frames import extract_frame
 from ..media.probe import probe
@@ -60,37 +61,45 @@ class AnalysisService:
 
     # --------------------------------------------------------- run
 
-    def import_observations(self, seed_id, observations, reviewer, target_rate=FPS_30, provenance=None):
+    def import_observations(self, seed_id, observations, reviewer, target_rate=FPS_30, provenance=None, analysis_asset_id=None, observed_at=None):
         """Operator observations use the same parser and real media evidence."""
+        require_output_30(target_rate)
         if not reviewer.strip():
             raise ContractError("reviewer_required", "reviewer")
         seed = self.registry.get(seed_id)
         if seed.evidence_status != "media_ready":
             raise ContractError("source_not_ready", "seed_id")
-        src = self.artifacts.verified_path(seed.source_asset_id)
+        input_id = analysis_asset_id or seed.source_asset_id
+        if input_id not in (seed.source_asset_id, seed.analysis_asset_id):
+            raise ContractError("analysis_scope_mismatch", "artifact_id")
+        media = analysis_media(self.artifacts, input_id)
+        src = self.artifacts.verified_path(media['analysis_artifact_id'])
         info = probe(src)
         analysis = parse_analysis(observations)
         validate_temporal(analysis, info.duration_s)
         sha = self.db.uow().artifacts.get(seed.source_asset_id)["sha256"]
         bp = self._build(seed, seed.source_asset_id, sha, info,
                          audio_characteristics(src), detect_scenes(src), analysis,
-                         target_rate, utcnow(), src)
+                         target_rate, observed_at or utcnow(), src)
         bp.provenance.update(analyzer="manual_observations", model="", reviewer=reviewer)
         bp.provenance.update(provenance or {})
+        bp.provenance.update(media, source_clock={"num": 30, "den": 1})
         bp.content_hash = self._hash(bp)
         bp.validate_or_raise()
-        self._persist(bp, "manual_observations")
+        self._persist(bp, (provenance or {}).get("attempt_id", "manual_observations"))
         return bp
 
     def analyze(self, seed_id, target_rate=FPS_30, job_id=None,
                 observed_at=None):
         """→ draft ReferenceBlueprint. Source must be verified video."""
+        require_output_30(target_rate)
         seed = self.registry.get(seed_id)
         if seed.evidence_status != "media_ready" or not \
                 seed.source_asset_id:
             raise ContractError("source_not_ready", "seed_id", seed_id)
-        artifact_id = seed.source_asset_id
-        src = self.artifacts.path_for(artifact_id)
+        media = analysis_media(self.artifacts, seed.source_asset_id)
+        artifact_id = media["analysis_artifact_id"]
+        src = self.artifacts.verified_path(artifact_id)
         info = probe(src)
         if info.kind() != "video":
             raise ContractError("source_not_video", "artifact",
@@ -102,7 +111,8 @@ class AnalysisService:
         request = {"artifact_id": artifact_id, "artifact_sha256": src_sha,
                    "duration_s": info.duration_s,
                    "scenes": scenes, "audio_present": audio["present"],
-                   "input_mode": self.route, "seed_id": seed.id}
+                   "input_mode": self.route, "seed_id": seed.id,
+                   "analysis_source_artifact_id": seed.source_asset_id}
         job_id = job_id or f"job:analysis:{seed_id}"
         if self.effects is None:
             raise ContractError("authority_required", "analysis")
@@ -129,17 +139,16 @@ class AnalysisService:
             (f"%{attempt_id}",)).fetchone()
         request = (json.loads(row[0]) or {}).get("request") or {}
         seed = self.registry.get(request["seed_id"])
-        src_sha = request["artifact_sha256"]
-        artifact_id = seed.source_asset_id
-        src = self.artifacts.path_for(artifact_id)
-        info = probe(src)
-        audio = audio_characteristics(src)
-        scenes = request.get("scenes") or detect_scenes(src)
-        analysis = parse_analysis(
-            (op.get("result") or {}).get("analysis"))
-        bp = self._build(seed, artifact_id, src_sha, info, audio,
-                         scenes, analysis, rate, now, src)
-        self._persist(bp, attempt_id)
+        input_id = request.get("analysis_source_artifact_id", request["artifact_id"])
+        media = analysis_media(self.artifacts, input_id)
+        if request["artifact_id"] not in (input_id, media['analysis_artifact_id']):
+            raise ContractError("analysis_scope_mismatch", "artifact_id")
+        self.artifacts.verified_path(request['artifact_id'])
+        if self.db.uow().artifacts.get(request['artifact_id'])['sha256'] != request['artifact_sha256']:
+            raise ContractError("analysis_scope_mismatch", "artifact_sha256")
+        bp = self.import_observations(seed.id, (op.get("result") or {}).get("analysis"),
+            "analysis_receipt", target_rate=rate, analysis_asset_id=input_id, observed_at=now,
+            provenance={"analyzer": self.provider_name, "model": self.model, "attempt_id": attempt_id})
         return bp
 
     def _build(self, seed, artifact_id, src_sha, info, audio, scenes,
@@ -208,6 +217,7 @@ class AnalysisService:
                         "presenter": "fictional_or_authorized",
                         "voice": "new_selected"},
             provenance={"artifact_sha256": src_sha,
+                        "source_clock": {"num": src_clock.num, "den": src_clock.den},
                         "analyzer": self.provider_name,
                         "model": self.model, "input_mode": self.route,
                         "uncertainty": analysis["uncertainty"]})

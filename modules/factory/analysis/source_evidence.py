@@ -289,14 +289,24 @@ def binding_from_db(db, run_id):
     artifact = db.uow().artifacts.get(seed['source_asset_id'])
     if not artifact or artifact['sha256'] != analysis['source_sha256']:
         raise ContractError('source_evidence_stale', 'source_sha256')
+    original = artifact
+    acquisition = analysis.get('acquisition') or {}
+    if acquisition.get('analysis_artifact_id'):
+        artifact = db.uow().artifacts.get(acquisition['analysis_artifact_id'])
+        if not artifact or artifact['sha256'] != acquisition.get('analysis_sha256'):
+            raise ContractError('source_evidence_stale', 'analysis_sha256')
+    provenance = ({'original_source_artifact_id': original['id'],
+                   'original_source_sha256': original['sha256'],
+                   'analysis_clock_policy': acquisition['analysis_clock_policy']}
+                  if acquisition.get('analysis_clock_policy') else {})
     transcript = analysis['transcript']
     transcript_hash = transcript.get('sha256') or analysis.get('documents', {}).get('hashes', {}).get('transcript_json')
     if not transcript_hash:
         if transcript.get('status') not in ('not_applicable', 'declared_nonverbal'):
             raise ContractError('analysis_evidence_unavailable', 'transcript_sha256')
         transcript_hash = content_hash(['no_speech', transcript['status'], artifact['sha256']])
-    return {'seed_id': seed['id'], 'seed_revision': seed['revision'], 'source_artifact_id': artifact['id'],
+    return {**provenance, 'seed_id': seed['id'], 'seed_revision': seed['revision'], 'source_artifact_id': artifact['id'],
             'source_sha256': artifact['sha256'], 'analysis_revision': analysis['revision'],
             'transcript_sha256': transcript_hash,
-            'edit_token': content_hash({'seed_id': seed['id'], 'source_sha256': artifact['sha256'],
+            'edit_token': content_hash({**provenance, 'seed_id': seed['id'], 'source_sha256': artifact['sha256'],
                                        'revision': analysis['revision'], 'version': analysis_row['version']})}

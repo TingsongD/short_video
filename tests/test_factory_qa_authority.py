@@ -78,3 +78,52 @@ def test_resume_cannot_replace_unresolved_reference_work(env, monkeypatch, tag):
     assert result.status_code == 400 and result.json()['error'] == 'prior_revision_inflight'
     assert s.autorun.get('reference-resume').status == 'paused'
     assert s.autorun.get('reference-resume').state['experiment_revision'] == 1
+
+
+@pytest.mark.parametrize('status', ['ready', 'waiting_dependencies', 'awaiting_review'])
+def test_revised_plan_retires_obsolete_local_work(env, monkeypatch, status):
+    _, _, db, s, _ = env
+    monkeypatch.setattr(s, '_current', lambda _: SimpleNamespace(revision=2))
+    jid = 'old-plan:local'
+    with db.uow() as u:
+        u.jobs.put(Job(id=jid, schema_version='job.v1', created_at='now',
+                       logical_key=jid, status=status, experiment_id='exp', revision=1))
+    run = AutoRun(id='revised', stage='footage', params={'workflow':{'version':2}},
+                  state={'experiment_id':'exp', 'experiment_revision':1, 'plan_id':'old-plan'})
+    s.autorun._rebind_current_revision(run)
+    assert run.stage == 'quote' and run.state['experiment_revision'] == 2
+    assert db.uow().jobs.get(jid)['status'] == 'cancelled'
+    assert db.uow().jobs.get(jid)['blocked_reason'] == 'superseded_by_revision:2'
+
+
+@pytest.mark.parametrize('status', ['reserved', 'unknown', 'running'])
+def test_revised_plan_preserves_potentially_active_jobs(env, monkeypatch, status):
+    from modules.factory.domain.errors import ContractError
+    _, _, db, s, _ = env
+    monkeypatch.setattr(s, '_current', lambda _: SimpleNamespace(revision=2))
+    jid = 'old-plan:active'
+    with db.uow() as u:
+        u.jobs.put(Job(id=jid, schema_version='job.v1', created_at='now',
+                       logical_key=jid, status=status, experiment_id='exp', revision=1))
+    run = AutoRun(id='revised', stage='footage', params={'workflow':{'version':2}},
+                  state={'experiment_id':'exp', 'experiment_revision':1, 'plan_id':'old-plan'})
+    with pytest.raises(ContractError, match='prior_revision_inflight'):
+        s.autorun._rebind_current_revision(run)
+    assert db.uow().jobs.get(jid)['status'] == status
+    assert run.state['experiment_revision'] == 1
+
+
+@pytest.mark.parametrize('attempt_status', ['prepared', 'dispatching', 'unknown', 'accepted', 'running', 'cancel_requested', 'succeeded'])
+def test_retirement_never_changes_paid_attempts(env, attempt_status):
+    from modules.factory.autorun.revisions import retire_local_jobs
+    _, _, db, _, _ = env
+    jid = 'old:queued'
+    with db.uow() as u:
+        u.jobs.put(Job(id=jid, schema_version='job.v1', created_at='now',
+                       logical_key=jid, status='ready', experiment_id='exp', revision=1))
+        u.conn.execute("INSERT INTO attempts(id,job_id,attempt_seq,status,body,created_at,updated_at) VALUES(?,?,1,?,'{}','now','now')", ('attempt',jid,attempt_status))
+    before = [tuple(r) for r in db.conn.execute('SELECT * FROM attempts')]
+    retired = retire_local_jobs(db, [jid], 'exp', 1, 2)
+    assert bool(retired) == (attempt_status == 'succeeded')
+    assert [tuple(r) for r in db.conn.execute('SELECT * FROM attempts')] == before
+    assert retire_local_jobs(db, [jid], 'other-exp', 1, 2) == []

@@ -3,6 +3,7 @@ import { api, call } from "../../api/client";
 import { selectableBudget } from '../../api/budgets';
 import { credentialRecovery, analysisRecovery } from "../providers/recovery";
 import { RecoveryPanel } from './RecoveryPanel';
+import { ResumeForm } from './ResumeForm';
 
 type Row = Record<string, any>;
 
@@ -33,13 +34,16 @@ export function RunProgress({ run }: { run: Row }) {
   const state = complete ? "Run complete" : run.status === "paused"
     ? "Paused — needs attention" : run.status === "running" ? "Running" : run.status;
   const phases = run.state?.completion_phases || {};
+  const generationPhase = phases.generation || (complete || run.stage === 'final_qc'
+    ? 'complete' : current >= stages.findIndex(([key]) => key === 'music') ? 'in progress' : 'pending');
   const deliveryPhase = phases.delivery === 'running' && run.status === 'paused' ? 'paused'
     : phases.delivery || (complete && run.params?.policies?.delivery === 'creative_approval' ? 'awaiting creative approval' : 'pending');
   const narrationRepairs = Object.entries(run.state?.speech_repair_attempts || {});
   const overlayRepairs = Object.entries(run.state?.overlay_repair_attempts || {});
   const source=run.source_analysis;
   const spend=run.spending_policy;
-  const wait=run.provider_wait || run.state?.provider_wait;
+  const wait=run.status === 'running'
+    ? (run.provider_wait !== undefined ? run.provider_wait : run.state?.provider_wait) : null;
   return <div className={`run-progress ${run.status}`}>
     <div role="status" aria-live="polite">
       <strong>{state}</strong> · {LABEL[run.stage] || run.stage}
@@ -59,7 +63,7 @@ export function RunProgress({ run }: { run: Row }) {
         ? <progress aria-label="Source frame coverage" max={source.total_frames} value={source.encoded_frames ?? 0}/>
         : <p>Total frame count not yet verified — no estimated percentage.</p>}
       <p>Audio: {source.audio_status || 'pending'} · {((source.processed_audio_samples ?? 0)/48000).toFixed(1)} seconds processed · Rhythm: {source.rhythm_status || 'pending'}</p>
-      <p>Measured events: {source.event_count ?? 'pending'} · Cached chunks reused: {source.cache_reused_chunks ?? 0}</p>
+      <p>Measured events: {source.event_count ?? (source.state === 'complete' ? 'not available' : 'pending')} · Cached chunks reused: {source.cache_reused_chunks ?? 0}</p>
       <p>Local repairs: {source.repairs_used ?? 0} (at most two per chunk) · Clarifications: {source.clarifications_used ?? 0}/2</p>
       <p>Jev {source.jev_mode || 'shadow'}: {source.jev_status || 'pending'} — mandatory evidence is retained.</p>
       {source.jev_status === 'unknown_retained' && <p>Unknown Jev outcome retained for reconciliation; no request replay or hold release.</p>}
@@ -78,7 +82,7 @@ export function RunProgress({ run }: { run: Row }) {
       <p>Final captions use replacement narration alignment, not source-word estimates.</p>
     </details>}
     {run.params?.policies && <>
-      <p aria-label="Completion phases">Generation: {phases.generation || (complete || run.stage === 'final_qc' ? 'complete' : 'in progress')} · QC: {phases.qc || (complete ? 'complete' : run.stage === 'final_qc' ? 'in progress' : 'pending')} · Delivery: {deliveryPhase}</p>
+      <p aria-label="Completion phases">Generation: {generationPhase} · QC: {phases.qc || (complete ? 'complete' : run.stage === 'final_qc' ? 'in progress' : 'pending')} · Delivery: {deliveryPhase}</p>
       <p>{run.params.policies.variation === 'full_video' ? 'Full-video multi-variable creative comparison' : 'Controlled-region comparison'} · {run.params.policies.captions === 'phrases.v1' ? 'Readable phrase captions' : 'Word captions'}</p>
       {(narrationRepairs.length > 0 || overlayRepairs.length > 0) && <details><summary>Automatic repair progress</summary>
         <ul>{narrationRepairs.map(([key, used]) => <li key={key}>Narration {key}: {String(used)}/{run.params.policies.speech_repairs} attempts</li>)}
@@ -125,6 +129,7 @@ export function AutoRunScreen({ seeds, budgets: allBudgets, runs, act, media,
   const [url, setUrl] = useState("");
   const [seedId, setSeedId] = useState("");
   const [voiceId, setVoiceId] = useState("");
+  const [speakerVoices, setSpeakerVoices] = useState("");
   const [language, setLanguage] = useState("en");
   const [picked, setPicked] = useState<Record<string, boolean>>({});
   const [limits, setLimits] = useState<Record<string, string>>({});
@@ -148,12 +153,20 @@ export function AutoRunScreen({ seeds, budgets: allBudgets, runs, act, media,
   }
 
   function launch() {
+    const assignments: Record<string, string> = {};
+    for (const line of speakerVoices.split('\n').filter((x) => x.trim())) {
+      const match = line.trim().match(/^(SPEAKER_\d{2})\s*=\s*([A-Za-z0-9_-]{1,64})$/);
+      if (!match || assignments[match[1]]) throw new Error('Use one unique speaker assignment per line, for example SPEAKER_00=voice-id.');
+      assignments[match[1]] = match[2];
+    }
+    if (new Set(Object.values(assignments)).size !== Object.keys(assignments).length) throw new Error('Choose a different voice for each speaker.');
     const lim = Object.fromEntries(
       Object.entries(limits)
         .filter(([, v]) => v.trim() !== "")
         .map(([k, v]) => [k, Number(v)]));
     return api.autorunCreate({
       seed_id: seedId, voice_id: voiceId, language,
+      speaker_voices: assignments,
       budget_ids: selectedBudgets.map((b) => b.id),
       limits: lim, generate_music: music, visual_reviews: reviews,
       account: account || undefined,
@@ -211,6 +224,10 @@ export function AutoRunScreen({ seeds, budgets: allBudgets, runs, act, media,
           <input value={voiceId}
                  onChange={(e) => setVoiceId(e.target.value)}
                  placeholder="provider voice id (eleven_v3)" /></label>
+        <p>Speakers are detected from the source audio. The first speaker uses this voice; other speakers receive distinct available voices, kept consistent across all four versions. Unclear or overlapping speech needs review before generation.</p>
+        <label>Speaker voices (optional)
+          <textarea value={speakerVoices} onChange={(e) => setSpeakerVoices(e.target.value)}
+            placeholder={'SPEAKER_00=voice-id\nSPEAKER_01=another-voice-id'} /></label>
         <label>Language
           <input value={language}
                  onChange={(e) => setLanguage(e.target.value)} /></label>
@@ -296,6 +313,11 @@ export function AutoRunScreen({ seeds, budgets: allBudgets, runs, act, media,
           </header>
           <RunProgress run={run} />
           <StageBar run={run} />
+          {run.state?.speaker_voices && <details><summary>Character voices</summary>
+            <ul>{Object.entries(run.state.speaker_voices).map(([speaker, voice]) =>
+              <li key={speaker}>{speaker}: {String(voice)}</li>)}</ul>
+            <p>Speaker labels identify voices in the audio. Matching a label to an on-screen person needs separate visual evidence.</p>
+          </details>}
           {run.status === "paused" && run.pause && (
             <div className="pause" role="alert">
               {run.recovery ? <RecoveryPanel key={`${run.id}:${run.pause.at}`} run={run} act={act}/>
@@ -321,13 +343,13 @@ export function AutoRunScreen({ seeds, budgets: allBudgets, runs, act, media,
                     <input value={reviewer} placeholder="your name"
                            onChange={(e) =>
                              setReviewer(e.target.value)} /></label>{" "}
-                  <button disabled={!reviewer.trim()}
+                  {run.params?.policies?.delivery !== 'after_qc' && <button disabled={!reviewer.trim()}
                           onClick={() => act(
                     () => api.autorunResume(run.id,
                       { resolve_qc: "accept",
                         reviewer: reviewer.trim() }),
                     "Flagged finals accepted")}>
-                    Accept after human review</button>{" "}
+                    Accept after human review</button>}{" "}
                   <button onClick={() => act(
                     () => api.autorunResume(run.id,
                       { resolve_qc: "recheck" }),
@@ -336,7 +358,7 @@ export function AutoRunScreen({ seeds, budgets: allBudgets, runs, act, media,
                 </p>)}
               {run.pause.code === "capability_unavailable" && (
                 <p>
-                  {run.stage === "final_qc" && (
+                  {run.stage === "final_qc" && !run.params?.workflow && (
                     <button onClick={() => act(
                       () => api.autorunResume(run.id,
                         { set_params: { visual_reviews: false } }),
@@ -349,19 +371,8 @@ export function AutoRunScreen({ seeds, budgets: allBudgets, runs, act, media,
                       "Run continuing without music")}>
                       Finish without music</button>)}
                 </p>)}
-              {(!run.recovery || run.recovery.can_resume) && <button onClick={() => act(
-                () => api.autorunResume(run.id, {
-                  // Bind this click to the current pause so a later
-                  // pause cannot replay the first Resume's idempotent
-                  // response (empty bodies would otherwise collide).
-                  pause_at: run.pause?.at,
-                  ...(selectedBudgets.length
-                    ? { add_budget_ids: selectedBudgets.map((b) => b.id) }
-                    : {}),
-                }),
-                "Run resumed")}>
-                Resume{selectedBudgets.length
-                  ? " with checked budgets" : ""}</button>}
+              {(!run.recovery || run.recovery.can_resume) && <ResumeForm key={`resume:${run.id}:${run.pause.at}`}
+                run={run} units={units} budgetIds={selectedBudgets.map(b => b.id)} act={act}/>}
             </div>)}
           {(run.progress || []).some(
             (p: Row) => p.outcome === "paused" && p.detail) && (

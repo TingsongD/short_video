@@ -31,6 +31,12 @@ class SourceEvidenceWork:
         policy = validate_flashcut_policy(policy)
         binding = binding_from_db(self.s.db, run_id)
         analysis = self.s.ref_analysis.get(binding['seed_id'])
+        from ..media.analysis_clock import analysis_media
+        seed = self.s.seeds.get(binding['seed_id'])
+        media = analysis_media(self.s.artifacts, seed.source_asset_id)
+        if media['analysis_artifact_id'] != binding['source_artifact_id']:
+            raise ContractError('analysis_clock_upgrade_required', 'source_artifact_id',
+                                'Restart reference analysis to bind the 30 fps analysis copy')
         if analysis.transcript.get('status') not in ('not_applicable', 'declared_nonverbal'):
             self.s.ref_analysis.verified_transcript(analysis)
         self.s.artifacts.verified_path(binding['source_artifact_id'])

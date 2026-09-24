@@ -15,6 +15,8 @@ import time
 from fractions import Fraction
 from pathlib import Path
 
+from ..audio import caption_style as style
+
 
 def _digest(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
@@ -42,36 +44,60 @@ WrapStyle: 0
 ScaledBorderAndShadow: yes
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Caption,Arial,54,&H00FFFFFF,&H00FFFFFF,&H20000000,&H80000000,0,0,0,0,100,100,0,0,1,0.6,2,8,86,86,0,1
+Style: Caption,{font},{size},&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,0,0,8,0,0,0,1
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
 
 
-def captions_ass(captions, fps=30, preset='words.v1'):
+def captions_ass(captions, fps=30, preset='words.v1', *, font_path=None):
     if preset not in ('words.v1', 'phrases.v1'):
         raise ValueError('unsupported caption preset')
     phrase = preset == 'phrases.v1'
-    header = ASS_HEADER
-    if phrase:
-        # ASS coordinates are 1080x1920: 72px scales to 48px at 720p.
-        header = header.replace('Arial,54,', 'Arial,72,').replace(
-            ',1,0.6,2,8,86,86,0,1', ',1,3,2,8,86,86,0,1')
+    header = ASS_HEADER.format(font=style.caption_font(font_path).getname()[0] if captions else 'Arial',
+                               size=f'{style.FONT_SIZE * 1080 / style.BASE_WIDTH:g}')
 
-    def caption_text(text):
+    def validate_text(text):
         if not phrase:
-            return _literal(text)
+            _literal(text)
+            return
         lines = text.split('\n')
         from ..audio.phrase_captions import fits_line
-        if len(lines) > 2 or any(not line or not fits_line(line) for line in lines):
+        if len(lines) > 2 or any(not line or not fits_line(line, font_path=font_path) for line in lines):
             raise ValueError('phrase caption exceeds readable layout')
-        return r'\N'.join(_literal(line) for line in lines)
+        for line in lines:
+            _literal(line)
 
-    events = [f"Dialogue: 0,{_ass_time(c['start_frame'], fps)},"
-              f"{_ass_time(c['end_frame'], fps)},Caption,,0,0,0,,"
-              + "{\\pos(540,1306)}" + caption_text(c["text"])
-              for c in sorted(captions, key=lambda c: c["start_frame"])]
+    events = []
+    scale = 1080 / style.BASE_WIDTH
+    line_height = style.FONT_SIZE * style.LINE_HEIGHT * scale
+    for c in sorted(captions, key=lambda c: c['start_frame']):
+        validate_text(c['text'])  # Validate before emitting any ASS control data.
+        lines = c['text'].split('\n')
+        width = (max(style.line_width(line, font_path) for line in lines) + 2 * style.PAD_X) * scale
+        height = len(lines) * line_height + 2 * style.PAD_Y * scale
+        left, top = (1080 - width) / 2, style.BOTTOM * 1920 - height
+        timing = f"{_ass_time(c['start_frame'], fps)},{_ass_time(c['end_frame'], fps)},Caption,,0,0,0,,"
+        # One translucent rounded box avoids dark overlaps between line boxes.
+        box = _rounded_box(width, height, style.RADIUS * scale)
+        events.append('Dialogue: 0,' + timing +
+                      f'{{\\an7\\pos({left:g},{top:g})\\1c&H000000&\\1a&H33&\\p1}}{box}{{\\p0}}')
+        for index, line in enumerate(lines):
+            y = top + style.PAD_Y * scale + index * line_height + (line_height - style.FONT_SIZE * scale) / 2
+            events.append('Dialogue: 1,' + timing + f'{{\\pos(540,{y:g})}}' + _literal(line))
     return header + "\n".join(events) + "\n"
+
+
+def _rounded_box(width, height, radius):
+    """ASS vector path, independent of libass's platform-dependent box padding."""
+    r = min(radius, width / 2, height / 2)
+    k = r * .55228475
+    return (f'm {r:g} 0 l {width-r:g} 0 '
+            f'b {width-r+k:g} 0 {width:g} {r-k:g} {width:g} {r:g} '
+            f'l {width:g} {height-r:g} '
+            f'b {width:g} {height-r+k:g} {width-r+k:g} {height:g} {width-r:g} {height:g} '
+            f'l {r:g} {height:g} b {r-k:g} {height:g} 0 {height-r+k:g} 0 {height-r:g} '
+            f'l 0 {r:g} b 0 {r-k:g} {r-k:g} 0 {r:g} 0')
 
 
 class RenderTimeout(Exception):
@@ -216,7 +242,11 @@ class FastPathRenderer:
             f"duration {frames / fps:.12f}\n"
             for p, frames in inputs))
         ass = ws / "captions.ass"
-        ass.write_text(captions_ass(captions, fps, clock.get('caption_preset', 'words.v1')))
+        ass.write_text(captions_ass(captions, fps, clock.get('caption_preset', 'words.v1'), font_path=clock.get('font_path')))
+        if captions:
+            font_dir = ws / 'caption-fonts'
+            font_dir.mkdir(exist_ok=True)
+            (font_dir / 'caption.ttf').write_bytes(style.font_path(clock.get('font_path')).read_bytes())
         total = sum(f for _, f in inputs)
         tmp = ws / (final_name + ".pending.mp4")
         audio_args, filter_a = [], ""
@@ -240,7 +270,7 @@ class FastPathRenderer:
             filter_a += "anullsrc=r=48000:cl=mono[aout]"
         vf = (f"[0:v]setpts=N/({fps}*TB),scale={clock['width']}:"
               f"{clock['height']}:flags=bicubic,setsar=1"
-              + (",subtitles=captions.ass" if captions else "")
+              + (",subtitles=captions.ass:fontsdir=caption-fonts" if captions else "")
               + "[v]")
         boundaries=[sum(n for _,n in inputs[:i])/fps for i in range(len(inputs))]
         argv = (["ffmpeg", "-v", "error", "-y", "-copyts",

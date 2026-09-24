@@ -29,12 +29,13 @@ class FakeHypit:
         Path(dest).parent.mkdir(parents=True, exist_ok=True)
         Path(dest).write_text(json.dumps({
             "format": "hypit.transcript@1", "source": str(src),
-            "language": language, "audio_seconds": 3.0,
-            "passages": [{"text": "dog ball", "start_seconds": 0.0,
+            "language": "en" if language == "auto" else language, "audio_seconds": 3.0,
+            "diarization": {"policy": "whisperx-pyannote.v1", "status": "complete", "speakers": ["SPEAKER_00"]},
+            "passages": [{"text": "dog ball", "speaker": "SPEAKER_00", "start_seconds": 0.0,
                           "end_seconds": 1.0, "words": [
-                    {"text": "dog", "start_seconds": 0.0,
+                    {"text": "dog", "speaker": "SPEAKER_00", "speaker_status": "assigned", "start_seconds": 0.0,
                      "end_seconds": 0.4},
-                    {"text": "ball", "start_seconds": 0.5,
+                    {"text": "ball", "speaker": "SPEAKER_00", "speaker_status": "assigned", "start_seconds": 0.5,
                      "end_seconds": 1.0}]}]}))
         return type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
     def tiles(self, src, dest_dir, every, transcript=None, start=None,
@@ -329,3 +330,28 @@ def test_caption_clock_accepts_fractional_frame_rate():
     from modules.factory.rendering.ffmpeg_fast import captions_ass
     text=captions_ass([{'start_frame':30,'end_frame':60,'text':'Visible words'}],30.0)
     assert 'Dialogue: 0,0:00:01.00,0:00:02.00,' in text
+
+
+def test_metadata_only_revision_preserves_valid_branch_inputs(application):
+    s, _, act, _, _ = application
+    prepare(application)
+    before = {k: s.experiments._variant('fixture-exp', k).to_dict() for k in 'BCD'}
+    response = act('patch', '/api/experiments/fixture-exp/draft', {'reason':'Audit note'}, rev=1)
+    assert response.status_code == 200, response.text
+    for key, old in before.items():
+        current = s.experiments._variant('fixture-exp', key)
+        assert current.experiment_revision == 2 and not current.stale_reason
+        for field in ('segments','hypothesis','changed_factor','primary_metric','allowed_fields','dependent_fields'):
+            assert getattr(current, field) == old[field]
+
+
+def test_metadata_note_does_not_clear_branches_staled_by_content_edit(application):
+    s, _, act, _, _ = application
+    prepare(application)
+    response = act('patch', '/api/experiments/fixture-exp/draft',
+                   {'voice': {'id':'another-voice'}}, rev=1)
+    assert response.status_code == 200, response.text
+    assert s.experiments._variant('fixture-exp', 'B').stale_reason
+    response = act('patch', '/api/experiments/fixture-exp/draft', {'reason':'Audit note'}, rev=2)
+    assert response.status_code == 200, response.text
+    assert s.experiments._variant('fixture-exp', 'B').stale_reason == 'control_revised'

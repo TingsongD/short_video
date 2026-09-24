@@ -270,7 +270,7 @@ def test_populated_v7_migration_preserves_intents_and_allows_distinct_explicit_w
     current.close()
 
 
-def test_process_concurrency_holds_five_jimeng_one_vertex_after_worker_death(application):
+def test_process_concurrency_holds_five_jimeng_four_vertex_after_worker_death(application):
     s,c,act,w,root=application;body,_=prepare(application,6);catalog(s,root)
     s.providers['google_vertex']=DiskGeneration(root,'google_vertex')
     CapabilityCatalog(s.db).put(CapabilitySnapshot(schema_version='capability_snapshot.v1',id=snapshot_id('google_vertex','fixture-fast','','text'),created_at=datetime.now(timezone.utc).isoformat(),provider='google_vertex',model='fixture-fast',input_mode='text',support='observed',capabilities=s.providers['google_vertex'].capabilities('fixture-fast'),valid_until=(datetime.now(timezone.utc)+timedelta(hours=1)).isoformat()))
@@ -294,15 +294,15 @@ def test_process_concurrency_holds_five_jimeng_one_vertex_after_worker_death(app
     w.tick();w.tick()  # persist both DAGs before starting workers
     (root/'hold-remote').touch();children=[worker(root) for _ in range(6)]
     try:
-        wait_for(root,lambda:len(list((root/'fake-generation').glob('*.json')))==5 and len(list((root/'fake-vertex').glob('*.json')))==1)
+        wait_for(root,lambda:len(list((root/'fake-generation').glob('*.json')))==5 and len(list((root/'fake-vertex').glob('*.json')))==4)
         for p in children:p.kill();p.wait(timeout=5)
         time.sleep(1.2)
         children=[worker(root)]
         time.sleep(1.5)
         snapshot=s.scheduler.status_snapshot()['capacities']
-        assert snapshot['jimeng_submit']['used']==5 and snapshot['vertex_submit']['used']==1
+        assert snapshot['jimeng_submit']['used']==5 and snapshot['vertex_submit']['used']==4
         assert len(list((root/'fake-generation').glob('*.json')))==5
-        assert len(list((root/'fake-vertex').glob('*.json')))==1
+        assert len(list((root/'fake-vertex').glob('*.json')))==4
         (root/'hold-remote').unlink()
         wait_for(root,lambda:s.db.conn.execute("SELECT count(*) FROM attempts WHERE status='downloaded'").fetchone()[0]==12)
         assert len(list((root/'fake-generation').glob('*.json')))==6

@@ -94,7 +94,7 @@ EXPECTED = {
     "F05-M02": "aggregate cap blocks despite sublimit; credits never pay USD",
     "F05-M03": "ambiguous hold survives restart; no phantom headroom",
     "F05-M04": "edited plan / stale quote block; exact authorized revision proceeds",
-    "F06-M01": "global 5/1/1 across workers; completion releases slot; deps promote",
+    "F06-M01": "global 5/4/1 across workers; completion releases slot; deps promote",
     "F06-M02": "pause stops new dispatch; accepted work still observed/collected",
     "F06-M03": "replacement reclaims; stale fencing rejected; no duplicate op",
     "F06-M04": "disk pressure + vertex throttle block selectively; collection continues",

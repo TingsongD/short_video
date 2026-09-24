@@ -3,7 +3,7 @@ from ..domain.errors import ContractError
 from ..providers.recovery import credential_recovery
 
 
-def runtime_ready(services):
+def runtime_ready(services, *, capacity_pool='dispatch'):
     if services.config.get('mode') != 'live':
         return
     health = services.health()['worker']
@@ -11,7 +11,7 @@ def runtime_ready(services):
         raise ContractError('worker_unavailable', 'worker', 'Start the worker and wait for its heartbeat, then try again.')
     if health['paused'] or health['draining']:
         raise ContractError('queue_paused', 'worker', 'Resume the queue before starting this run.')
-    capacity = services.scheduler.status_snapshot()['capacities'].get('dispatch') or {}
+    capacity = services.scheduler.status_snapshot()['capacities'].get(capacity_pool) or {}
     if capacity.get('used', 0) >= capacity.get('limit', 1):
         raise ContractError('queue_capacity_full', 'worker', 'Wait for active work or reconcile unknown operations; do not blindly retry.')
 
@@ -20,6 +20,13 @@ def provider_ready(services, provider, *, run_id=None):
     if services.config.get('mode') != 'live':
         return None
     adapter = services.providers.get(provider)
+    guard = getattr(adapter, 'require_qualification', None)
+    if callable(guard):
+        try:
+            guard()
+        except Exception:
+            return ('pause', 'qualification_expired', provider + ': qualification is no longer current.',
+                    'Requalify the route before resuming new work.')
     acceptance_run=getattr(adapter,'acceptance_run_id',None)
     if acceptance_run and acceptance_run!=run_id:
         return ('pause','flashcut_acceptance_scope_mismatch',provider+': qualification is limited to another run.',

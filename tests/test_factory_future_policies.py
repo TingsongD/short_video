@@ -122,3 +122,49 @@ def test_resume_cannot_drop_or_adopt_another_runs_guardrail(application):
         'add_budget_ids': [foreign]})
     assert adopted.status_code == 400
     assert adopted.json()['error'] == 'budget_not_selectable'
+
+
+def test_explicit_run_budget_raise_preserves_ambiguous_costs(application):
+    s, _, act, _, root = stack(application)
+    run = launch(act, make_seed(act, root))
+    saved = s.autorun.get(run['id'])
+    saved.status = 'paused'
+    s.autorun._put(saved)
+    bid = saved.params['spending_policy']['budget_id']
+    ledger = BudgetService(s.db)
+    hold = ledger.reserve('approved-raise-hold', [(bid, 34_000_000)])
+    ledger.mark_ambiguous(hold)
+    body = {'ceiling': 200_000_000, 'expected_ceiling': 50_000_000,
+            'reviewer': 'operator', 'evidence': 'Explicit cumulative $200 approval'}
+    response = act('post', f"/api/autoruns/{run['id']}/budget", body)
+    assert response.status_code == 200, response.text
+    assert response.json()['committed'] == 34_000_000
+    assert ledger.available(bid) == 166_000_000
+    assert s.autorun.detail(run['id'])['spending_policy']['cap_amount'] == 200_000_000
+    assert s.db.conn.execute('SELECT status FROM reservations WHERE id=?', (hold,)).fetchone()[0] == 'ambiguous'
+    with pytest.raises(ContractError, match='stale_budget_ceiling'):
+        s.autorun.raise_budget(run['id'], body)
+    with pytest.raises(ContractError, match='run_guardrail_mismatch'):
+        ledger.create_budget(bid, 'usd_micros', 'experiment', run['id'], 250_000_000)
+    with s.db.uow() as u:
+        u.conn.execute('UPDATE budgets SET cap_amount=250000000 WHERE id=?', (bid,))
+    with pytest.raises(ContractError, match='run_guardrail_mismatch'):
+        ledger.available(bid)
+
+
+@pytest.mark.parametrize('patch', [
+    {'reviewer': ''}, {'evidence': ''}, {'ceiling': True},
+    {'expected_ceiling': 49_000_000}, {'ceiling': 50_000_000},
+])
+def test_run_budget_raise_rejects_invalid_authority_without_changes(application, patch):
+    s, _, act, _, root = stack(application)
+    run = launch(act, make_seed(act, root))
+    saved = s.autorun.get(run['id'])
+    saved.status = 'paused'
+    s.autorun._put(saved)
+    body = {'ceiling': 200_000_000, 'expected_ceiling': 50_000_000,
+            'reviewer': 'operator', 'evidence': 'Explicit cumulative approval', **patch}
+    with pytest.raises(ContractError):
+        s.autorun.raise_budget(run['id'], body)
+    assert s.autorun.detail(run['id'])['spending_policy']['cap_amount'] == 50_000_000
+    assert not s.db.conn.execute("SELECT 1 FROM events WHERE type='run_budget_raised'").fetchone()

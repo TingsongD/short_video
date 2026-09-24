@@ -22,6 +22,20 @@ preview/render services, verify its ports are free, and return the Drive link.
 The user's standing authorization covers these completion steps; apply this rule
 also when using the single-builder workflow instead of the legacy swarm below.
 
+## Standing budget approval
+
+As authorized by the user on 2026-09-23, factory budgets up to and including **US$200**
+are approved by default for requested work. Agents may create and authorize
+these budgets and proceed without another confirmation, recording this standing
+authorization as the approval source. Keep runtime funding selection, cost
+tracking, and budget enforcement in place.
+
+Apply the ceiling to the complete requested task, including retries and pending
+cost holds; do not split work or reset budgets to bypass an existing cumulative
+limit. Budgets above US$200 require explicit approval unless already granted.
+The current seed `l0mEEJPDl1A` QA loop has an approved aggregate cap
+of **US$200 plus 9,000 ElevenLabs credits** across all runs and retries.
+
 ## Ownership map (Wave 1 — parallel)
 
 | Agent | Modules | You own (write access) | Fixtures you consume |

@@ -73,7 +73,7 @@ def from_analysis(analysis, beats):
     return validate_context({'version': VERSION, 'roles': [], 'scenes': scenes, 'evidence_quality': 'roles_unavailable'}, [b.id for b in beats])
 
 
-def scene_request(context, beat_id, variant, settings):
+def scene_request(context, beat_id, variant, settings, *, visual_event=''):
     scene = next((s for s in context['scenes'] if s['beat_id'] == beat_id), None)
     if scene is None or variant not in LOOKS:
         raise ContractError('creative_context_invalid', 'scene/variant')
@@ -84,6 +84,13 @@ def scene_request(context, beat_id, variant, settings):
         + ' Intentional transition: ' + scene['allowed_transition'] + '. ' + LOOKS[variant]
         + ' Keep each recurring role consistent with its own references, allowing the declared wardrobe and scene changes.'
         + ' No superimposed subtitles, captions, title cards, decorative lettering, logos or watermarks. Captions are added later.')
+    # Scene context describes the location/cast; it must not erase the beat's
+    # action. Keep source overlay directions out of generated footage.
+    clauses = re.split(r'(?<=[.;])\s+|\n', str(visual_event))
+    action = ' '.join(s for s in clauses if not re.search(
+        r'\b(caption|subtitle|watermark|overlay|on-screen text)\b', s, re.I)).strip()
+    if action:
+        prompt += ' Required visible action for this beat: ' + action
     if scene['environmental_text']:
         prompt += ' Physical environmental text may remain: ' + '; '.join(scene['environmental_text'])
     return {'kind': 'video', 'mode': 't2v', 'prompt': prompt, 'settings': dict(settings),

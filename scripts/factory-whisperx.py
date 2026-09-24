@@ -1,7 +1,7 @@
 """Repository-owned entrypoint for the pinned WhisperX serviceCommand.
 
 Run with the existing managed WhisperX environment, preserving its installation.
-Only startup/logging is wrapped; the provider protocol and engine are unchanged.
+The installed engine supplies STT/alignment; our extension adds pyannote turns.
 """
 import argparse
 import os
@@ -23,8 +23,13 @@ def main():
     from modules.factory.diagnostics import console_logging
     folder = ROOT / '.run'; folder.mkdir(exist_ok=True)
     with console_logging(folder, 'whisperx'):
-        from hypit_whisperx_service.__main__ import main as serve
-        serve()
+        from hypit_whisperx_service.config import ServiceConfig
+        from hypit_whisperx_service.engine import WhisperXEngine
+        from hypit_whisperx_service.application import WhisperXApplication
+        from hypit_whisperx_service.server import serve
+        from modules.factory.analysis.whisperx_speakers import SpeakerEngine
+        config = ServiceConfig.from_environment()
+        serve(WhisperXApplication(config, SpeakerEngine(WhisperXEngine(config), ROOT)))
 
 
 if __name__ == '__main__':

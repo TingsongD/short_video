@@ -261,7 +261,7 @@ class ProductionService:
     def run_next(self):
         """Claim one ready dispatch job and execute its node handler.
         Returns the node outcome or None."""
-        job = self.scheduler.claim("collect") or self.scheduler.claim()
+        job = self.scheduler.claim_next()
         if job is None:
             return None
         plan_id, key = job["logical_key"].split(":", 1)

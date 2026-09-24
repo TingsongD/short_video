@@ -17,10 +17,15 @@ def prepare(autorun,run):
         return None
     adapter=s.providers.get('audiovisual_analysis_flashcut')
     if not adapter:raise ContractError('flashcut_route_unavailable','editorial')
-    request={'task':'plan_flashcut_edits','model':adapter.model,'prompt_version':'flashcut_editorial.v1',
+    legacy_tag='editorial_'+content_hash(binding)[:16]
+    legacy=bool(run.state.get(legacy_tag+'_jobs'))
+    request={'task':'plan_flashcut_edits','model':adapter.model,
+        'prompt_version':'flashcut_editorial.v1' if legacy else 'flashcut_editorial.v2',
         'limits':ROUTE_LIMITS,'binding':evidence,'editorial_binding':binding,'editorial_input':inputs,
         'understanding':experiment.packaging['flashcut_editorial']['understanding']}
-    tag='editorial_'+content_hash(binding)[:16]
+    if not legacy:
+        request['output_policy']='flashcut_output.v2'
+    tag=legacy_tag if legacy else 'editorial_v2_'+content_hash(binding)[:16]
     result=autorun._run_effect(run,'analysis',adapter.name,adapter.model,[request],tag)
     if result!='wait':return result
     result=autorun._jobs(run,run.state[tag+'_jobs'],'editorial_planning_failed')
@@ -35,7 +40,7 @@ def prepare(autorun,run):
     run.state['editorial_plan_origin'] = origin
     if output.get('editorial_recovery'):
         run.notes.append(
-            'Editorial provider response was complete but invalid; '
+            'Editorial provider response was capped or invalid; '
             'a deterministic conservative plan preserved source-bound cuts. '
             'No extra provider request was submitted.')
         run.state['editorial_recovery'] = output['editorial_recovery']

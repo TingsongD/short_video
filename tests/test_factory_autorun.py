@@ -400,15 +400,16 @@ class Hypit9:
         for i, text in enumerate(("watch this dog", "he runs so fast",
                                   "good boy wins")):
             passages.append({
-                "text": text, "start_seconds": i * 3.0,
+                "text": text, "speaker": "SPEAKER_00", "start_seconds": i * 3.0,
                 "end_seconds": (i + 1) * 3.0,
-                "words": [{"text": w, "start_seconds": i * 3.0 + j,
-                           "end_seconds": i * 3.0 + j + 0.8}
+                "words": [{"text": w, "speaker": "SPEAKER_00", "speaker_status": "assigned",
+                           "start_seconds": i * 3.0 + j * 3 / len(text.split()),
+                           "end_seconds": i * 3.0 + (j + .8) * 3 / len(text.split())}
                           for j, w in enumerate(text.split())]})
         Path(dest).write_text(json.dumps({
             "format": "hypit.transcript@1", "source": str(src),
-            "language": language, "audio_seconds": 9.0,
-            "passages": passages}))
+            "language": "en" if language == "auto" else language, "audio_seconds": 9.0,
+            "passages": passages, "diarization": {"policy": "whisperx-pyannote.v1", "status": "complete", "speakers": ["SPEAKER_00"]}}))
         return type("R", (), {"returncode": 0, "stdout": "",
                               "stderr": ""})()
 
@@ -627,16 +628,16 @@ class HypitMany(Hypit9):
             text = f"source line {i}"
             step = (end - start) / len(text.split())
             passages.append({
-                "text": text, "start_seconds": start,
+                "text": text, "speaker": "SPEAKER_00", "start_seconds": start,
                 "end_seconds": end,
-                "words": [{"text": w,
+                "words": [{"text": w, "speaker": "SPEAKER_00", "speaker_status": "assigned",
                            "start_seconds": start + j * step,
                            "end_seconds": start + (j + 1) * step - 0.02}
                           for j, w in enumerate(text.split())]})
         Path(dest).write_text(json.dumps({
             "format": "hypit.transcript@1", "source": str(src),
-            "language": language, "audio_seconds": self._seconds,
-            "passages": passages}))
+            "language": "en" if language == "auto" else language, "audio_seconds": self._seconds,
+            "passages": passages, "diarization": {"policy": "whisperx-pyannote.v1", "status": "complete", "speakers": ["SPEAKER_00"]}}))
         return type("R", (), {"returncode": 0, "stdout": "",
                               "stderr": ""})()
 

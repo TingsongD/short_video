@@ -135,3 +135,51 @@ def test_native_hypit_real_render_without_speech_requests(stack,size,total_frame
     finally:
         cleanup=subprocess.run([str(LAUNCHER),'runtime','down','--workspace',str(source.parent),'--json'],capture_output=True,text=True,timeout=45)
         assert cleanup.returncode==0, 'Fixture-owned Hypit cleanup could not be verified'
+
+
+def test_sustained_reframe_passes_native_check_with_fixed_sampling(stack):
+    from modules.factory.composition.gate import HypitGate
+    clips,premix,native,captions=native_fixture(stack)
+    clips[0]['reframe_zoom']=1.12
+    result=stack[2].compile('reframe','fixture','A','plan',clips,captions,
+        dict(fps=30,fps_num=30,fps_den=1,width=180,height=320,total_frames=30,caption_preset='phrases.v1'),
+        renderer_policy='hypit_primary.v1',premix=premix,native_editorial=native,now='2026-09-23T00:00:00Z')
+    assert result['diagnostics']==[]
+    source=Path(result['files']['video.svml']).read_text()
+    assert '<media:Sampling at="start" zoom="1.12"/>' in source
+    assert '<media:Sampling at="end" zoom="1.12"/>' in source
+    check=HypitGate().check(Path(result['files']['render.svrun']))
+    assert check['ok'],check
+
+
+def test_fixed_reframe_changes_pixels_only_during_authored_shot(stack):
+    from modules.factory.rendering.hypit_build import HypitBuildRunner, LAUNCHER
+    from modules.factory.studio.launcher import prepare_local
+    clips,premix,native,captions=native_fixture(stack)
+    striped=stack[3]/'stripe.mp4'
+    subprocess.run(['ffmpeg','-v','error','-f','lavfi','-i','color=c=red:s=180x320:r=30:d=1',
+        '-vf','drawbox=x=0:y=0:w=10:h=ih:color=blue:t=fill','-c:v','libx264','-pix_fmt','yuv420p',str(striped)],check=True)
+    art=stack[1].intake_bytes(striped.read_bytes(),provenance='manual',source_key='stripe',requested_kind='video')
+    for clip in (clips[0],clips[2]):
+        clip.update(artifact_id=art.id,sha256=art.sha256)
+    clips[0]['reframe_zoom']=1.12
+    result=stack[2].compile('pixel-reframe','fixture','A','plan',clips,captions,
+        dict(fps=30,fps_num=30,fps_den=1,width=180,height=320,total_frames=30,caption_preset='phrases.v1'),
+        renderer_policy='hypit_primary.v1',premix=premix,native_editorial=native,now='2026-09-23T00:00:00Z')
+    source=Path(result['files']['render.svrun']);prepare_local(source.parent)
+    runner=HypitBuildRunner()
+    try:
+        build=runner.submit(source);deadline=time.monotonic()+180
+        while time.monotonic()<deadline:
+            state=runner.observe(build['build_id'],build['workspace'])
+            if state['status'] in ('succeeded','failed'):break
+            time.sleep(.5)
+        assert state['status']=='succeeded',state
+        output=runner.retrieve(build['build_id'],'final.video',stack[3]/'reframe.mp4',build['workspace'])
+        pixels=subprocess.check_output(['ffmpeg','-v','error','-i',str(output),'-vf','crop=2:2:4:4',
+            '-f','rawvideo','-pix_fmt','rgb24','-'])
+        red=[i for i in range(30) if pixels[i*12]>pixels[i*12+2]+100]
+        assert red==list(range(14)),red
+    finally:
+        cleanup=subprocess.run([str(LAUNCHER),'runtime','down','--workspace',str(source.parent),'--json'],capture_output=True,text=True,timeout=45)
+        assert cleanup.returncode==0

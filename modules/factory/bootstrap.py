@@ -25,10 +25,18 @@ from .services.app import FactoryServices
 def bootstrap(root, *, providers=None, drive=None, settings=None,publisher=None,analytics_client=None):
     root=Path(root).resolve(); data=data_root(root); data.mkdir(parents=True,exist_ok=True)
     config=load_config(root)['values']
-    settings={**{'mode':config.get('FACTORY_EXECUTION_MODE','offline'), 'drive_folder_id':config.get('DRIVE_FOLDER_ID','')}, **(settings or {})}
+    settings={**{'mode':config.get('FACTORY_EXECUTION_MODE','offline'), 'drive_folder_id':config.get('DRIVE_FOLDER_ID',''),
+                 'vertex_concurrency':config.get('FACTORY_VERTEX_CONCURRENCY','4')}, **(settings or {})}
     if settings['mode'] not in ('offline','live'):
         from .domain.errors import ContractError
         raise ContractError('invalid_execution_mode','mode')
+    concurrency = settings['vertex_concurrency']
+    if isinstance(concurrency, str) and concurrency.isascii() and concurrency.isdecimal():
+        concurrency = int(concurrency)
+    if type(concurrency) is not int or not 0 <= concurrency <= 16:
+        from .domain.errors import ContractError
+        raise ContractError('invalid_vertex_concurrency','FACTORY_VERTEX_CONCURRENCY','expected an integer from 0 to 16')
+    settings['vertex_concurrency'] = concurrency
     db=Database(data/'factory.db'); artifacts=ArtifactStore(data/'artifacts',db)
     if providers is None and drive is None:
         from .providers.configured import configured_adapters
@@ -38,6 +46,7 @@ def bootstrap(root, *, providers=None, drive=None, settings=None,publisher=None,
     providers={**extra_providers,**(providers or {})};publisher=publisher or configured_publisher;analytics_client=analytics_client or configured_analytics
     settings={**extra_settings,**settings}
     seeds=SeedRegistry(db); scheduler=Scheduler(db); executor=Executor(db)
+    scheduler.configure_vertex_concurrency(concurrency)
     registry=ResourceRegistry(db); cleanup=CleanupService(registry)
     services=FactoryServices(db,seeds=seeds,experiments=ExperimentService(db),scheduler=scheduler,
         artifacts=artifacts,executor=executor,providers=providers,
@@ -62,7 +71,8 @@ def bootstrap(root, *, providers=None, drive=None, settings=None,publisher=None,
     from .analysis.deep import ReferenceAnalysisService, HypitTransport
     services.ref_analysis=ReferenceAnalysisService(
         db,seeds,artifacts,data/'analysis-projects',
-        HypitTransport(root/'scripts'/'hypit.sh'))
+        HypitTransport(root/'scripts'/'hypit.sh',
+            local_url=settings.get('source_timing_local_url', 'http://127.0.0.1:8765')))
     from .analysis.source_evidence import SourceEvidenceService, binding_from_db
     from .services.source_work import SourceEvidenceWork
     services.source_evidence = SourceEvidenceService(db, data/'source_evidence',

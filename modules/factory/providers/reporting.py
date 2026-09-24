@@ -11,6 +11,7 @@ class ReportingSetup(SynchronousAdapter):
         if request.get('report_type')!='channel_reach_basic_a1' or not request.get('name'):raise ContractError('invalid_report_setup','request')
         return {'kind':'usage_estimate','unit':'usd_micros','amount':0,'reserve_amount':0,'rate_basis':'Reporting job configuration: no provider usage charge; explicit account authorization required','valid_until':(datetime.now(timezone.utc)+timedelta(hours=1)).isoformat()}
     def execute(self,request):
+        self.require_qualification()
         job=self.client.create_reach_job(request['name'])
         return {'job':job},None,{'actual_usd_micros':0}
     def reconcile(self,operation_id=None,request_hash=None):

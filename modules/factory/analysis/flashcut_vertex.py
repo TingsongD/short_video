@@ -62,13 +62,73 @@ def _covered_by_windows(start, end, windows):
     return False
 
 
+def _cut_frame_bracket(item, media, point):
+    """Represent a point cut by its cited adjacent source-frame sample times.
+
+    This is an evidence interval, not a synthetic duration of the cut. Permit
+    only millisecond rounding of the after-frame time, and retain both clocks.
+    Media IDs and sample times have already been bound to source evidence by
+    request preparation; no frame rate is assumed here.
+    """
+    frames = {}
+    for identifier in set(item['evidence_ids']):
+        match = re.fullmatch(r'frame:(0|[1-9][0-9]*)', identifier)
+        if match and media[identifier]['kind'] == 'image':
+            frames[int(match[1])] = media[identifier]
+    matches = []
+    for index, after in frames.items():
+        before = frames.get(index - 1)
+        if before is None:
+            continue
+        lo, hi = Fraction(before['source_time']), Fraction(after['source_time'])
+        if lo < hi and lo < point and abs(hi - point) <= Fraction(1, 2000):
+            matches.append((lo, hi, {'version': 'cut_frame_bracket.v1',
+                'reported_source_time': str(point),
+                'before_frame_id': before['id'], 'after_frame_id': after['id'],
+                'before_source_time': str(lo), 'after_source_time': str(hi)}))
+    if len(matches) != 1:
+        raise ValueError()
+    return matches[0]
+
+
+def _rounded_window_boundary(point, windows):
+    """Recover a supplied boundary from centisecond/millisecond reporting."""
+    if (point * 1000).denominator != 1:
+        return point
+    tolerance = Fraction(1, 200) if (point * 100).denominator == 1 else Fraction(1, 2000)
+    matches = {Fraction(w[key]) for w in windows for key in ('source_start', 'source_end')
+               if abs(Fraction(w[key]) - point) <= tolerance}
+    return next(iter(matches)) if len(matches) == 1 else point
+
+
 def validate_observations(value,request):
     try:
         if not isinstance(value,dict) or not isinstance(value['observations'],list) or len(value['observations'])>256:
             raise ValueError()
         gaps=value.get('coverage_gaps', [])
-        if not isinstance(gaps, list) or gaps:
+        if not isinstance(gaps, list):
             raise ValueError()
+        if gaps:
+            # Window requests do not own the rest of the source. Preserve
+            # explicit external gaps without treating them as covered footage.
+            if request.get('scope') != 'window' or request.get('response_contract') != 'flashcut_compact.v2':
+                raise ValueError()
+            windows = [m for m in request['media'] if m['kind'] == 'video']
+            duration = Fraction(request['context']['source_duration'])
+            if not windows:
+                raise ValueError()
+            for gap in gaps:
+                if (not isinstance(gap, dict) or set(gap) != {'start_s', 'end_s'}
+                        or any(type(gap[k]) not in (int, float) or not math.isfinite(gap[k])
+                               for k in ('start_s', 'end_s'))):
+                    raise ValueError()
+                lo, hi = Fraction(str(gap['start_s'])), Fraction(str(gap['end_s']))
+                lo = _rounded_window_boundary(lo, windows)
+                hi = _rounded_window_boundary(hi, windows)
+                if not 0 <= lo < hi <= duration or any(
+                        lo < Fraction(w['source_end']) and hi > Fraction(w['source_start'])
+                        for w in windows):
+                    raise ValueError()
         media={m['id']:m for m in request['media']}
         candidates={c['id'] for c in request.get('context',{}).get('candidates',[])}
         missing=value['essential_missing']
@@ -91,6 +151,19 @@ def validate_observations(value,request):
             seen.add(item['id'])
             basis=item['time_basis']
             start,end=Fraction(str(item['start_s'])),Fraction(str(item['end_s']))
+            bracket = {}
+            if (basis == 'source' and start < end and request.get('scope') == 'window'
+                    and request.get('response_contract') == 'flashcut_compact.v2'):
+                cited_windows = [media[i] for i in item['evidence_ids'] if media[i]['kind'] == 'video']
+                measured_start = _rounded_window_boundary(start, cited_windows)
+                measured_end = _rounded_window_boundary(end, cited_windows)
+                if (measured_start, measured_end) != (start, end):
+                    bracket['reported_source_interval'] = {'start_s': item['start_s'], 'end_s': item['end_s']}
+                    start, end = measured_start, measured_end
+            if (start == end and basis == 'source' and item['kind'] == 'cut'
+                    and request.get('response_contract') == 'flashcut_compact.v2'):
+                start, end, measured = _cut_frame_bracket(item, media, start)
+                bracket = {'cut_frame_bracket': measured}
             if basis!='source':
                 window=media.get(basis)
                 if not window or window['kind']!='video' or basis not in item['evidence_ids']:
@@ -106,8 +179,10 @@ def validate_observations(value,request):
                 if not _covered_by_windows(start, end, windows):
                     raise ValueError()
             observations.append({**item,'start_s':float(start),'end_s':float(end),'time_basis':'source',
-                                 'original_time_basis':basis})
+                                 'original_time_basis':basis, **bracket})
         result={'observations':observations,'essential_missing':list(dict.fromkeys(missing))}
+        if gaps:
+            result['out_of_scope_coverage_gaps'] = deepcopy(gaps)
         if request['scope']=='clarification' and not observations and not missing:
             raise ValueError()
         if request.get('structured_clarification', {}).get('original_scope', request['scope'])=='whole':
@@ -138,6 +213,45 @@ def validate_observations(value,request):
         return result
     except (KeyError,TypeError,ValueError,ZeroDivisionError,ContractError):
         raise ProviderError('malformed_flashcut_analysis') from None
+
+
+def validate_provisional_gaps(value, request):
+    """Validate all observations while preserving unresolved structured gaps."""
+    if not isinstance(value,dict):
+        raise ContractError('flashcut_gap_recovery_unavailable','response')
+    missing=value.get('essential_missing')
+    gaps=value.get('coverage_gaps')
+    if (not isinstance(missing,list) or len(missing)>256
+            or any(not isinstance(item,str) for item in missing)):
+        raise ContractError('flashcut_gap_recovery_unavailable','essential_missing')
+    if not isinstance(gaps,list) or not 1<=len(gaps)<=32:
+        raise ContractError('flashcut_gap_recovery_unavailable','coverage_gaps')
+    duration=Fraction(request['context']['source_duration'])
+    ranges=[]
+    for item in gaps:
+        if not isinstance(item,dict) or set(item)!={'start_s','end_s'}:
+            raise ContractError('flashcut_gap_recovery_unavailable','coverage_gaps')
+        start_value,end_value=item['start_s'],item['end_s']
+        if (isinstance(start_value,bool) or isinstance(end_value,bool)
+                or type(start_value) not in (int,float,str) or type(end_value) not in (int,float,str)
+                or (isinstance(start_value,float) and not math.isfinite(start_value))
+                or (isinstance(end_value,float) and not math.isfinite(end_value))):
+            raise ContractError('flashcut_gap_recovery_unavailable','range')
+        try:
+            start,end=Fraction(str(start_value)),Fraction(str(end_value))
+        except (ValueError, ZeroDivisionError):
+            raise ContractError('flashcut_gap_recovery_unavailable','range') from None
+        if not 0<=start<end<=duration:
+            raise ContractError('flashcut_gap_recovery_unavailable','range')
+        ranges.append({'start_s':str(start),'end_s':str(end)})
+    # Every original observation still passes the exact ID/coverage/type
+    # checks. Never turn a malformed observation into accepted evidence.
+    checked={k:v for k,v in value.items() if k!='coverage_gaps'}
+    result=validate_observations({**checked,'essential_missing':[]},request)
+    result.update(scope=request['scope'],binding=request['binding'],essential_missing=['source'],
+        coverage_gap_recovery={'version':'coverage_gap_recovery.v2','original_essential_missing':list(missing),
+                               'claimed_ranges':ranges,'status':'requires_source_clarification'})
+    return result
 
 
 class FlashcutAnalyzer(VertexAnalyzer):
@@ -216,40 +330,7 @@ class FlashcutAnalyzer(VertexAnalyzer):
         if hashlib.sha256(saved).hexdigest()!=proof['saved_response_sha256']:
             raise ContractError('flashcut_response_unproven','saved_response_changed')
         value=self._response_content(json.loads(saved)['response'])
-        if not isinstance(value,dict):
-            raise ContractError('flashcut_gap_recovery_unavailable','response')
-        missing=value.get('essential_missing')
-        gaps=value.get('coverage_gaps')
-        if (not isinstance(missing,list) or len(missing)>256
-                or any(not isinstance(item,str) for item in missing)):
-            raise ContractError('flashcut_gap_recovery_unavailable','essential_missing')
-        if not isinstance(gaps,list) or not 1<=len(gaps)<=32:
-            raise ContractError('flashcut_gap_recovery_unavailable','coverage_gaps')
-        duration=Fraction(request['context']['source_duration'])
-        ranges=[]
-        for item in gaps:
-            if not isinstance(item,dict) or set(item)!={'start_s','end_s'}:
-                raise ContractError('flashcut_gap_recovery_unavailable','coverage_gaps')
-            start_value,end_value=item['start_s'],item['end_s']
-            if (isinstance(start_value,bool) or isinstance(end_value,bool)
-                    or type(start_value) not in (int,float,str) or type(end_value) not in (int,float,str)
-                    or (isinstance(start_value,float) and not math.isfinite(start_value))
-                    or (isinstance(end_value,float) and not math.isfinite(end_value))):
-                raise ContractError('flashcut_gap_recovery_unavailable','range')
-            try:
-                start,end=Fraction(str(start_value)),Fraction(str(end_value))
-            except (ValueError, ZeroDivisionError):
-                raise ContractError('flashcut_gap_recovery_unavailable','range') from None
-            if not 0<=start<end<=duration:
-                raise ContractError('flashcut_gap_recovery_unavailable','range')
-            ranges.append({'start_s':str(start),'end_s':str(end)})
-        # Every original observation still passes the exact ID/coverage/type
-        # checks. Never turn a malformed observation into accepted evidence.
-        checked={k:v for k,v in value.items() if k!='coverage_gaps'}
-        result=validate_observations({**checked,'essential_missing':[]},request)
-        result.update(scope=request['scope'],binding=request['binding'],essential_missing=['source'],
-            coverage_gap_recovery={'version':'coverage_gap_recovery.v2','original_essential_missing':list(missing),
-                                   'claimed_ranges':ranges,'status':'requires_source_clarification'})
+        result=validate_provisional_gaps(value,request)
         return {**proof,'result':result}
 
     def format_recovery_request(self,request,attempt_id):
@@ -307,6 +388,8 @@ class FlashcutAnalyzer(VertexAnalyzer):
             'max_output_tokens': 32768, 'thinking_level': 'MEDIUM'}}
 
     def _output_settings(self, request):
+        if request.get('output_policy') not in (None, 'flashcut_output.v2'):
+            raise ContractError('invalid_flashcut_request', 'output_policy')
         if request.get('response_contract')=='flashcut_compact.v2':
             if request.get('prompt_version')!='flashcut_understanding.v2':
                 raise ContractError('flashcut_recovery_mismatch','prompt_version')
@@ -316,7 +399,8 @@ class FlashcutAnalyzer(VertexAnalyzer):
                     if request!=self.format_recovery_request(proof['original_request'],proof['proof']['attempt_id']):raise ValueError()
                 except (KeyError,TypeError,ValueError):
                     raise ContractError('flashcut_recovery_mismatch','format_recovery') from None
-            elif request.get('scope')!='clarification':
+            elif (request.get('response_recovery') or request.get('structured_clarification')
+                    or request.get('scope')!='clarification' and request.get('output_policy')!='flashcut_output.v2'):
                 raise ContractError('flashcut_response_unproven','format_recovery')
             return 32768,'MEDIUM'
         if request.get('response_contract'):
@@ -334,6 +418,8 @@ class FlashcutAnalyzer(VertexAnalyzer):
             return 8192,'MEDIUM'
         repair = request.get('response_recovery')
         if repair is None:
+            if request.get('output_policy') == 'flashcut_output.v2':
+                return 32768, 'MEDIUM'
             return self.limits['output_tokens'], 'HIGH'
         original = {k: v for k, v in request.items() if k != 'response_recovery'}
         try:
@@ -503,13 +589,28 @@ Source context follows:\n'''
                 'valid_until':p.get('valid_until',''),'rate_basis':p.get('evidence','')}
 
     def execute(self,request):
+        self.require_qualification()
         if self.live and (current_effect.get() or {}).get('provider')!=self.name:
             raise RequestNotSent('authority_required')
         guard=getattr(self,'acceptance_guard',None)
         if guard:guard(request)
         parts,usage=self.prepared(request)
         output_tokens, thinking_level = self._output_settings(request)
-        parsed=self._generate(parts,response_schema=self._response_schema(request),max_output_tokens=output_tokens,thinking_level=thinking_level)
+        capped_proof = None
+        try:
+            parsed=self._generate(parts,response_schema=self._response_schema(request),max_output_tokens=output_tokens,thinking_level=thinking_level)
+        except ProviderError as error:
+            if request.get('task') != 'plan_flashcut_edits' or error.code != 'analysis_incomplete':
+                raise
+            # Only a persisted, exact-request HTTP200/MAX_TOKENS response
+            # proves completion. Never recover transport or safety failures.
+            from ..autorun.editorial_recovery import completed_editorial_response
+            try:
+                capped_proof = completed_editorial_response(
+                    self, request, (current_effect.get() or {}).get('attempt_id', ''))
+            except ContractError:
+                raise error from None
+            parsed = None
         if request.get('task')=='plan_flashcut_edits':
             from .editorial_planning import (conservative_editorial_response,
                                              validate_editorial_response)
@@ -526,7 +627,8 @@ Source context follows:\n'''
                                 '; deterministic fallback: ' +
                                 fallback.code + ': ' + fallback.detail)) from None
                 recovery = {'kind': 'deterministic_conservative.v1',
-                            'reason': error.code}
+                            'reason': 'analysis_incomplete' if capped_proof else error.code,
+                            **({'proof': capped_proof} if capped_proof else {})}
             return {'editorial':parsed,'binding':request['editorial_binding'],
                     'plan_origin':'local_conservative' if recovery else 'provider',
                     'request_limits':usage,
@@ -537,7 +639,8 @@ Source context follows:\n'''
     def _editorial_prepared(self,request):
         from .editorial_planning import PROMPT as EDIT_PROMPT
         from ..domain.records import content_hash
-        if (request.get('model')!=MODEL or request.get('prompt_version')!='flashcut_editorial.v1'
+        compact=request.get('prompt_version')=='flashcut_editorial.v2'
+        if (request.get('model')!=MODEL or request.get('prompt_version') not in ('flashcut_editorial.v1','flashcut_editorial.v2')
                 or request.get('limits')!=self.limits):
             raise ContractError('invalid_flashcut_request','editorial_route')
         self._evidence(request['binding'])
@@ -547,10 +650,25 @@ Source context follows:\n'''
         if (understanding['binding']!=request['binding'] or value['observations']!=understanding['observations']
                 or bound['understanding']!=request['understanding']['sha256'] or bound['input_sha256']!=content_hash(value)):
             raise ContractError('editorial_evidence_mismatch','binding')
-        text=EDIT_PROMPT+json.dumps(value,sort_keys=True)
+        if compact:
+            if request.get('output_policy')!='flashcut_output.v2':
+                raise ContractError('invalid_flashcut_request','editorial_output_policy')
+            wire=deepcopy(value)
+            for variant in wire['variants'].values():
+                for passage in variant['passages']:
+                    for key in ('artifact_id','sha256','speech_hash','alignment_hash'):
+                        passage.pop(key,None)
+            for observation in wire['observations']:
+                for key in ('original_time_basis','cut_frame_bracket'):
+                    observation.pop(key,None)
+            text=EDIT_PROMPT.replace('FLASHCUT_EDITORIAL_V1','FLASHCUT_EDITORIAL_V2',1)+json.dumps(
+                wire,sort_keys=True,separators=(',',':'),ensure_ascii=False)
+        else:
+            text=EDIT_PROMPT+json.dumps(value,sort_keys=True)
         if len(text.encode())>self.limits['context_bytes']:
             raise ContractError('flashcut_request_limit','editorial_context','The final-word and observation plan exceeds the qualified text envelope.')
         parts=[{'text':text}]
+        output_tokens,_=self._output_settings(request)
         return parts,{'images':0,'windows':0,'media_seconds':'0',
-            'payload_bytes':len(json.dumps(self._generation_payload(parts,self.limits['output_tokens'])).encode()),
-            'input_tokens_bound':len(text.encode()),'output_tokens_bound':self.limits['output_tokens']}
+            'payload_bytes':len(json.dumps(self._generation_payload(parts,output_tokens)).encode()),
+            'input_tokens_bound':len(text.encode()),'output_tokens_bound':output_tokens}

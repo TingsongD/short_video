@@ -75,11 +75,13 @@ class TestCapacity:
         assert snap["capacities"]["jimeng_submit"]["used"] == 5
         db.close()
 
-    def test_vertex_single_slot(self, sched):
-        sched.submit_plan([_job("v1", "generate_vertex"),
-                           _job("v2", "generate_vertex")])
-        assert sched.claim("dispatch")["id"] == "v1"
-        assert sched.claim("dispatch") is None
+    def test_vertex_four_slots_global(self, sched):
+        sched.submit_plan([_job(f"v{i}", "generate_vertex") for i in range(6)])
+        other = Scheduler(sched.db, worker_id="w2")
+        claimed = [(sched if i % 2 else other).claim() for i in range(4)]
+        assert len({job['id'] for job in claimed}) == 4
+        assert sched.claim() is None
+        assert other.claim() is None
 
     def test_render_single_slot_and_release(self, sched):
         sched.submit_plan([_job("r1", "render"), _job("r2", "render")])

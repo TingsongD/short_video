@@ -19,6 +19,23 @@ class FlashcutFormatRecovery:
     def __init__(self,auto):
         self.auto,self.s=auto,auto.s
 
+    def _proven_rejections(self,jid,request):
+        from ..execution.throttle import rejection
+        rows=list(self.s.db.conn.execute('SELECT * FROM attempts WHERE job_id=? ORDER BY attempt_seq',(jid,)))
+        if not rows or self.s.db.conn.execute('SELECT 1 FROM remote_holds WHERE job_id=?',(jid,)).fetchone():
+            raise ContractError('flashcut_response_unproven','rejected_request')
+        proofs=[]
+        for row in rows:
+            attempt={**json.loads(row['body']),**dict(row)}
+            if not isinstance(attempt.get('reservation_id'),str):
+                raise ContractError('flashcut_response_unproven','rejected_request')
+            stamp=rejection(self.s.db,attempt)
+            if not stamp or row['request_hash']!=wire_hash(request):
+                raise ContractError('flashcut_response_unproven','rejected_request')
+            proofs.append({'kind':'pre_acceptance_429','job_id':jid,'attempt_id':row['id'],
+                'request_hash':row['request_hash'],'reservation_id':attempt['reservation_id'],'rejected_at':stamp})
+        return proofs
+
     def _rejection(self,run):
         found=[]
         for index,request in run.state.get('flashcut_structure_repairs',{}).items():
@@ -33,6 +50,28 @@ class FlashcutFormatRecovery:
                     if event['type']=='submit_failed' and body.get('http_status')==400 and body.get('class')=='pre_acceptance':
                         found.append({'job_id':jid,'attempt_id':attempt['id'],'request_hash':attempt['request_hash'],
                                       'event_seq':event['seq'],'diagnostic_sha256':content_hash(body)})
+        if not found and run.state.get('flashcut_response_recovery'):
+            # A bound completed answer rejected by the strict validator is
+            # sufficient evidence. Do not buy an intermediate request merely
+            # to obtain a provider-side schema rejection.
+            prior=self.s.source_evidence.blobs.read(run.state['flashcut_response_recovery'])
+            adapter=self.s.providers['audiovisual_analysis_flashcut']
+            for jid,request in zip(run.state.get('flashcut_response_repair_jobs',[]),prior['requests']):
+                job=self.s.db.uow().jobs.get(jid)
+                if not job or job['status']!='failed':continue
+                attempts=list(self.s.db.conn.execute("SELECT * FROM attempts WHERE job_id=? AND status NOT IN ('failed','cancelled','succeeded')",(jid,)))
+                if not attempts:
+                    found.extend(self._proven_rejections(jid,request))
+                    continue
+                if (len(attempts)!=1 or attempts[0]['status']!='unknown' or attempts[0]['remote_id']
+                        or attempts[0]['request_hash']!=wire_hash(request)):
+                    raise ContractError('flashcut_response_unproven','format_recovery')
+                proof=adapter.inspect_saved_response(request,attempts[0]['id'],validate=False)
+                if proof['finish_reason']!='STOP':raise ContractError('flashcut_response_unproven','finish_reason')
+                try:
+                    adapter.inspect_saved_response(request,attempts[0]['id'])
+                except ProviderError:
+                    found.append({'kind':'completed_invalid_response','job_id':jid,'proof':proof})
         if not found:raise ContractError('flashcut_format_recovery_unproven','rejection')
         return found
 
@@ -60,13 +99,24 @@ class FlashcutFormatRecovery:
                 elif job and job['status']=='failed':
                     attempts=list(self.s.db.conn.execute('SELECT * FROM attempts WHERE job_id=?',(jid,)))
                     unfinished=[a for a in attempts if a['status'] not in ('failed','cancelled','succeeded')]
+                    if not unfinished:
+                        proofs=self._proven_rejections(jid,request)
+                        revised={k:deepcopy(v) for k,v in request.items() if k!='response_recovery'}
+                        revised.update(prompt_version='flashcut_understanding.v2',response_contract='flashcut_compact.v2',output_policy='flashcut_output.v2')
+                        saved.update(mode='correction',request_index=len(requests),job_id=jid,rejected_attempts=proofs)
+                        requests.append(revised)
+                        entries.append(saved)
+                        continue
                     if len(unfinished)!=1 or unfinished[0]['status']!='unknown' or unfinished[0]['remote_id'] or unfinished[0]['request_hash']!=wire_hash(request):
                         raise ContractError('flashcut_response_unproven','format_recovery')
                     saved.update(mode='correction',request_index=len(requests),job_id=jid)
                     requests.append(adapter.format_recovery_request(request,unfinished[0]['id']))
                 else:raise ContractError('flashcut_recovery_not_idle','job',jid)
             entries.append(saved)
-        if not 1<=len(requests)<=2:raise ContractError('flashcut_recovery_exhausted','corrections')
+        limit=prior.get('max_replacements',2)
+        if (type(limit) is not int or not 1<=limit<=min(20,max(2,len(original['requests'])))
+                or not 1<=len(requests)<=limit):
+            raise ContractError('flashcut_recovery_exhausted','corrections')
         clarification=deepcopy(original['requests'][0])
         clarification.update(scope='clarification',prompt_version='flashcut_understanding.v2',response_contract='flashcut_compact.v2')
         clarification['context']['clarify_ids']=[c['id'] for c in clarification['context']['candidates']]+['source']
@@ -84,7 +134,7 @@ class FlashcutFormatRecovery:
             cumulative[limit]+=sum(u[field] for u in usages)
         cumulative['max_media_seconds']=str(Fraction(cumulative['max_media_seconds'])+sum((Fraction(u['media_seconds']) for u in usages),Fraction(0)))
         cumulative['reserve_usd_micros']+=reserve
-        plan={'version':'flashcut_format_recovery.v1','run_id':run.id,'binding':original['binding'],
+        plan={'version':'flashcut_format_recovery.v2' if len(requests)>3 else 'flashcut_format_recovery.v1','run_id':run.id,'binding':original['binding'],
               'original_plan_identity':original['identity'],'prior_plan':run.state['flashcut_response_recovery'],
               'rejection':self._rejection(run),'entries':entries,'requests':requests,'quotes':quotes,'usage_bounds':usages,
               'max_requests':len(requests),'max_corrections':len(requests)-1,'max_shared_clarifications':1,
@@ -156,6 +206,10 @@ class FlashcutFormatRecovery:
                 or Fraction(source.get('source_start','-1'))!=0
                 or Fraction(source.get('source_end','-1'))!=Fraction(request['context']['source_duration'])):
             raise ContractError('flashcut_gap_clarification_unavailable','quoted_source')
+        from .cut_review import CutReview
+        reviewed = CutReview(self.auto).collect(run,request,jid)
+        if reviewed is not None:
+            return reviewed
         job=self.s.db.uow().jobs.get(jid)
         attempts=list(self.s.db.conn.execute('SELECT * FROM attempts WHERE job_id=?',(jid,)))
         unresolved=[a for a in attempts if a['status'] not in ('failed','cancelled','succeeded')]
@@ -176,6 +230,8 @@ class FlashcutFormatRecovery:
             self.s.db.uow().events.append('autorun:'+run.id,'flashcut_gap_clarification_required',{
                 'job_id':jid,'evidence':run.state['flashcut_gap_evidence'][jid],
                 'accounting':'unknown_retained','do_not_retry':True})
+        from .flashcut_recovery import FlashcutResponseRecovery
+        FlashcutResponseRecovery(self.auto).release_completed_capacity(jid,request)
         return proof['result']
 
     @staticmethod
@@ -184,7 +240,7 @@ class FlashcutFormatRecovery:
         coverage=[{'source_start':str(o['start_s']),'source_end':str(o['end_s'])}
                   for o in output['observations'] if o['confidence']=='observed' and 'source' in o['evidence_ids']]
         return all(_covered_by_windows(Fraction(r['start_s']),Fraction(r['end_s']),coverage)
-                   for value in provisional.values() for r in value['coverage_gap_recovery']['claimed_ranges'])
+                   for value in provisional.values() for r in value.get('coverage_gap_recovery',{}).get('claimed_ranges',[]))
 
     def clarification_status(self,run):
         jobs=run.state['flashcut_format_clarify_jobs']
@@ -202,14 +258,22 @@ class FlashcutFormatRecovery:
 
     def collect(self,run,original):
         plan=self.s.source_evidence.blobs.read(run.state['flashcut_format_recovery'])
+        prior=self.s.source_evidence.blobs.read(plan['prior_plan'])
+        limit=prior.get('max_replacements',2) if plan['version']=='flashcut_format_recovery.v2' else 2
         if (plan['run_id']!=run.id or plan['binding']!=original['binding'] or plan['original_plan_identity']!=original['identity']
-                or plan['identity']!=content_hash({k:v for k,v in plan.items() if k!='identity'}) or not 2<=len(plan['requests'])<=3
+                or plan['identity']!=content_hash({k:v for k,v in plan.items() if k!='identity'})
+                or type(limit) is not int or not 1<=limit<=min(20,max(2,len(original['requests'])))
+                or not 2<=len(plan['requests'])<=limit+1 or plan['max_corrections']!=len(plan['requests'])-1
                 or plan['rejection']!=self._rejection(run)):
             raise ContractError('flashcut_recovery_mismatch','format_plan')
         adapter=self.s.providers['audiovisual_analysis_flashcut']
         if [adapter.price(r) for r in plan['requests']]!=plan['quotes']:
             raise ContractError('flashcut_recovery_quote_changed','provider_price')
         for entry in plan['entries']:
+            if entry['mode']=='correction' and not entry.get('rejected_attempts'):
+                from .flashcut_recovery import FlashcutResponseRecovery
+                FlashcutResponseRecovery(self.auto).release_completed_capacity(
+                    entry['job_id'],prior['requests'][entry['replacement_index']])
             if entry['mode']=='saved':
                 if adapter.inspect_saved_response(original['requests'][entry['index']],entry['proof']['attempt_id'])!=entry['proof']:
                     raise ContractError('flashcut_response_unproven','saved_response_changed')
@@ -290,7 +354,10 @@ class FlashcutFormatRecovery:
             if provisional:
                 output={**output,'coverage_gap_resolution':{'version':'coverage_gap_resolution.v1',
                     'clarification_request_hash':wire_hash(request),
-                    'evidence':[run.state['flashcut_gap_evidence'][jid] for jid in sorted(provisional)]}}
+                    'evidence':[run.state['flashcut_gap_evidence'][jid] for jid in sorted(provisional)
+                                if jid in run.state.get('flashcut_gap_evidence',{})],
+                    'reviewed_evidence':[run.state['flashcut_cut_reviews'][jid] for jid in sorted(provisional)
+                                        if jid in run.state.get('flashcut_cut_reviews',{})]}}
             outputs.append(output)
         if any(out.get('binding')!=plan['binding'] for out in outputs):raise ContractError('analysis_media_mismatch','format_recovery')
         return 'next',outputs

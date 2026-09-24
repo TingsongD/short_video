@@ -2,6 +2,52 @@
 
 ## Factory program — current status index
 
+**As of 2026-09-22:** the AVvVLM5b-mE quartet completed final QC and verified
+Drive delivery with video-owned cleanup under its saved `after_qc` policy.
+Automatic delivery is implemented for that policy; earlier aborted runs remain
+aborted. See [current operational evidence](docs/factory-reports/FLASHCUT-CURRENT-STATUS.md)
+and the [scoped qualification matrix](docs/factory-reports/FLASHCUT-QUALIFICATION-MATRIX.md).
+A code release is not evidence that the local services remain running.
+
+The latest unreleased working-tree [review repairs](docs/factory-reports/REPAIRS-2026-09-22.md)
+cover budget integrity, recovery, output-audio verification, publication/learning
+and operator controls. Future analysis uses immutable constant-30-fps copies;
+factory outputs require 30 fps. Historical native-clock evidence is preserved.
+
+The user's requested [parallel footage generation](docs/factory-reports/PARALLEL-GENERATION-2026-09-22.md)
+is implemented locally: four default Vertex slots with fair dispatch/polling,
+retained budget and unknown-operation safeguards. Full backend verification:
+**1,622 passed, 7 skipped**; live parallel throughput remains unmeasured.
+
+The subsequent [last-run audit](docs/factory-reports/LAST-RUN-AUDIT-2026-09-22.md)
+fixes forced-English transcription, reuse of old language settings and false
+rejection of Chinese character timing. The missing Chinese alignment model is
+cached locally. The original audio now passes local detection/alignment and
+factory timing validation. Final verification: **1,642 passed, 7 skipped**,
+including 20 new language regressions. These changes remain local and do not
+replace historical videos.
+
+Caption readability is also updated locally: bold white text, padded dark
+backgrounds and higher safe placement across all three rendering paths.
+**62 focused offline checks pass**, including four new pixel-level export
+checks for contrast, line visibility, padding and placement. See the caption
+defaults in the [operator guide](docs/factory-operator-guide.md). Existing
+delivered videos remain unchanged; the last full-suite result above predates
+this caption styling change.
+
+Automatic partial paid-batch recovery was removed from the backlog at the
+user's request on 2026-09-22; duplicate-purchase safeguards remain in place.
+
+Remaining: automatic next-round execution,
+general Flashcut v3/Jev/image-reference qualification, live publication/readback/
+learning acceptance, explicit copy-provenance policy, provider invoice/hold
+reconciliation and durable local service availability. F-module human sign-offs
+and legacy G-gates remain independent and open as recorded. The
+[2026-09-22 inventory](docs/factory-reports/REVIEW-2026-09-22.md) and repair report
+separate resolved code defects from this remaining work.
+
+### Historical checkpoint — 2026-09-19
+
 **As of 2026-09-19:** the automatic seed→A–D pipeline (Auto tab) runs
 end-to-end with durable autorun records, paid-effect plans, budgets,
 holds and honest pauses; one real four-variant run completed locally
@@ -700,3 +746,22 @@ resumption occurred. Reference mode remains disabled/unqualified for live use;
 fresh live acceptance and the Hypit/Node compatibility warning remain separate.
 
 Evidence: `docs/factory-reports/FUTURE-RUN-SAFETY-2026-09-21.md`.
+
+### 2026-09-23 — seed pre-generation dry QA
+
+Completed two consecutive isolated, network-blocked pre-generation passes for
+`l0mEEJPDl1A`; both stop before footage dispatch. Fixed unclear dashboard source
+URL errors (three red-to-green regressions); final frontend 82 tests/build pass.
+The unchanged backend retains its verified 1,738-pass full-suite result; helper
+27 tests and current recovery/readiness/caption checks pass. Zero new paid or
+live generation submissions; production job/payment/recovery rows unchanged.
+See [scoped report](docs/factory-reports/SEED-l0mEEJPDl1A-DRY-QA.md).
+This does not sign live provider, publishing, F-module or legacy G acceptance.
+
+### 2026-09-23 — Speaker-aware recreation follow-up
+
+Implemented WhisperX/pyannote speaker evidence, per-turn scene/script ownership, distinct character voice casting, and voice-aware synthesis/recovery/attachment. Offline two-character and within-scene dialogue integrations render all four variants. Live source diarization and replacement delivery await gated pyannote model access (`HF_TOKEN`); earlier a2wQbuKVWSg finals remain single-voice versions. See `docs/factory-reports/SPEAKER-DIARIZATION-2026-09-23.md` for final verification evidence and limits.
+
+### 2026-09-24 — B-only speaker remake delivered
+
+User waived four-word source speaker review for this remake. Recreated B with four distinct ElevenLabs voices, ten natural-speed takes, balanced dialogue and 33 refreshed caption phrases, retaining existing generated footage and other variants. 30 fps / 1,723-frame export passed decode, timing, audio comparison and caption sampling. Verified Drive delivery and no surviving owned render children/listeners. New cost 723 credits; cumulative seed totals US$54.094415 + 2,593/7,000 credits. See [speaker report](docs/factory-reports/SPEAKER-DIARIZATION-2026-09-23.md) and `data/production/seed-a2wQbuKVWSg-variant-B-speakers-v2/`.

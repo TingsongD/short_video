@@ -23,6 +23,8 @@ def _parse(value):
 def provider_wait_view(wait, job, attempts, observations, *, now):
     if not isinstance(wait, dict) or not isinstance(wait.get('job_id'), str) or not wait['job_id']:
         return None
+    if job is not None and job.get('status') in ('failed', 'succeeded', 'cancelled'):
+        return None
     chosen = None
     for attempt in attempts:
         if attempt['remote_id'] and attempt['status'] in LIVE:

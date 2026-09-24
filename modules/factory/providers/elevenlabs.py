@@ -36,7 +36,27 @@ class ElevenLabsAdapter(SynchronousAdapter):
         return {'kind':'usage_estimate','unit':'elevenlabs_credits','amount':amount,'reserve_amount':amount,
                 'valid_until':self.pricing.get('valid_until',''),'rate_basis':self.pricing.get('evidence','')}
 
+    def voices(self):
+        """Read-only account catalog; no synthesis, enrollment or cloning."""
+        from urllib.parse import urlencode
+        headers = {'xi-api-key': self.credentials().get('ELEVENLABS_API_KEY', '')}
+        result, token, seen = [], '', set()
+        for _ in range(20):
+            query = {'page_size': 100}
+            if token: query['next_page_token'] = token
+            status, _, raw = self.transport('GET', 'https://api.elevenlabs.io/v2/voices?' + urlencode(query), None, headers)
+            if status != 200: raise ProviderError('voice_catalog_unavailable', http_status=status)
+            doc = json.loads(raw)
+            result.extend({'voice_id': v['voice_id'], 'name': v.get('name', ''),
+                           'labels': v.get('labels') or {}} for v in doc.get('voices', []) if v.get('voice_id'))
+            if not doc.get('has_more'): return result
+            token = doc.get('next_page_token')
+            if not token or token in seen: break
+            seen.add(token)
+        raise ProviderError('voice_catalog_incomplete')
+
     def execute(self, request):
+        self.require_qualification()
         if request.get("model") != "eleven_v3" or not re.fullmatch(r"[A-Za-z0-9]+", request.get("voice_id", "")):
             raise ProviderError("tts_route_unqualified")
         if self.live:

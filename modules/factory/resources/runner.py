@@ -57,6 +57,15 @@ class OwnedRunner:
         deadline=time.monotonic()+timeout+5
         while time.monotonic()<deadline:
             state=DurableState(file)
+            if proc and state.get('status')=='prepared' and proc.poll() not in (None, 0):
+                # Startup can fail before the supervisor records an identity
+                # (for example, process inspection is denied). Do not wait a
+                # two-hour helper timeout for a child already known to exit.
+                # Re-read for another supervisor's claim; retain the intent
+                # and never infer that an already-running command failed.
+                state=DurableState(file)
+                if state.get('status')=='prepared':
+                    raise ContractError('local_supervisor_start_failed','process',state['resource_id'])
             if state.get('status')=='done':
                 if proc:
                     try: proc.wait(timeout=1)

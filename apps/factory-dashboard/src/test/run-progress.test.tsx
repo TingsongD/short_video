@@ -4,6 +4,18 @@ import { afterEach, expect, it } from "vitest";
 import { RunProgress } from "../features/autorun/AutoRunScreen";
 
 afterEach(cleanup);
+it('does not label a missing optional count as pending after source analysis completes',()=>{
+  const run={id:'finished-source',status:'succeeded',stage:'done',
+    source_analysis:{stage:'complete',state:'complete'}};
+  const {rerender}=render(<RunProgress run={run}/>);
+  expect(screen.getByText(/Measured events: not available/)).toBeTruthy();
+  expect(screen.queryByText(/Measured events: pending/)).toBeNull();
+  rerender(<RunProgress run={{...run,source_analysis:{...run.source_analysis,event_count:0}}}/>);
+  expect(screen.getByText(/Measured events: 0/)).toBeTruthy();
+  rerender(<RunProgress run={{...run,status:'running',stage:'video_analysis',
+    source_analysis:{stage:'visual',state:'processing'}}}/>);
+  expect(screen.getByText(/Measured events: pending/)).toBeTruthy();
+});
 it('reports measured all-frame coverage without guessing an unknown total',()=>{
   const {rerender}=render(<RunProgress run={{id:'flash',status:'running',stage:'video_analysis',
     source_analysis:{stage:'visual',state:'processing',encoded_frames:256,decoded_frames:300,

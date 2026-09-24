@@ -5,6 +5,10 @@ cycle. It excludes Chinese-language recognition, translation and transcription
 changes. No paid request, video regeneration, publication, historical hold
 release, budget increase or deployment is authorized by this document.
 
+Later scope update: the user's request to debug every last-run issue adds the
+source-language fixes in [LAST-RUN-AUDIT-2026-09-22.md](LAST-RUN-AUDIT-2026-09-22.md).
+The exclusion above records this original hardening cycle, not that later audit.
+
 Baseline snapshot: `/private/tmp/factory-hardening-baseline-20260922` recorded
 zero active jobs, 20 protected finals and matching final hashes. The working
 tree already contained unrelated changes; they are being preserved. Frozen
@@ -28,7 +32,7 @@ schemas and fixtures are unchanged.
 | Temporal motion/lip-sync inspection | Quality limitation | **partially fixed offline** | Future v2/v3 finals check all decoded PTS, final-speech caption schedules and required brief intervals. Semantic event identity, pixel OCR and lip sync remain explicitly unverified. |
 | Slow provider operation visibility | Existing fix needing clearer UI | **fixed offline** | The run shows the saved operation ID, elapsed time, last successful observation and next scheduled poll. Observing a slow request does not submit another copy. |
 | Exact-frame Hypit premix and replacement-caption QC | Existing fixes needing regression coverage | **already fixed** | Native/FFmpeg paths use the frozen premix; final QC distinguishes source overlays from intended replacement captions and binds the verdict to the current artifact/revision. |
-| Full backend/frontend/local-render release gate | Qualification gap | **fixed offline; deployed** | Complete backend: 1,573 passed, 7 skipped; frontend: 73 passed and production build passed; helper: 27 passed; explicit real-render gate: 16 passed with no renderer skips. One API/worker pair is healthy after the idle rollout. These checks do not establish general live-provider quality. |
+| Full backend/frontend/local-render release gate | Qualification gap | **fixed offline; code released** | Complete backend: 1,573 passed, 7 skipped; frontend: 73 passed and production build passed; helper: 27 passed; explicit real-render gate: 16 passed with no renderer skips. API/worker health passed immediately after the idle rollout; those agent-managed sessions did not survive task closure. These checks do not establish general live-provider quality. |
 | Historical archive/clearing | Safeguard, not defect | **preserved** | Protected/unresolved records are not deleted or silently settled. |
 | Safe history visibility | Existing fix needing regression coverage | **already fixed** | The UI can hide eligible historical entries without deleting their records; active or newly unresolved work remains visible and obligations stay discoverable. |
 
@@ -65,8 +69,9 @@ it as a release total.
 
 ## Rollout state
 
-Deployed to the local checkout on 2026-09-22 after a consistent owner-only
-SQLite backup at `/private/tmp/factory-hardening-rollout-20260922-release-01`.
+Code and dashboard bundle were released to the local checkout on 2026-09-22
+after a consistent owner-only SQLite backup at
+`/private/tmp/factory-hardening-rollout-20260922-release-01`.
 It reported zero active jobs, 20 final bindings and matching final hashes.
 Only the owned API and worker were stopped; shared `hyperframes.local` and
 `media.local` programs were left running when ownership could not be proved.
@@ -89,3 +94,14 @@ unresolved. The qualification matrix is [recorded here](FLASHCUT-QUALIFICATION-M
 The remaining multi-seed live checks require the separate fresh quote and
 authorization in [FLASHCUT-LIVE-ONLY-ACCEPTANCE.md](FLASHCUT-LIVE-ONLY-ACCEPTANCE.md).
 Offline release gates do **not** establish unattended production readiness.
+
+### Post-task availability correction — 2026-09-22 21:34 UTC
+
+The API and worker were healthy at the final 21:23 UTC check, but the
+agent-managed persistent sessions ended when that task closed. A fresh
+`/api/health` request failed and no factory API/worker process remained at
+21:34 UTC. The pushed code, bundle, consistent backup, completed finals and
+historical records remain; this does **not** mean a video failed or was lost.
+The dashboard must be started from the operator's own durable Terminal windows
+using [the guide](../factory-operator-guide.md#1-starting-the-system). This
+documentation-only correction neither starts the worker nor resumes jobs.

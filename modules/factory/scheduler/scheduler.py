@@ -18,7 +18,7 @@ from ..domain.errors import ContractError
 from .graph import validate_dag, dependents
 
 LEASE_S = 120
-CAPACITIES = {"jimeng_submit": 5, "vertex_submit": 1,
+CAPACITIES = {"jimeng_submit": 5, "vertex_submit": 4,
               "local_render": 1, "local_media": 1, "download": 4, "dispatch": 4,
               "observe": 8}
 
@@ -72,11 +72,24 @@ class Scheduler:
         self.worker_id = worker_id or f"worker:{uuid.uuid4().hex[:8]}"
         self.lease_s = lease_s
         self.resources = resource_policy or ResourcePolicy()
+        self._next_queue = 0
         with self.db.uow() as u:
             for name, n in CAPACITIES.items():
                 u.conn.execute(
                     "INSERT OR IGNORE INTO capacities(name,limit_n) "
                     "VALUES(?,?)", (name, n))
+
+    def configure_vertex_concurrency(self, limit):
+        """Apply the configured global limit without releasing existing holds."""
+        if type(limit) is not int or not 0 <= limit <= 16:
+            raise ContractError("invalid_vertex_concurrency", "limit", "expected an integer from 0 to 16")
+        with self.db.uow() as u:
+            previous = u.conn.execute(
+                "SELECT limit_n FROM capacities WHERE name='vertex_submit'").fetchone()[0]
+            if previous != limit:
+                u.conn.execute("UPDATE capacities SET limit_n=? WHERE name='vertex_submit'", (limit,))
+                u.events.append("scheduler", "capacity_configured",
+                                {"capacity": "vertex_submit", "previous": previous, "limit": limit})
 
     def now(self):
         return self.clock().strftime("%Y-%m-%dT%H:%M:%S.%fZ")
@@ -261,6 +274,22 @@ class Scheduler:
 
     # ------------------------------------------------------------ claim
 
+    def claim_next(self):
+        """Rotate eligible queues so slow polls cannot starve submissions.
+
+        One worker submits independent requests; remote providers execute them
+        concurrently. Each claim still enforces dependencies, pause and global
+        capacities. Collection and observation retain turns when dispatch stops.
+        """
+        queues = ("collect", "observe", "dispatch")
+        for offset in range(len(queues)):
+            index = (self._next_queue + offset) % len(queues)
+            job = self.claim(queues[index])
+            if job:
+                self._next_queue = (index + 1) % len(queues)
+                return job
+        return None
+
     def claim(self, queue="dispatch"):
         """Claim the next eligible job for this worker.
         queue: dispatch | observe | collect."""
@@ -283,12 +312,30 @@ class Scheduler:
                    else "('ready','output_available') AND (phase='collect' OR status='output_available')")
                 + " AND (lease_expires IS NULL OR lease_expires<?) "
                 "AND (next_attempt_at IS NULL OR next_attempt_at<=?) "
-                "ORDER BY created_at", (self.now(), self.now())).fetchall()
+                # A deferred slow operation goes behind other due work, so
+                # one old request cannot monopolize polling or collection.
+                "ORDER BY COALESCE(next_attempt_at,created_at), created_at",
+                (self.now(), self.now())).fetchall()
             for row in candidates:
                 if queue == "dispatch" and self._flag(f"paused:{row['experiment_id']}"):
                     continue
                 capacity = (PHASE_CAPACITY.get(row["phase"]) if queue == "dispatch"
                             else "observe" if queue == "observe" else "download")
+                if queue == 'dispatch' and row['phase'] in ('generate_vertex', 'generate_jimeng') and u.conn.execute(
+                        'SELECT 1 FROM remote_holds WHERE job_id=? LIMIT 1', (row['id'],)).fetchone():
+                    # A split scene can defer halfway through submission.
+                    # Its accepted allocations must be polled even when all
+                    # submission slots are occupied. EffectService.prepare
+                    # still acquires and enforces each new remote slot; this
+                    # observation lease grants no additional submission room.
+                    capacity = 'observe'
+                if queue == "dispatch" and row['phase'] == 'plan':
+                    command = u.records.get('appcommand', row['id'])
+                    if command and json.loads(command['body']).get('kind') == 'auto_step':
+                        # The controller only queues effects and reconciles their
+                        # results. It must run even when those effects retain all
+                        # dispatch slots. Apply to already queued controllers too.
+                        capacity = 'observe'
                 own = u.conn.execute("SELECT 1 FROM capacity_holds WHERE capacity=? AND job_id=?", (capacity, row["id"])).fetchone()
                 if capacity and not own and self._capacity_free(u, capacity) <= 0:
                     continue

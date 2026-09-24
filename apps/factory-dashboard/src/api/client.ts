@@ -93,8 +93,16 @@ async function request<T>(path: string, init: RequestInit, mutation: boolean): P
       headers['x-csrf-token'] = csrfToken!;
       continue;
     }
-    if (!r.ok) throw new ApiError(r.status, json.error ?? 'http_error', json.field,
-      json.error === 'csrf' ? 'Dashboard session recovery failed. Check the API service and retry this action.' : json.detail ?? r.statusText);
+    if (!r.ok) {
+      const sourceLinkError = path === '/api/seeds' && json.field === 'url' &&
+        ['missing_url', 'unsupported_url', 'unsupported_platform'].includes(json.error);
+      const detail = sourceLinkError
+        ? 'Enter a complete HTTPS video link from YouTube, TikTok or Instagram.'
+        : json.error === 'csrf'
+          ? 'Dashboard session recovery failed. Check the API service and retry this action.'
+          : json.detail ?? r.statusText;
+      throw new ApiError(r.status, json.error ?? 'http_error', json.field, detail);
+    }
     if (headers['idempotency-key']) acknowledge(headers['idempotency-key']);
     return json as T;
   }

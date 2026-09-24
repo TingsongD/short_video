@@ -3,6 +3,7 @@ text to the exact returned waveform; derive captions through the fit
 transform so cues land on the right frames.
 """
 import json
+import math
 from fractions import Fraction
 
 from ..domain.errors import ContractError
@@ -125,12 +126,24 @@ class AlignmentService:
         target=seg['target'];start=target.get('start_frame',target.get('start',0));end=target.get('end_frame',target.get('end'))
         rate=Fraction(str(seg['fit']['rate']));trim=Fraction(str(seg['fit'].get('trim_s',0)))
         fps=Fraction(clock.num,clock.den);previous=Fraction(0);last=start;words=[]
+        duration = Fraction(end-start,1)/fps
+        # fit.rate is persisted as a float. Rationalizing that rounded value
+        # can put an exact waveform endpoint a few floating-point ulps past
+        # the target. This allowance is far below one audio sample; measured
+        # overlaps, negative times and genuine overruns remain invalid.
+        end_roundoff = Fraction(str(4 * math.ulp(float(duration))))
         for w in al['words']:
             low=(Fraction(str(w['start_s']))-trim)/rate
             high=(Fraction(str(w['end_s']))-trim)/rate
-            if not previous<=low<high<=Fraction(end-start,1)/fps:
+            if not previous<=low<high<=duration+end_roundoff:
                 raise ContractError('semantic_word_timing_invalid','segment_id','Final speech timings are outside the fitted waveform.')
             first,final=start+round(low*fps),start+round(high*fps)
+            if first == final:
+                # A measured subframe word must not disappear under nearest
+                # rounding. Use its intersected frames only when they fit
+                # between its neighbours; the ordinary ordering checks below
+                # (and on the next word) still reject collisions.
+                first, final = start + math.floor(low*fps), start + math.ceil(high*fps)
             if not last<=first<final<=end:
                 raise ContractError('semantic_word_timing_invalid','segment_id','A word is ambiguous on the final frame clock.')
             words.append({'text':w['w'],'start_frame':first,'end_frame':final})
@@ -138,6 +151,6 @@ class AlignmentService:
         if not words:
             raise ContractError('missing_alignment','segment_id')
         binding={'raw_alignment_hash':content_hash(al),'fit':seg['fit'],'clock':{'num':clock.num,'den':clock.den},
-                 'speech_hash':speech_hash,'audio_sha256':seg['audio_sha256'],'target':target,'policy':'final_alignment.v1'}
+                'speech_hash':speech_hash,'audio_sha256':seg['audio_sha256'],'target':target,'policy':'final_alignment.v2'}
         return {'artifact_id':seg['artifact_id'],'sha256':seg['audio_sha256'],'speech_hash':speech_hash,
                 'alignment_hash':content_hash(binding),'text':spoken,'words':words,'in_frame':start,'out_frame':end}

@@ -72,3 +72,24 @@ def test_legacy_plan_does_not_adopt_new_reuse_policy(stack):
         'request':{'prompt':'same','settings':{},'refs':[]}}],
         'jimeng_canvas','seedance_2.0_fast_vip',[4,8],now=NOW)
     assert picture(result)['status']=='planned'
+
+
+@pytest.mark.parametrize('stale_picture', [False, True])
+def test_requote_uses_downloaded_selection_including_overlay_repairs(stack, stale_picture):
+    from modules.factory.testing.authority import approve_production
+    _,scheduler,provider,_,arts,svc=stack
+    original=picture(planned(svc,'first',1))
+    approve_production(svc,'first')
+    svc.submit('first')
+    # Actual collect stores the footage on the download node, not picture.
+    for _ in range(3):
+        assert svc.run_next()
+    prior=svc._node('first',original['node_key'])
+    assert prior['status']=='accepted' and not prior['artifact_ids']
+    download=next(n for n in svc._nodes('first').values() if n['kind']=='download')
+    selected=download['artifact_ids']
+    # Overlay repair changes the selected download; its predecessor must
+    # never be revived just because a cached picture has old artifact ids.
+    if stale_picture:
+        svc._set('first',original['node_key'],artifact_ids=['superseded-original'])
+    assert picture(planned(svc,'second',2))['artifact_ids']==selected

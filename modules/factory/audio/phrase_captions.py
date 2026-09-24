@@ -1,29 +1,16 @@
 """Presentation grouping for validated replacement-narration word cues.
 
 Never estimates word timing, drops words, or changes the spoken text. The
-renderer must use the matching phrases.v1 preset (48px at 720px width).
+renderer must use the shared bold, padded caption layout.
 """
 import re
-from functools import lru_cache
-from pathlib import Path
 
 from ..domain.errors import ContractError
+from .caption_style import caption_font, line_width, MAX_LINE_WIDTH
 
 
-@lru_cache(maxsize=1)
-def caption_font():
-    from PIL import ImageFont
-    path = next((p for p in ('/System/Library/Fonts/Supplemental/Arial.ttf',
-                            '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf') if Path(p).is_file()), None)
-    if path is None:
-        raise ContractError('caption_font_required', 'font_path')
-    return ImageFont.truetype(path, 48)
-
-
-def fits_line(text, max_chars=22):
-    # 600px ink width plus outline stays inside 7–93% of a 720px
-    # canvas. Both renderers scale this same 48px layout proportionally.
-    return len(text) <= max_chars and caption_font().getlength(text) <= 600
+def fits_line(text, max_chars=22, *, font_path=None):
+    return len(text) <= max_chars and line_width(text, font_path) <= MAX_LINE_WIDTH
 
 
 def phrase_cues(cues, spoken_text, start_frame, end_frame, *, max_chars=22,

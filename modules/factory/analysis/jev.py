@@ -109,6 +109,7 @@ class JevDecisions(SynchronousAdapter):
                 'rate_basis':self.pricing.get('evidence','')}
 
     def execute(self,request):
+        self.require_qualification()
         payload,raw=self.payload(request)
         if self.live and (current_effect.get() or {}).get('provider')!=self.name:
             raise RequestNotSent('authority_required')

@@ -33,3 +33,20 @@ def test_existing_final_speech_flows_into_immutable_native_plan(stack,tmp_path):
     segment['speech']['alignment_hash']='f'*64
     with pytest.raises(ContractError,match='stale_alignment'):
         prepare_editorial(s,exp,variant,pictures,{'sha256':'d'*64})
+
+
+def test_reframe_spans_generated_allocations_without_replaying_frames():
+    from modules.factory.services.editorial_work import allocated_event_specs
+    beat={'in_frame':0,'out_frame':90}
+    event={'id':'cut','observation_id':'o','footage_id':'beat',
+           'start_frame':20,'end_frame':70,'source_in_frame':20,
+           'duration_frames':50,'reframe_zoom':1.12,
+           'anchor':{'kind':'visual','target_time':'2/3','evidence_id':'o'}}
+    inventory=[{'id':'one','in_frame':0,'out_frame':30,'source_in_s':0},
+               {'id':'two','in_frame':30,'out_frame':90,'source_in_s':1}]
+    from fractions import Fraction
+    specs=allocated_event_specs(event,beat,inventory,Fraction(30))
+    assert [(s['footage_id'],s['source_in_frame'],s['duration_frames']) for s in specs]==[
+        ('one',20,10),('two',30,40)]
+    assert [s['anchor']['target_time'] for s in specs]==['2/3','1']
+    assert all(s['reframe_zoom']==1.12 for s in specs)

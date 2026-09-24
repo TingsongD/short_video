@@ -15,6 +15,8 @@ def final_passages(services,experiment,variant):
         if not segment.get('copy'):
             continue
         speech=segment.get('speech') or {}
+        if segment.get('speaker') and (speech.get('speaker') != segment['speaker'] or speech.get('voice_id') != segment.get('voice_id')):
+            raise ContractError('speech_voice_mismatch', segment['id'])
         if not speech.get('speech_id'):
             raise ContractError('semantic_alignment_required',segment['id'],'Final fitted narration must retain its alignment record.')
         final=services.audio_work.alignment.final_alignment(speech['speech_id'],services.audio_work.speech.get,clock,speech['speech_hash'])
@@ -26,6 +28,8 @@ def final_passages(services,experiment,variant):
         cues=phrase_cues([{**w,'word_refs':[i]} for i,w in enumerate(final['words'])],
                         final['text'],final['in_frame'],final['out_frame'])
         passage={**final,'id':f'p{index}','segment_id':segment['id'],'phrases':[c['word_refs'] for c in cues]}
+        if segment.get('speaker'):
+            passage.update(speaker=segment['speaker'], voice_id=segment['voice_id'])
         passages.append(passage)
         captions.extend({'id':f'phrase-{index}-{n}','placement':'heading',
                          **{k:c[k] for k in ('text','start_frame','end_frame')}} for n,c in enumerate(cues))
@@ -70,6 +74,43 @@ def output_binding(services,experiment):
             'author_package_hash':package_hash}
 
 
+def allocated_event_specs(event, beat, inventory, rate):
+    """Split a chronological reframe across owned clips; other edits stay atomic."""
+    source = beat['in_frame'] + event['source_in_frame']
+    end = source + event['duration_frames']
+    excluded = ('artifact_id','sha256','start_frame','end_frame','semantic_start','variant_key')
+    if 'reframe_zoom' in event:
+        if source != event['start_frame']:
+            raise ContractError('editorial_reframe_invalid', event['id'])
+        result = []
+        cursor = source
+        for clip in sorted(inventory, key=lambda p:p['in_frame']):
+            low, high = max(source, clip['in_frame']), min(end, clip['out_frame'])
+            if high <= low:
+                continue
+            if low != cursor:
+                raise ContractError('editorial_allocation_boundary', event['id'])
+            spec = {k:v for k,v in event.items() if k not in excluded}
+            spec.update(id=event['id']+'-part-'+str(len(result)), footage_id=clip['id'],
+                duration_frames=high-low,
+                source_in_frame=low-clip['in_frame']+round(Fraction(str(clip.get('source_in_s',0)))*rate))
+            if low != source:
+                spec['anchor']={'kind':'visual','target_time':str(Fraction(low)/rate),
+                                'evidence_id':event['observation_id']}
+            result.append(spec)
+            cursor=high
+        if cursor != end:
+            raise ContractError('editorial_allocation_boundary', event['id'])
+        return result
+    clip=next((p for p in inventory if p['in_frame']<=source<end<=p['out_frame']),None)
+    if not clip:
+        raise ContractError('editorial_allocation_boundary',event['id'],
+            'The requested cut crosses separately generated clips; preserve the plan and correct that edit.')
+    return [{k:v for k,v in {**event,'footage_id':clip['id'],
+        'source_in_frame':source-clip['in_frame']+round(Fraction(str(clip.get('source_in_s',0)))*rate)}.items()
+        if k not in excluded}]
+
+
 def prepare_editorial(services,experiment,variant,pictures,mix):
     passages,captions=final_passages(services,experiment,variant)
     clock=RationalRate(**experiment.output_clock)
@@ -103,13 +144,7 @@ def prepare_editorial(services,experiment,variant,pictures,mix):
         specs=[]
         for event in proposed:
             beat=next(f for f in inputs['variants'][variant.variant_key]['footage'] if f['id']==event['footage_id'])
-            source=beat['in_frame']+event['source_in_frame']
-            clip=next((p for p in inventory if p['in_frame']<=source<source+event['duration_frames']<=p['out_frame']),None)
-            if not clip:
-                raise ContractError('editorial_allocation_boundary',event['id'],'The requested cut crosses separately generated clips; preserve the plan and correct that edit.')
-            specs.append({k:v for k,v in {**event,'footage_id':clip['id'],
-                'source_in_frame':source-clip['in_frame']+round(Fraction(str(clip.get('source_in_s',0)))*rate)}.items()
-                if k not in ('artifact_id','sha256','start_frame','end_frame','semantic_start','variant_key')})
+            specs.extend(allocated_event_specs(event, beat, inventory, rate))
     else:
         # Explicit plans are useful for offline fixture compilation. Production
         # drafts require an immutable understanding bundle at creation.

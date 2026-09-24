@@ -29,6 +29,9 @@ using the EXACT final word/index, or {kind:"visual"|"music",target_time,evidence
 for speechless edits. Rational seconds strings are accepted. Use final narration
 for speech-linked timing; never reuse source speech timestamps. Intraword cuts
 use offset_s. Evidence_id must be this event's observation_id.
+A cut_frame_bracket locates a transition between adjacent samples; its width is
+NOT the duration of the following shot. Author a sustained shot for point cuts;
+only a second verified transition can establish a genuinely brief shot.
 Preserve short flashes (including two-frame events), callbacks, quiet setup and
 payoff; do not turn every measured energy spike into a cut. Cast/scene changes
 are intentional where the supplied creative context says so. Events must not
@@ -40,6 +43,40 @@ An observed cut may use scene coverage only if it is already at the correspondin
 planned scene boundary. Use no event for uncertain observations. Do not invent
 word anchors, hide missing evidence, change speech, or claim character lip sync.
 Input:\n'''
+
+
+def verified_cut_key(observation):
+    """Only identical adjacent source-frame evidence establishes an alias."""
+    import re
+    try:
+        bracket=observation['cut_frame_bracket']
+        if (observation['kind']!='cut' or observation['confidence']!='observed'
+                or bracket['version']!='cut_frame_bracket.v1'):
+            return None
+        before,after=(bracket[k] for k in ('before_frame_id','after_frame_id'))
+        if (not re.fullmatch(r'frame:[0-9]+',before) or not re.fullmatch(r'frame:[0-9]+',after)
+                or int(after.split(':')[1])!=int(before.split(':')[1])+1
+                or not {before,after}.issubset(observation['evidence_ids'])):
+            return None
+        lo,hi=(Fraction(bracket[k]) for k in ('before_source_time','after_source_time'))
+        if lo>=hi or (float(lo),float(hi))!=(observation['start_s'],observation['end_s']):
+            return None
+        return before,after,lo,hi
+    except (KeyError,TypeError,ValueError,ZeroDivisionError):
+        return None
+
+
+def verified_brief_shot_frames(observation, observations, fps):
+    """A second transition, not the sampling bracket, bounds brief content."""
+    key = verified_cut_key(observation)
+    if key is None:
+        return None
+    later = [other[3] for item in observations
+             if (other := verified_cut_key(item)) is not None and other[3] > key[3]]
+    if not later:
+        return None
+    span = min(later) - key[3]
+    return max(1, round(span * fps)) if span <= Fraction(1, 5) else None
 
 
 def conservative_editorial_response(inputs):
@@ -64,8 +101,13 @@ def conservative_editorial_response(inputs):
             if not footage:
                 raise ValueError()
             events, coverage, intervals = [], [], []
+            aliases={}
             for observation in observations:
                 oid = observation['id']
+                alias=verified_cut_key(observation)
+                if alias is not None and alias in aliases:
+                    coverage.append({'observation_id':oid,'event_id':aliases[alias]})
+                    continue
                 source = Fraction(str(observation['start_s']))
                 boundary = next((beat for beat in footage
                     if beat.get('source_start_s') is not None and
@@ -79,6 +121,9 @@ def conservative_editorial_response(inputs):
                     coverage.append({'observation_id': oid,
                                      'beat_id': beat['id']})
                     continue
+                if alias is not None:
+                    raise ContractError('editorial_cut_duration_unproven', oid,
+                        'A transition bracket does not establish a display duration. Author the shot explicitly.')
                 span = (Fraction(str(observation['end_s'])) - source)
                 duration = (max(1, round(span * fps))
                             if span <= Fraction(1, 5) else 1)
@@ -116,6 +161,8 @@ def conservative_editorial_response(inputs):
                 coverage.append({'observation_id': oid,
                                  'event_id': event_id})
                 intervals.append((first, first + duration))
+                if alias is not None:
+                    aliases[alias]=event_id
             variants[key] = {'events': events, 'coverage': coverage}
         response = {'variants': variants}
         validate_editorial_response(response, inputs)
@@ -152,12 +199,24 @@ def validate_editorial_response(value, inputs):
                 if event['anchor']['kind']!='speech' and event['anchor']['evidence_id']!=observation['id']:
                     raise ValueError()
                 short=Fraction(str(observation['end_s']))-Fraction(str(observation['start_s']))
-                if short<=Fraction(1,5) and event['duration_frames']!=max(1,round(short*fps)):
+                if verified_cut_key(observation) is not None:
+                    brief = verified_brief_shot_frames(observation, inputs['observations'], fps)
+                    if brief is not None:
+                        if event['duration_frames'] != brief:
+                            raise ContractError('editorial_brief_event_lost', event['id'])
+                    elif event['duration_frames'] <= max(1, round(Fraction(1, 5) * fps)):
+                        raise ContractError('editorial_cut_duration_unproven', event['id'],
+                            'Adjacent transition samples do not prove a brief content interval.')
+                elif short<=Fraction(1,5) and event['duration_frames']!=max(1,round(short*fps)):
                     raise ContractError('editorial_brief_event_lost',event['id'])
             resolved=resolve_edits(inventory,variant['passages'],events,inputs['clock'],key,inputs['total_frames'])
             for event in resolved['events']:
                 original=next(f for f in inventory if f['id']==event['footage_id'])
-                if event['source_in_frame']==event['start_frame']-original['in_frame']:
+                previous = next((e for e in resolved['events']
+                    if e['end_frame'] == event['start_frame']), None)
+                visible_reframe = ('reframe_zoom' in event and event['reframe_zoom'] !=
+                    (previous.get('reframe_zoom', 1) if previous else 1))
+                if event['source_in_frame']==event['start_frame']-original['in_frame'] and not visible_reframe:
                     raise ContractError('editorial_ineffective_cut',event['id'],'The event repeats uninterrupted footage.')
             coverage=branch['coverage']
             if (not isinstance(coverage,list) or len(coverage)!=len(observations)
@@ -167,7 +226,11 @@ def validate_editorial_response(value, inputs):
             for item in coverage:
                 observation=observations[item['observation_id']]
                 if 'event_id' in item:
-                    if by_event[item['event_id']]['observation_id']!=observation['id']:raise ValueError()
+                    primary=observations[by_event[item['event_id']]['observation_id']]
+                    if primary['id']!=observation['id'] and (
+                            verified_cut_key(observation) is None
+                            or verified_cut_key(primary)!=verified_cut_key(observation)):
+                        raise ValueError()
                     covered.add(item['event_id'])
                 else:
                     beat=next(f for f in variant['footage'] if f['id']==item['beat_id'])
@@ -193,7 +256,12 @@ class PlanningStore:
         record=json.loads(row['body']);self.load(record)
         return record
 
-    def load(self,record):return self.blobs.read(record['manifest'])
+    def load(self,record):
+        payload = self.blobs.read(record['manifest'])
+        plans = validate_editorial_response(payload['response'], payload['input'])
+        if plans != payload['plans']:
+            raise ContractError('stale_editorial_plan', 'manifest')
+        return payload
 
     def save(self,binding,inputs,response):
         plans=validate_editorial_response(response,inputs)

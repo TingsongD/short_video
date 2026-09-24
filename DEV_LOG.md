@@ -7,6 +7,105 @@ decisions) is my direct work.
 
 ---
 
+## 2026-09-22 — Caption readability
+
+- Unified caption styling across native Hypit, typography and FFmpeg: bold white
+  48px text at 720p (72px at 1080p), an 80%-opaque black rounded background,
+  scaled padding and a bottom edge at 78% of frame height. Phrase grouping now
+  measures the bold face within the padded safe width, preserving all words and
+  alignment times. The compiler binds the font and caption style revision.
+- Actual rendered-frame checks caught and corrected background sizing that could
+  obscure a second line or exceed the safe width. Four new export checks verify
+  two visible lines, padding, safe placement, at least 7:1 contrast over white
+  footage, and exact 30 fps output. Related caption, speech, alignment, native
+  render and composition regressions pass: **62 focused offline tests**.
+- This updates future exports; historical final media and production records
+  are unchanged. No paid generation or production service restart occurred.
+  Visually inspected a native-rendered sample over existing footage at phone
+  size. Still previews are saved under `data/factory-qa/caption-style-2026-09-22/`;
+  no test or preview renderer processes remain.
+
+## 2026-09-22 — Last-run incident audit
+
+- Mapped the completed AVvVLM5b-mE run's saved failures to current fixes and
+  regression coverage. Reproduced and fixed forced-English transcription of
+  unlabeled sources, completed-transcript reuse after language settings changed,
+  and rejection/misassignment of complete Chinese character alignment.
+- The pinned CLI requires an explicit language; unknown sources now use the
+  existing local WhisperX detection protocol and retain its detected language
+  for explicit translation. Failed detection blocks, with no paid fallback.
+  Changed transcription settings create fresh evidence without altering
+  historical immutable revisions.
+- A real, offline original-audio check found the missing standard Chinese
+  alignment model. Restored its public weights in the existing cache, then
+  verified Chinese detection (reported 0.99), 72 aligned speech units and
+  factory timing validation against the saved scene boundaries with no repairs.
+  No audio was sent externally and no production service was started.
+- All 20 new regression cases and the related analysis/timing/history checks
+  pass: **73 focused tests**. Full final validation: **1,642 passed, 7 skipped
+  in 40:00**. All 542 captured source/test hashes stayed unchanged during the
+  run; frozen contracts have no diff and no test render processes remain.
+  The four delivered finals still match their stored hashes and remain
+  720×1280, 30 fps, 424 frames. No paid request or production record changed.
+  See the [issue-by-issue audit](docs/factory-reports/LAST-RUN-AUDIT-2026-09-22.md).
+
+## 2026-09-22 — Parallel footage generation
+
+- Changed the Vertex default from one to four remote operations and applied the
+  configured limit at startup, including existing databases. Added fair queue
+  rotation and ordering of deferred work so slow polling cannot serialize
+  independent submissions or hide later completed clips.
+- Preserved the single worker, global provider capacities, local render limit,
+  per-request budgets and unknown-operation holds. Updated the operator guide
+  and handover to reflect the user's concurrency instruction.
+- Twelve new offline regressions and all four offline F06 scenarios pass.
+  Full backend verification: **1,622 passed, 7 skipped in 39:34**. The
+  worker-death regression verifies four retained Vertex operations and no
+  duplicate submissions after restart. No production services or paid work
+  were started.
+  See [parallel-generation report](docs/factory-reports/PARALLEL-GENERATION-2026-09-22.md).
+
+## 2026-09-22 — Retired partial paid-batch recovery
+
+- Removed automatic partial paid-batch recovery from the current remaining-work
+  list at the user's request and marked it out of scope in the repair report.
+- Existing duplicate-purchase safeguards and saved financial records are
+  unchanged; this is a documentation-only scope update.
+
+## 2026-09-22 — Safe review repairs and explicit 30 fps policy
+
+- Patched the applicable code/interface findings from the repository review,
+  retaining bounded recovery for partial/unknown paid work. Added regressions
+  for budget integrity, expiry/retry recovery, final audio, QC identity,
+  publication/measurement scope, process ownership and legacy defects.
+- Applied the user's rule: convert non-30/VFR seeds into immutable cached
+  30 fps analysis copies and require 30 fps factory output. Standard analysis,
+  transcript/evidence and Flashcut share the same conversion boundary.
+- Final validation: **1,610 backend tests passed, 7 skipped** (40:16),
+  **76 dashboard tests** and production build passed, **27 isolated helper
+  tests** passed. Source/test hashes stayed unchanged throughout the full run;
+  frozen schemas and fixtures have no diff.
+- Details, validation and remaining manual/live work are in
+  [REPAIRS-2026-09-22](docs/factory-reports/REPAIRS-2026-09-22.md). This is local
+  patch work, without production-state changes, provider calls or deployment.
+
+## 2026-09-22 — Post-release operating-status correction
+
+- Rechecked the local deployment after the previous Codex task ended. The
+  rollout's API and single worker were healthy at 21:23 UTC, but the
+  agent-managed persistent sessions did not survive task closure. At 21:34 UTC,
+  `/api/health` did not connect and process inspection found no factory API or
+  worker. The open dashboard tab is therefore not evidence of a running app.
+- Commit `89204bd` remains on local and remote `main`; this is a service
+  availability correction, not a video-generation failure or rollback. The
+  preceding rollout's 20/20 final-hash and protected-row comparison remains
+  its recorded checkpoint. No job, accounting record, video or provider
+  request was changed by this documentation review.
+- Updated the operator guide with durable two-terminal startup instructions
+  and clarified the historical plan, implementation record and qualification
+  reports so a code release is not mistaken for live-provider qualification
+  or a continuously running local service.
+
 ## 2026-09-22 — Bounded future flash-cut evidence and release qualification
 
 - A retained rapid-cut seed exposed a real preflight failure: duplicating all

@@ -407,8 +407,30 @@ class FactoryServices:
             self._validate_segments(body['segments'],body['packaging']['target_frames'])
             return body
         with self.db.uow():
+            branches = patch.get('variants', [])
+            if set(patch) <= {'reason'}:
+                # A metadata-only revision has no changed production inputs.
+                # Carry only current valid branches; content edits still need
+                # explicit branch plans and never silently clear staleness.
+                branches = []
+                for key in 'BCD':
+                    try:
+                        variant = self.experiments._variant(eid, key)
+                    except ContractError as error:
+                        if error.code == 'unknown_variant':
+                            continue
+                        raise
+                    if variant.stale_reason:
+                        continue
+                    branches.append({'key': key, 'factor': variant.changed_factor,
+                        'regions': [r.to_dict() for r in variant.allowed_regions],
+                        'segments': copy.deepcopy(variant.segments),
+                        'hypothesis': variant.hypothesis,
+                        'primary_metric': variant.primary_metric,
+                        'allowed_fields': list(variant.allowed_fields),
+                        'dependent_fields': list(variant.dependent_fields)})
             result=self.experiments.revise_control(eid,edit,patch.get('reason','operator edit'))
-            for branch in patch.get('variants',[]): self._branch(eid,branch)
+            for branch in branches: self._branch(eid,branch)
         return {'id':eid,'revision':result['revision'].revision,'status':'draft'}
 
     def quote_experiment(self,eid,expected_revision=None):
@@ -431,8 +453,15 @@ class FactoryServices:
                         raise ContractError('reference_preparation_pending', 'quote', 'Character-conditioned clips are still being prepared.')
                     bound_request(self, exp, key, segment, segment['picture']['request'], bindings)
             body['reference_bindings'] = bindings
+        identity = f'quote-{eid}-r{exp.revision}'
+        if exp.packaging.get('flashcut_policy'):
+            from .editorial_work import output_binding
+            # Reject a premature quote before creating a durable failed job.
+            # A completed editorial intent gets its own idempotent local quote.
+            body['output_binding'] = output_binding(self, exp)
+            identity += '-' + content_hash(body['output_binding'])[:16]
         return self.require('commands').enqueue('quote',body,
-            experiment_id=eid,revision=exp.revision,identity=f'quote-{eid}-r{exp.revision}')
+            experiment_id=eid,revision=exp.revision,identity=identity)
 
     def plan_for(self,eid):
         exp=self._current(eid)
@@ -477,8 +506,11 @@ class FactoryServices:
             raise ContractError('not_authorized','experiment_id')
         bp=self._experiment_blueprint(exp)
         self._analysis_binding_gate(bp['seed_id'],bp.get('provenance'),bp.get('analysis'))
+        identity=f'run-{eid}-r{exp.revision}'
+        if exp.packaging.get('flashcut_policy'):
+            identity += '-' + content_hash([plan['id'],plan['plan_hash']])[:16]
         return self.require('commands').enqueue('run',{'plan_id':plan['id']},experiment_id=eid,
-            revision=exp.revision,identity=f'run-{eid}-r{exp.revision}')
+            revision=exp.revision,identity=identity)
 
     def pause_experiment(self,eid):
         self._current(eid); self.require('scheduler').pause(eid)
@@ -626,6 +658,9 @@ class FactoryServices:
         return self.quality.accept(path, checks, binding, automated_delivery=True)
 
     def delivery_acceptance(self, variant, final, path, binding, check_ids):
+        mix_id = (final.get('mix') or {}).get('artifact_id')
+        if mix_id:
+            self.quality.ensure_export_audio(final, path, self.artifacts.verified_path(mix_id))
         exp = self._current(variant['experiment_id'], variant['experiment_revision'])
         automated = exp.packaging.get('run_policies', {}).get('delivery') == 'after_qc'
         if automated:

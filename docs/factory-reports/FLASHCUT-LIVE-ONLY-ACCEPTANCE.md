@@ -3,6 +3,8 @@
 Prepared 2026-09-22. This is a checklist and quote boundary for a future
 multi-seed acceptance run. It does not start a run, submit a provider request,
 raise a ceiling, settle a hold, or extend an expired qualification.
+The local API and worker were not running at the 2026-09-22 21:34 UTC
+operating check; starting them is separate from authorizing this plan.
 
 The unpaid local preflight below used Gemini and Jev rates saved through
 `2026-09-22T23:59:59Z`. The estimates are reviewable, but they are not a

@@ -46,6 +46,13 @@ LIMIT_MULTIPLE = "three treatment-vs-control comparisons; " \
     "multiplicity not corrected — descriptive ranking only"
 
 
+def _window_definition(evidence):
+    # Pull time stays in the evidence hash and freshness checks, but separate
+    # posts cannot be required to have been fetched simultaneously.
+    return {k: v for k, v in (evidence.get('window') or {}).items()
+            if k not in ('observed_at', 'late')}
+
+
 class LearningService:
     def __init__(self, db):
         self.db = db
@@ -154,6 +161,8 @@ class LearningService:
                                     "must sum to 1")
             required = sorted(weights)
         for p, cfg in (sp.get("per_platform") or {}).items():
+            if not isinstance(cfg, dict) or set(cfg) - {'primary_metric', 'exposure_metric', 'min_exposure', 'guardrails'}:
+                raise ContractError('invalid_seed_policy', f'per_platform.{p}')
             if p not in PUBLISH_PLATFORMS:
                 raise ContractError("invalid_seed_policy",
                                     "per_platform", p)
@@ -162,6 +171,15 @@ class LearningService:
                 raise ContractError("invalid_seed_policy",
                                     f"per_platform.{p}.primary_metric",
                                     metric)
+            if 'exposure_metric' in cfg and cfg['exposure_metric'] not in PLATFORM_METRICS.get(p, {}):
+                raise ContractError('invalid_seed_policy', f'per_platform.{p}.exposure_metric')
+            if 'min_exposure' in cfg and (type(cfg['min_exposure']) not in (int, float) or
+                    not math.isfinite(cfg['min_exposure']) or cfg['min_exposure'] < 0):
+                raise ContractError('invalid_seed_policy', f'per_platform.{p}.min_exposure')
+            guards = cfg.get('guardrails', {})
+            if not isinstance(guards, dict) or any(k not in PLATFORM_METRICS.get(p, {}) or
+                    type(v) not in (int, float) or not math.isfinite(v) or v < 0 for k, v in guards.items()):
+                raise ContractError('invalid_seed_policy', f'per_platform.{p}.guardrails')
         rule = (sp.get("improvement_rule") or {})
         kind = rule.get("kind", "weighted_lift")
         if kind not in ("weighted_lift", "min_platforms"):
@@ -265,7 +283,7 @@ class LearningService:
             experiment_id=experiment_id,
             experiment_revision=revision,
             policy_version=pol["policy_version"], horizon=horizon,
-            platform=platform,
+            platform=platform, account_id=account,
             primary_metric=pol["primary_metric"],
             comparisons=comparisons, conclusion=conclusion,
             winner=winner, evidence_ids=evidence,
@@ -290,7 +308,7 @@ class LearningService:
             return [], "waiting_for_data", "", limitations + [
                 f"incomplete coverage: {sorted(missing)}"]
         import math
-        windows={json.dumps(v.get('window'),sort_keys=True) for v in per_variant.values()}
+        windows={json.dumps(_window_definition(v),sort_keys=True) for v in per_variant.values()}
         if len(windows)!=1:return [],'waiting_for_data','',limitations+['incompatible observation windows or source definitions']
         for key,v in per_variant.items():
             exposure=v.get('metrics',{}).get(pol['exposure_metric'])
@@ -345,10 +363,11 @@ class LearningService:
         return comparisons, "inconclusive", "", limitations
 
     def _guardrails(self, pol, metrics):
+        import math
         failures = []
         for name, floor in (pol.get("guardrails") or {}).items():
             v = metrics.get(name)
-            if v is None:
+            if type(v) not in (int, float) or not math.isfinite(v):
                 failures.append(f"{name}:missing")
             elif v < floor:
                 failures.append(f"{name}:{v}<{floor}")
@@ -368,7 +387,22 @@ class LearningService:
             # A decision over old snapshots cannot remain independent evidence.
             pol=self.policy(d['experiment_id'],d['experiment_revision'])
             if not pol or pol['horizon']!=d['horizon']:continue
-            current=self.decide(d['experiment_id'],d['experiment_revision'])
+            account = d.get('account_id', '')
+            if 'account_id' not in d and d.get('platform'):
+                base = f"dec-{d['experiment_id']}-r{d['experiment_revision']}-{d['horizon']}-{d['platform']}"
+                if not self._record('decision', base):
+                    # Old records did not save account scope explicitly. Only
+                    # recover it from the attached publications, never an ID.
+                    accounts = set()
+                    for sid in d.get('evidence_ids', []):
+                        snap = self._record('metricsnapshot', sid)
+                        pub = self._record('publication', json.loads(snap['body']).get('publication_id', '')) if snap else None
+                        if pub:
+                            accounts.add(json.loads(pub['body']).get('account_id'))
+                    if len(accounts) != 1 or None in accounts:
+                        continue
+                    account = accounts.pop()
+            current=self.decide(d['experiment_id'],d['experiment_revision'], platform=d.get('platform', ''), account=account)
             if current['id']!=d['id'] or current['conclusion']!='provisional_winner':continue
             body = json.loads(er["body"])
             if body.get("template_ref") == template_ref and \
@@ -424,8 +458,10 @@ class LearningService:
         declared per-platform primary-metric override replaces the
         global metric on that lane (§8.3 capability matrix)."""
         import math
-        metric = ((sp.get("per_platform") or {}).get(platform) or {}
-                  ).get("primary_metric") or pol["primary_metric"]
+        overrides = (sp.get('per_platform') or {}).get(platform) or {}
+        pol = {**pol, **overrides,
+               'guardrails': {**(pol.get('guardrails') or {}), **(overrides.get('guardrails') or {})}}
+        metric = pol['primary_metric']
         exp = pol["exposure_metric"]
         missing = [k for k, v in per_variant.items()
                    if v["coverage"] != "complete"]
@@ -433,6 +469,12 @@ class LearningService:
             return {"status": "waiting", "missing": sorted(missing),
                     "table": {}}
         a = per_variant["A"]
+        posts = [v.get('post_id') for v in per_variant.values()]
+        if not all(posts) or len(set(posts)) != len(posts):
+            return {'status': 'invalid_comparison', 'reason': 'missing_or_duplicate_post', 'table': {}}
+        windows = {json.dumps(_window_definition(v), sort_keys=True) for v in per_variant.values()}
+        if len(windows) != 1:
+            return {'status': 'invalid_comparison', 'reason': 'incompatible observation windows or source definitions', 'table': {}}
         a_g = self._guardrails(pol, a.get("metrics") or {})
         if a_g:
             return {"status": "invalid_comparison",
@@ -444,7 +486,7 @@ class LearningService:
             return {"status": "insufficient_exposure",
                     "detail": f"control {exp}={a_exp}", "table": {}}
         a_val = (a.get("metrics") or {}).get(metric)
-        if not a_val:
+        if type(a_val) not in (int, float) or not math.isfinite(a_val) or a_val <= 0:
             return {"status": "invalid_comparison",
                     "reason": "zero_baseline", "table": {}}
         table = {}
@@ -632,7 +674,8 @@ class LearningService:
         # iff (a) it leads the next eligible contender by ≥ min_margin
         # and (b) it satisfies the improvement_rule against A. If the
         # top scorer fails, evaluate the next eligible scorer.
-        order = sorted(scores.items(), key=lambda kv: (-kv[1], kv[0]))
+        order = sorted(((k, v) for k, v in scores.items() if eligible.get(k, True)),
+                       key=lambda kv: (-kv[1], kv[0]))
         if len(order) > 1 and math.isclose(
                 order[0][1], order[1][1], rel_tol=0, abs_tol=1e-9):
             return "inconclusive", "", {**basis, "tie": [

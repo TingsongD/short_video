@@ -59,17 +59,21 @@ def test_archive_restore_persists_without_execution_or_accounting_changes(env):
 @pytest.mark.parametrize('status', ['ready', 'waiting_dependencies', 'reserved', 'dispatching',
                                  'accepted', 'running', 'unknown', 'blocked', 'cancel_requested',
                                  'awaiting_review', 'output_available', 'downloaded'])
-def test_nonterminal_jobs_and_experiment_history_stay_visible(env, status):
+def test_nonterminal_job_stays_visible_while_finished_sibling_can_be_archived(env, status):
     db = env[2]
     job(db, 'old-job', experiment='exp-one')
     job(db, 'current-job', status, experiment='exp-one')
     run(db, 'old-run', experiment_id='exp-one')
-    assert all(not i['eligible'] and not i['archived'] for i in items(env))
-    assert change(env, items(env)).status_code == 409
+    snapshot = {(i['kind'], i['id']): i for i in items(env)}
+    assert snapshot['job', 'old-job']['eligible']
+    assert not snapshot['job', 'current-job']['eligible']
+    assert not snapshot['run', 'old-run']['eligible']
+    assert change(env, [snapshot['job', 'old-job']]).status_code == 200
+    assert db.conn.execute("SELECT status FROM jobs WHERE id='old-job'").fetchone()[0] == 'succeeded'
 
 
 @pytest.mark.parametrize('status', ['paused', 'running'])
-def test_run_protects_referenced_jobs_commands_and_dependencies(env, status):
+def test_paused_run_retains_records_but_can_hide_its_finished_steps(env, status):
     db, services = env[2:4]
     job(db, 'old-job'); job(db, 'dependency')
     job(db, 'finished-child', depends=['dependency'])
@@ -77,7 +81,12 @@ def test_run_protects_referenced_jobs_commands_and_dependencies(env, status):
     services.commands.enqueue('auto_step', {'run_id': 'current-run'}, identity='step')
     with db.uow() as u:
         u.conn.execute("UPDATE jobs SET status='succeeded' WHERE id='step'")
-    assert all(not i['eligible'] for i in items(env))
+    snapshot = items(env)
+    assert all(i['eligible'] for i in snapshot if i['kind'] == 'job')
+    assert not next(i for i in snapshot if i['kind'] == 'run')['eligible']
+    before = execution_snapshot(db)
+    assert change(env, [i for i in snapshot if i['eligible']]).status_code == 200
+    assert execution_snapshot(db) == before
 
 
 @pytest.mark.parametrize('attempt_status', ['prepared', 'dispatching', 'unknown', 'accepted', 'running', 'cancel_requested'])
@@ -112,12 +121,15 @@ def test_stale_preview_is_atomic_and_reopened_work_reappears(env):
     assert not next(i for i in items(env) if i['id'] == 'old-job')['archived']
 
 
-def test_new_unresolved_work_unhides_previously_archived_run_and_job(env):
+def test_new_unresolved_work_unhides_run_without_unhiding_finished_job(env):
     db = env[2]; job(db, 'old-job', experiment='exp-one')
     run(db, 'old-run', experiment_id='exp-one')
     assert change(env, items(env)).status_code == 200
     job(db, 'new-job', 'ready', experiment='exp-one')
-    assert not any(i['archived'] for i in items(env))
+    snapshot = {(i['kind'], i['id']): i for i in items(env)}
+    assert snapshot['job', 'old-job']['archived']
+    assert not snapshot['job', 'new-job']['archived']
+    assert not snapshot['run', 'old-run']['archived']
 
 
 def test_history_mutations_require_csrf_and_idempotency(env):
@@ -127,3 +139,12 @@ def test_history_mutations_require_csrf_and_idempotency(env):
     assert client.post('/api/dashboard/history', json=body, headers={'x-csrf-token': csrf}).status_code == 400
     assert change(env, [], key='empty').status_code == 400
     assert change(env, [{'kind': 'budget', 'id': 'anything', 'version_hash': 'x'}], key='invalid').status_code == 400
+
+
+def test_remote_hold_protects_terminal_job_even_with_finished_attempt(env):
+    db = env[2]; job(db, 'held-job')
+    with db.uow() as u:
+        u.conn.execute("INSERT INTO attempts(id,job_id,attempt_seq,status,body,created_at,updated_at) VALUES('attempt','held-job',0,'succeeded','{}','now','now')")
+        u.conn.execute("INSERT INTO remote_holds VALUES('attempt','held-job','vertex_submit','now')")
+    assert not items(env)[0]['eligible']
+    assert change(env, items(env)).status_code == 409

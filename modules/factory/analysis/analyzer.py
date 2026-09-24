@@ -177,9 +177,10 @@ def parse_analysis(payload):
                 raise ContractError(
                     "malformed_analysis", "transcript.words",
                     f"word {j} outside segment {i} bounds")
-            words.append({**ws, "text": str(w.get("text") or "")})
+            words.append({**ws, "text": str(w.get("text") or ""),
+                          **{k:w[k] for k in ('speaker', 'speaker_status') if k in w}})
         transcript.append({**seg, "text": str(t.get("text") or ""),
-                           "words": words})
+                           "words": words, **({'speaker': t['speaker']} if 'speaker' in t else {})})
     music = payload.get("music") or {}
     return {"beats": beats, "transcript": transcript,
             "music": {"role": str(music.get("role") or "unknown")},

@@ -259,6 +259,8 @@ class EffectService:
             raise ContractError("request_scope_mismatch", "attempt_id", attempt_id)
         if spec["kind"] in PAID:
             price = self._price(spec)
+            for budget_id in self._budgets(auth, spec, price):
+                self.budget.available(budget_id)  # Includes fixed run-cap integrity, even after reservation.
             self.budget.authorize_or_raise(auth, auth.scope_hash, spec["provider"], spec["model"], attempt["request_hash"], price, now=self.clock())
             if price.reserve_amount:
                 held = self.db.conn.execute("SELECT status,authorization_id FROM reservations WHERE id=?", (attempt["reservation_id"],)).fetchone()

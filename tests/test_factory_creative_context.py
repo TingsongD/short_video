@@ -67,3 +67,54 @@ def test_first_appearance_split_uses_independently_qualified_mode_durations():
         'text':{'durations_s':[4,8]}, 'image_ref':{'durations_s':[5,10]}}}
     split = scene_allocations(12, cap, [], ['host'])
     assert [(a['input_mode'],a['duration_s'],a['covers_s']) for a in split] == [('text',8,8),('image_ref',5,4)]
+
+
+@pytest.mark.parametrize('variation', ['full_video', 'controlled_regions'])
+def test_autorun_draft_keeps_actions_when_scene_context_only_names_locations(monkeypatch, variation):
+    """Exercise the draft boundary that formerly overwrote all beat actions."""
+    from types import SimpleNamespace as NS
+    from modules.factory.autorun.service import AutoRunService
+    from modules.factory.autorun.policies import new_policies
+
+    actions = ['Woman opens a melon.', 'Man lifts a motor.']
+    c = context()
+    for scene, place in zip(c['scenes'], ['Produce department', 'Workshop']):
+        scene['physical_scene'] = place
+    beats = [NS(id=f'b{i+1}', role='body', visual_event=action,
+                target=NS(to_dict=lambda i=i: {"start_frame": i*90, "end_frame": (i+1)*90})) for i, action in enumerate(actions)]
+    bp = NS(seed_id='seed', provenance={}, analysis={}, beats=beats,
+            target_frames=180, clock=NS(num=30, den=1))
+    captured = {}
+    svc = AutoRunService.__new__(AutoRunService)
+    svc.s = NS(db=None, analysis=NS(get=lambda _: bp),
+               create_experiment_draft=lambda eid, body: captured.update(body))
+    monkeypatch.setattr('modules.factory.analysis.deep.bound_gate', lambda *a: None)
+    monkeypatch.setattr(svc, '_generation_route', lambda _: ('vertex', 'fake'))
+    monkeypatch.setattr(svc, '_generation_settings', lambda *a: {'aspect': '9:16', 'resolution': '720p'})
+    monkeypatch.setattr(svc, '_advance', lambda *a: None)
+    sc = {key: {'b1': 'First action', 'b2': 'Second action'} for key in 'ABCD'}
+    sc.update(changed={key: 'b1' for key in 'BCD'},
+              factors={key: 'hook' for key in 'BCD'},
+              hypotheses={key: 'Test' for key in 'BCD'},
+              metrics={key: 'retention' for key in 'BCD'})
+    run = NS(id='auto-fixture', params={'workflow': 'full_video', 'voice_id': 'voice',
+             'language': 'en', 'policies': new_policies({'variation': variation})},
+             state={'blueprint_id': 'bp', 'template_id': 'template', 'scripts': sc,
+                    'analysis': {'creative_context': c}})
+    assert svc._stage_draft(run) == 'next'
+    for segments in [captured['segments']] + [v['segments'] for v in captured['variants']]:
+        for i, segment in enumerate(segments):
+            prompt = segment['picture']['request']['prompt']
+            assert actions[i] in prompt
+            assert actions[1-i] not in prompt
+            assert c['scenes'][i]['physical_scene'] in prompt
+            assert 'Amazing planet!' not in prompt
+
+
+def test_scene_action_excludes_source_overlay_directions():
+    from modules.factory.creative.context import validate_context, scene_request
+    c = validate_context(context(), ['b1', 'b2'])
+    r = scene_request(c, 'b2', 'A', {},
+                      visual_event='Man lifts the motor. Overlay reads BUY NOW.')
+    assert 'Man lifts the motor.' in r['prompt']
+    assert 'BUY NOW' not in r['prompt']

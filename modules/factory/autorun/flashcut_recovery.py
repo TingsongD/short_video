@@ -1,7 +1,8 @@
 """Explicit, bounded recovery of completed flash-cut responses.
 
 Old jobs, receipts and reservations remain unchanged. A supplemental immutable
-quote covers at most two distinct replacements; it never extends itself.
+quote defaults to two distinct replacements; an explicitly selected larger
+batch is bounded by the original requests and never extends itself.
 """
 from copy import deepcopy
 from fractions import Fraction
@@ -36,7 +37,7 @@ class FlashcutResponseRecovery:
                     'proof':proof,'accounting':'unknown_retained','do_not_retry':True})
             return removed
 
-    def enable(self, run, reviewer, *, automatic=False):
+    def enable(self, run, reviewer, *, automatic=False, max_replacements=2, reviewer_type='human'):
         if (not isinstance(reviewer, str) or not reviewer.strip()
                 or run.stage != 'video_analysis' or run.params.get('profile_id') != 'flashcut_hypit.v1'):
             raise ContractError('flashcut_recovery_unavailable', 'run/reviewer')
@@ -54,11 +55,18 @@ class FlashcutResponseRecovery:
         jobs = run.state.get('flashcut_analysis_jobs', [])
         if not jobs or len(jobs) != len(original['requests']):
             raise ContractError('flashcut_recovery_unavailable', 'jobs')
-        entries, replacements = [], []
+        if (reviewer_type not in ('human', 'assistant')
+                or type(max_replacements) is not int or not 1 <= max_replacements <= min(20, max(2, len(jobs)))
+                or automatic and max_replacements != 2):
+            raise ContractError('flashcut_recovery_unavailable', 'max_replacements')
+        entries, replacements, pending = [], [], []
         for index, (jid, request) in enumerate(zip(jobs, original['requests'])):
             job = self.s.db.uow().jobs.get(jid)
             if job and job['status'] == 'succeeded':
                 entries.append({'job_id': jid, 'index': index, 'mode': 'existing'})
+                continue
+            if job and job['status'] in ('ready', 'reserved', 'waiting_dependencies', 'accepted', 'running', 'unknown', 'output_available'):
+                pending.append(jid)
                 continue
             if not job or job['status'] != 'failed':
                 raise ContractError('flashcut_recovery_not_idle', 'job_id', jid)
@@ -80,9 +88,15 @@ class FlashcutResponseRecovery:
                 entry.update(mode='replacement', replacement_index=len(replacements))
                 replacements.append(adapter.replacement_request(request, unresolved[0]['id']))
             entries.append(entry)
-        if len(replacements) > 2:
+            # Release proven-completed execution slots as siblings finish.
+            # Waiting for the entire batch first can deadlock its queued jobs.
+            # This neither replays the request nor releases its financial hold.
+            self.release_completed_capacity(jid, request)
+        if pending:
+            raise ContractError('flashcut_recovery_pending', 'job_id', pending[0])
+        if len(replacements) > max_replacements:
             raise ContractError('flashcut_recovery_exhausted', 'requests',
-                                'More than two capped responses require a separately reviewed recovery plan.')
+                                f'{len(replacements)} capped responses exceed the fixed {max_replacements}-request recovery allowance.')
         usages = [adapter.prepared(r)[1] for r in replacements]
         quotes = [adapter.price(r) for r in replacements]
         reserve = sum(q['reserve_amount'] for q in quotes)
@@ -98,12 +112,12 @@ class FlashcutResponseRecovery:
         cumulative['max_media_seconds'] = str(Fraction(cumulative['max_media_seconds']) +
             sum((Fraction(u['media_seconds']) for u in usages), Fraction(0)))
         cumulative['reserve_usd_micros'] += reserve
-        plan = {'version': 'flashcut_response_recovery.v1', 'run_id': run.id,
+        plan = {'version': 'flashcut_response_recovery.v2' if max_replacements > 2 else 'flashcut_response_recovery.v1', 'run_id': run.id,
                 'original_plan_identity': original['identity'], 'binding': original['binding'],
                 'entries': entries, 'requests': replacements, 'quotes': quotes, 'usage_bounds': usages,
-                'max_replacements': 2, 'supplemental_reserve_usd_micros': reserve,
+                'max_replacements': max_replacements, 'supplemental_reserve_usd_micros': reserve,
                 'cumulative_envelope': cumulative, 'reviewer': reviewer.strip(),
-                'reviewer_type': 'automated' if automatic else 'human',
+                'reviewer_type': 'automated' if automatic else reviewer_type,
                 'created_at': utcnow()}
         run.state['flashcut_response_recovery'] = self.s.source_evidence.blobs.put(plan)
         if automatic:
@@ -123,8 +137,11 @@ class FlashcutResponseRecovery:
 
     def collect(self, run, original):
         plan = self.s.source_evidence.blobs.read(run.state['flashcut_response_recovery'])
+        limit = plan.get('max_replacements', 2)
+        allowed = min(20, max(2, len(original['requests']))) if plan['version'] == 'flashcut_response_recovery.v2' else 2
         if (plan['run_id'] != run.id or plan['original_plan_identity'] != original['identity']
-                or plan['binding'] != original['binding'] or len(plan['requests']) > 2):
+                or plan['binding'] != original['binding'] or type(limit) is not int
+                or not 1 <= limit <= allowed or len(plan['requests']) > limit):
             raise ContractError('flashcut_recovery_mismatch', 'plan')
         adapter = self.s.providers['audiovisual_analysis_flashcut']
         for entry in plan['entries']:
@@ -138,6 +155,32 @@ class FlashcutResponseRecovery:
                                            plan['requests'], 'flashcut_response_repair')
             if outcome != 'wait':
                 return outcome, []
+            jobs = run.state['flashcut_response_repair_jobs']
+            if len(jobs) != len(plan['requests']):
+                raise ContractError('flashcut_recovery_mismatch', 'repair_jobs')
+            pending = False
+            rejected_job = None
+            for jid, request in zip(jobs, plan['requests']):
+                job = self.s.db.uow().jobs.get(jid)
+                if job and job['status'] not in ('succeeded', 'failed', 'blocked', 'cancelled'):
+                    pending = True
+                if job and job['status'] == 'failed':
+                    try:
+                        self.release_completed_capacity(jid, request)
+                    except ContractError:
+                        unresolved=self.s.db.conn.execute(
+                            "SELECT 1 FROM attempts WHERE job_id=? AND status NOT IN ('failed','cancelled','succeeded')",(jid,)).fetchone()
+                        if not unresolved:
+                            rejected_job = rejected_job or jid
+                            continue
+                        # No completion proof: keep the slot and let normal
+                        # failure handling report this unresolved operation.
+                        return ('pause', 'flashcut_response_unproven', jid,
+                                'Preserve the unknown operation and cost hold; inspect its provider outcome before continuing.'), []
+            if pending:
+                return 'wait', []
+            if rejected_job:
+                return self.auto._jobs(run,[rejected_job],'flashcut_response_repair_failed'), []
         outputs = []
         for entry in plan['entries']:
             if entry['mode'] == 'saved':

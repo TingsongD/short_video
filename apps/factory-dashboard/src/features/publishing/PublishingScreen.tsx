@@ -1,5 +1,6 @@
 import React,{useEffect,useState} from 'react';
 import {call} from '../../api/client';
+import {ManualPost, ManualMetrics} from './ManualEvidence';
 type Row=Record<string,any>;
 type Props={data:Record<string,Row[]>;selected:Row|null;reviewer:string;act:(fn:()=>Promise<unknown>,message?:string)=>Promise<unknown>};
 const expires=()=>new Date(Date.now()+3600000).toISOString();
@@ -58,6 +59,7 @@ export function PublishingScreen({data,selected,reviewer,act}:Props){
       {livePkg.status==='selected'&&<button onClick={()=>act(()=>post(`/api/metadata/${livePkg.id}/freeze`,{},livePkg.version),'Package frozen')}>Freeze package</button>}
     </details>}
     <h3>Publication matrix</h3>
+    <ManualPost key={`${eid}:${rev}`} variants={finals} revision={rev} reviewer={reviewer} act={act}/>
     <button disabled={!destinations.length} onClick={()=>act(()=>post(`/api/experiments/${eid}/publications`,{reviewer:reviewed(),destinations},rev),'Publication batch planned')}>Plan {finals.length}×{destinations.length} batch</button>
     <table><thead><tr><th>Variant</th>{PLATFORMS.map(p=><th key={p}>{p}</th>)}</tr></thead><tbody>
       {variants.map(v=><tr key={v.id}><td>{v.variant_key}</td>
@@ -66,8 +68,9 @@ export function PublishingScreen({data,selected,reviewer,act}:Props){
     </tbody></table>
     {publication&&<details open><summary>Publication {publication.id}</summary>
       <pre>{JSON.stringify({platform:publication.platform,account:publication.account_id,status:publication.status,provider:publication.provider,post:publication.remote_post_id,url:publication.post_url,scheduled_at:publication.scheduled_at,published_at:publication.published_at,job:publication.job_id,metadata_package:publication.metadata_package_id},null,2)}</pre>
-      <button onClick={()=>act(()=>post(`/api/publications/${publication.id}/authorize`,{final_sha256:publication.final_sha256,platform:publication.platform,account_id:publication.account_id,action:'publish',reviewer:reviewed(),valid_until:expires()}),'Exact publication approved')}>Authorize this slot</button>
-      <button onClick={()=>act(()=>post(`/api/publications/${publication.id}/run`),'Publication queued')}>Publish approved slot</button>
+      {!publication.manual && <><button onClick={()=>act(()=>post(`/api/publications/${publication.id}/authorize`,{final_sha256:publication.final_sha256,platform:publication.platform,account_id:publication.account_id,action:'publish',reviewer:reviewed(),valid_until:expires()}),'Exact publication approved')}>Authorize this slot</button>
+      <button onClick={()=>act(()=>post(`/api/publications/${publication.id}/run`),'Publication queued')}>Publish approved slot</button></>}
+      {publication.status === 'public' && <ManualMetrics key={publication.id} publication={publication} reviewer={reviewer} act={act}/>}
       <button onClick={()=>act(()=>post(`/api/publications/${publication.id}/observe`),'Status check queued')}>Refresh remote status</button>
       {publication.status==='scheduled'&&<button onClick={()=>act(()=>post(`/api/publications/${publication.id}/cancel-remote`),'Remote cancellation requested')}>Cancel remote schedule</button>}
       {publication.status==='scheduled'&&<p>This post is scheduled with the provider — pausing local work will NOT stop it going live. Cancel it explicitly.</p>}

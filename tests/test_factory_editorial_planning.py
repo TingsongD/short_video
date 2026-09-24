@@ -115,3 +115,105 @@ def test_valid_editorial_response_records_provider_origin():
     assert payload is None and extra == {}
     assert result['plan_origin'] == 'provider'
     assert 'editorial_recovery' not in result
+
+
+def test_same_verified_cut_can_share_one_event_without_losing_coverage():
+    from modules.factory.analysis.editorial_planning import validate_editorial_response
+    inputs,response=case();o=inputs['observations'][0]
+    o['cut_frame_bracket']={'version':'cut_frame_bracket.v1','before_frame_id':'frame:30','after_frame_id':'frame:32',
+                           'before_source_time':'1','after_source_time':'32/30','reported_source_time':'32/30'}
+    # Explicit same adjacent source samples; shorter event and exact sample clock.
+    o.update(end_s=31/30,evidence_ids=['frame:30','frame:31'])
+    o['cut_frame_bracket'].update(after_frame_id='frame:31',after_source_time='31/30',reported_source_time='31/30')
+    inputs['observations'].append({**deepcopy(o),'id':'o2','description':'Second window describes the same cut.'})
+    for branch in response['variants'].values():
+        branch['events'][0]['duration_frames']=15
+        branch['coverage'].append({'observation_id':'o2','event_id':'e0'})
+    for branch in response['variants'].values():
+        assert len(branch['events'])==1 and len(branch['coverage'])==2
+        assert branch['coverage'][0]['event_id']==branch['coverage'][1]['event_id']
+    validate_editorial_response(response,inputs)
+    inputs['observations'][1]['cut_frame_bracket']['after_frame_id']='frame:33'
+    with pytest.raises(ContractError):validate_editorial_response(response,inputs)
+
+
+def point_cut_case():
+    inputs, response = case()
+    observation = inputs['observations'][0]
+    observation.update(end_s=31/30, evidence_ids=['frame:30', 'frame:31'],
+        cut_frame_bracket={'version':'cut_frame_bracket.v1',
+            'before_frame_id':'frame:30', 'after_frame_id':'frame:31',
+            'before_source_time':'1', 'after_source_time':'31/30'})
+    return inputs, response
+
+
+def test_transition_bracket_is_not_a_one_frame_insert_duration():
+    from modules.factory.analysis.editorial_planning import conservative_editorial_response
+    inputs, _ = point_cut_case()
+    with pytest.raises(ContractError, match='editorial_cut_duration_unproven'):
+        conservative_editorial_response(inputs)
+
+
+def test_point_cut_accepts_explicit_sustained_shot_instead_of_bracket_width():
+    from modules.factory.analysis.editorial_planning import validate_editorial_response
+    inputs, response = point_cut_case()
+    for branch in response['variants'].values():
+        branch['events'][0]['duration_frames'] = 15
+    plans = validate_editorial_response(response, inputs)
+    assert plans['A']['events'][0]['end_frame'] == 60
+
+
+def test_point_cut_rejects_flash_without_a_second_transition_proving_brief_content():
+    from modules.factory.analysis.editorial_planning import validate_editorial_response
+    inputs, response = point_cut_case()
+    for branch in response['variants'].values():
+        branch['events'][0]['duration_frames'] = 1
+    with pytest.raises(ContractError, match='editorial_cut_duration_unproven'):
+        validate_editorial_response(response, inputs)
+
+
+def test_two_verified_transitions_preserve_a_real_two_frame_shot():
+    from modules.factory.analysis.editorial_planning import validate_editorial_response
+    inputs, response = point_cut_case()
+    other = deepcopy(inputs['observations'][0])
+    other.update(id='o2', start_s=32/30, end_s=33/30, evidence_ids=['frame:32','frame:33'])
+    other['cut_frame_bracket'].update(before_frame_id='frame:32',after_frame_id='frame:33',
+        before_source_time='32/30',after_source_time='33/30')
+    inputs['observations'].append(other)
+    for branch in response['variants'].values():
+        branch['events'].append({'id':'e1','observation_id':'o2','kind':'cut','required':True,
+            'source_time':str(32/30),'anchor':{'kind':'visual','target_time':'2','evidence_id':'o2'},
+            'duration_frames':15,'footage_id':'b0','source_in_frame':70})
+        branch['coverage'].append({'observation_id':'o2','event_id':'e1'})
+    assert validate_editorial_response(response,inputs)['A']['events'][0]['duration_frames']==2
+    response['variants']['A']['events'][0]['duration_frames']=3
+    with pytest.raises(ContractError,match='editorial_brief_event_lost'):
+        validate_editorial_response(response,inputs)
+
+
+def test_reframe_cannot_claim_a_cut_when_framing_does_not_change():
+    from modules.factory.analysis.editorial_planning import validate_editorial_response
+    inputs, response = point_cut_case()
+    for branch in response['variants'].values():
+        branch['events'][0].update(source_in_frame=45,duration_frames=15,reframe_zoom=1)
+    with pytest.raises(ContractError,match='editorial_ineffective_cut'):
+        validate_editorial_response(response,inputs)
+    for branch in response['variants'].values():
+        branch['events'][0]['reframe_zoom']=1.12
+    validate_editorial_response(response,inputs)
+
+
+def test_saved_intent_is_revalidated_before_reusing_legacy_flash_plan(tmp_path):
+    from modules.factory.analysis.editorial_planning import PlanningStore
+    from modules.factory.store import Database
+    inputs,response=point_cut_case()
+    for branch in response['variants'].values():
+        branch['events'][0]['duration_frames']=1
+    db=Database(tmp_path/'db')
+    try:
+        store=PlanningStore(db,tmp_path/'evidence')
+        ref=store.blobs.put({'input':inputs,'response':response,'plans':{}})
+        with pytest.raises(ContractError,match='editorial_cut_duration_unproven'):
+            store.load({'manifest':ref})
+    finally:
+        db.close()

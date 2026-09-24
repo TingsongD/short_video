@@ -274,8 +274,8 @@ def create_app(services, session_token=None):
         def create():
             from ..budget import BudgetService
             if not body.get('reviewer') or not body.get('evidence') or not {'id','unit','scope','scope_key','ceiling'}<=body.keys():raise ContractError('budget_scope_required','reviewer/evidence/budget')
-            if str(body['id']).startswith('authority:'):
-                raise ContractError('budget_not_selectable','id','Internal authorization ceilings are managed by the effect ledger.')
+            if str(body['id']).startswith(('authority:', 'run_guardrail:')):
+                raise ContractError('budget_not_selectable','id','Internal authorization ceilings and fixed run caps are managed by the effect ledger.')
             result=BudgetService(services.db).create_budget(body['id'],body['unit'],body['scope'],body['scope_key'],body['ceiling'])
             with services.db.uow() as u:u.events.append('factory','budget_scope_recorded',body)
             return 201,{'budget_id':body['id']}
@@ -377,6 +377,13 @@ def create_app(services, session_token=None):
     @app.get("/api/autoruns/{run_id}")
     async def autorun_detail(run_id: str):
         return {"run":services.autorun.detail(run_id)}
+
+    @app.post('/api/autoruns/{run_id}/budget')
+    async def autorun_raise_budget(run_id: str, request: Request):
+        body = await json_command(request)
+        status, resp = mutation(request, body, lambda: (200,
+            services.autorun.raise_budget(run_id, body)))
+        return JSONResponse(resp, status_code=status)
 
     @app.post("/api/autoruns/{run_id}/resume")
     async def autorun_resume(run_id: str,request: Request):
@@ -539,6 +546,22 @@ def create_app(services, session_token=None):
 
     @app.get('/api/publications/{publication_id}')
     async def publication_detail(publication_id:str):return services.detail('publication',publication_id)
+
+    @app.post('/api/variants/{variant_id}/publications/manual', status_code=201)
+    async def manual_publication(variant_id: str, request: Request):
+        body = await json_command(request)
+        status, resp = mutation(request, body, lambda: (201, {
+            'publication': services.require('publication_work').register_manual(variant_id, body, expected_rev(request))}))
+        return JSONResponse(resp, status_code=status)
+
+    @app.post('/api/publications/{publication_id}/readbacks/manual', status_code=201)
+    async def manual_readback(publication_id: str, request: Request):
+        body = await json_command(request)
+        status, resp = mutation(request, body, lambda: (201, services.require('readback').import_verified_manual(
+            publication_id, metrics=body.get('metrics'), period=body.get('period'), horizon=body.get('horizon'),
+            source_name=body.get('source_name'), reviewer=body.get('reviewer'), evidence=body.get('evidence'),
+            observed_at=body.get('observed_at')).to_dict()))
+        return JSONResponse(resp, status_code=status)
 
     @app.post('/api/experiments/{experiment_id}/publications',status_code=201)
     async def publications_batch(experiment_id:str,request:Request):

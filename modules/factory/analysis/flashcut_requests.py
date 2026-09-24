@@ -7,6 +7,9 @@ from ..domain.errors import ContractError
 from ..domain.records import content_hash
 from .flashcut_vertex import MODEL, ROUTE_LIMITS
 
+INITIAL_RESPONSE_POLICY = {'prompt_version': 'flashcut_understanding.v2',
+                          'response_contract': 'flashcut_compact.v2',
+                          'output_policy': 'flashcut_output.v2'}
 
 def load_evidence(store,evidence_id):
     record=store.get(evidence_id)
@@ -30,7 +33,7 @@ def build_analysis_plan(store,evidence_id,adapter,transcript):
     context={'source_duration':clock['duration'],'source_clock':{k:clock[k] for k in ('version','origin','video','audio')},
              'transcript':transcript,
              'coverage':{'decoded_frames':clock['decoded_frames'],'encoded_frames':clock['decoded_frames']}}
-    base={'task':'analyze_flashcut','model':MODEL,'prompt_version':'flashcut_understanding.v1',
+    base={'task':'analyze_flashcut','model':MODEL,**INITIAL_RESPONSE_POLICY,
           'binding':binding,'limits':deepcopy(adapter.limits)}
     def with_context(media_values,*,whole=False):
         if not compact:
@@ -111,10 +114,11 @@ def build_analysis_plan(store,evidence_id,adapter,transcript):
     quotes=[adapter.price(request) for request in requests]
     # Two single-request clarification rounds are reserved at full route bounds.
     limits=adapter.limits
+    clarification_output=max(limits['output_tokens'],max(u['output_tokens_bound'] for u in usages))
     p=adapter.pricing
     import math
     clarification_cost=math.ceil((limits['input_tokens']*p['input_usd_micros_per_million']+
-                                  limits['output_tokens']*p['output_usd_micros_per_million'])/1000000)
+                                  clarification_output*p['output_usd_micros_per_million'])/1000000)
     envelope={'version':'analysis_envelope.v1','initial_requests':len(requests),'max_requests':len(requests)+2,
               'max_clarification_rounds':2,
               'max_images':sum(u['images'] for u in usages)+2*limits['images'],
@@ -122,7 +126,7 @@ def build_analysis_plan(store,evidence_id,adapter,transcript):
               'max_media_seconds':str(sum((Fraction(u['media_seconds']) for u in usages),Fraction(0))+2*limits['media_seconds']),
               'max_payload_bytes':sum(u['payload_bytes'] for u in usages)+2*limits['payload_bytes'],
               'max_input_tokens':sum(u['input_tokens_bound'] for u in usages)+2*limits['input_tokens'],
-              'max_output_tokens':sum(u['output_tokens_bound'] for u in usages)+2*limits['output_tokens'],
+              'max_output_tokens':sum(u['output_tokens_bound'] for u in usages)+2*clarification_output,
               'reserve_usd_micros':sum(q['reserve_amount'] for q in quotes)+2*clarification_cost}
     plan={'version':'flashcut_analysis_plan.v2' if compact else 'flashcut_analysis_plan.v1',
           'binding':binding,'requests':requests,
@@ -162,7 +166,7 @@ def build_clarification_request(plan,pending):
     original=min(choices,key=lambda r:(-sum(contains(r,p) for p in pending),
         sum((Fraction(m['source_end'])-Fraction(m['source_start']) for m in r['media'] if m['kind']=='video'),Fraction(0))))
     request=deepcopy(original)
-    request.update(scope='clarification',response_contract='flashcut_structured.v1')
+    request.update(scope='clarification',response_contract=original.get('response_contract','flashcut_structured.v1'))
     request['context']['clarify_ids']=[p for p in pending if contains(request,p)]
     present={candidate['id'] for candidate in request['context']['candidates']}
     request['context']['candidates'] += [deepcopy(candidates[p])

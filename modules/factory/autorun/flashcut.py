@@ -13,12 +13,17 @@ class FlashcutAnalysis:
         self.auto,self.s=autorun,autorun.s
 
     def status(self,run):
+        wait=run.state.get('provider_wait') or {}
+        if wait.get('job_id'):
+            job=self.s.db.uow().jobs.get(wait['job_id'])
+            wait=({'reason':job['blocked_reason'],'next_attempt_at':job.get('next_attempt_at')}
+                  if job and job['status']=='ready' and job.get('blocked_reason') else {})
         result={'profile_id':'flashcut_hypit.v1','stage':run.state.get('flashcut_substage','waiting'),
                 'jev_mode':'shadow','jev_status':run.state.get('jev_status','pending'),
                 'clarifications_used':len(run.state.get('flashcut_clarifications',[])),
                 'state':'complete' if run.state.get('flashcut_substage')=='complete' else
-                        'paused' if run.status=='paused' else 'waiting' if run.state.get('provider_wait') else 'processing',
-                **{k:v for k,v in run.state.get('provider_wait',{}).items() if k in ('reason','next_attempt_at')}}
+                        'paused' if run.status=='paused' else 'waiting' if wait else 'processing',
+                **{k:v for k,v in wait.items() if k in ('reason','next_attempt_at')}}
         eid=run.state.get('source_evidence_id')
         if eid:
             record=self.s.source_evidence.get(eid)
@@ -83,6 +88,11 @@ class FlashcutAnalysis:
                         FlashcutResponseRecovery(self.auto).enable(
                             run, 'auto-pipeline', automatic=True)
                     except ContractError as error:
+                        if error.code == 'flashcut_recovery_pending':
+                            return 'wait'
+                        if error.code == 'flashcut_recovery_exhausted':
+                            return ('pause', error.code, error.detail,
+                                    'Review the completed responses and select a fixed replacement allowance within the approved cumulative budget. Original requests and financial holds are retained.')
                         if error.code == 'budget_exhausted':
                             return ('pause', 'budget_exhausted', error.detail,
                                     'The bounded analysis recovery exceeds an applicable ceiling. Raise only the named ceiling or start a new run; the original request will not be replayed.')
@@ -131,7 +141,7 @@ class FlashcutAnalysis:
             'overview':overview,'responses':outputs,'observations':observations,'plan_identity':plan['identity'],
             **({'context_resolution':run.state['flashcut_context_resolution']}
                if run.state.get('flashcut_context_resolution') else {})})
-        run.state.update(analysis=overview,analysis_source_sha=plan['binding']['source_sha256'],
+        run.state.update(analysis=overview,analysis_source_sha=record['binding'].get('original_source_sha256', plan['binding']['source_sha256']),
             flashcut_understanding=bundle,flashcut_substage='complete')
         self.auto._advance(run,'sections');return 'next'
 

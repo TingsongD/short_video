@@ -12,7 +12,10 @@ def _parse(s):
 
 def window_hours(cfg_hours):
     """[48, 168, 672] -> {'48h': 48, '7d': 168, '28d': 672}"""
-    return dict(zip(WINDOW_NAMES, cfg_hours))
+    names = {48: '48h', 168: '7d', 672: '28d'}
+    if any(type(h) is not int or h not in names for h in cfg_hours) or len(set(cfg_hours)) != len(cfg_hours):
+        raise ValueError('readback windows must be unique supported hours: 48, 168, 672')
+    return {names[h]: h for h in cfg_hours}
 
 
 def pull_at(published_at, hours):

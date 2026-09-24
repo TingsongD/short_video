@@ -23,6 +23,21 @@ beforeEach(() => {
 });
 
 describe("api client contract", () => {
+  it.each(['missing_url', 'unsupported_url', 'unsupported_platform'])(
+    'explains rejected source links without exposing internal details: %s', async (code) => {
+      globalThis.fetch = fakeFetch({
+        'POST /api/session': {session_token: 'fixture'},
+        'POST /api/seeds': {error: code, field: 'url', detail: "no adapter for host ''"},
+      });
+      await session();
+      const error = await api.createSeed('not-a-video-url').catch(e => e);
+      expect(error).toBeInstanceOf(ApiError);
+      if (!(error instanceof ApiError)) throw new Error('Expected the rejected source-link response');
+      expect(error.code).toBe(code);
+      expect(error.message).toBe('Enter a complete HTTPS video link from YouTube, TikTok or Instagram.');
+      expect(calls.filter(c => c.url === '/api/seeds')).toHaveLength(1);
+    });
+
   it("session issues a token used as CSRF", async () => {
     globalThis.fetch = fakeFetch({
       "POST /api/session": { session_token: "tok-1" },

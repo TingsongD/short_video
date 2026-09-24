@@ -16,6 +16,21 @@ const output={name:'take',type:speechTypes.semanticTake};
 const normalize=text=>text.normalize('NFC').toLocaleLowerCase('en-US')
   .replace(/^[\p{P}\p{Z}\s]+|[\p{P}\p{Z}\s]+$/gu,'');
 
+// The native script parser excludes currency symbols from numeric timing
+// tokens, but retains them on an explicitly bound display word. Require that
+// exact one-to-one display mapping instead of stripping arbitrary symbols.
+const matchesWord=(narrative,token,text)=>{
+  if (normalize(token.text)===normalize(text)) return true;
+  const display=normalize(text);
+  if (!/^[$¥￥€£][0-9][0-9,.，．-]*$/u.test(display)
+      || display.slice(1)!==normalize(token.text)) return false;
+  const units=(narrative.caption?.units||[]).filter(u=>
+    u.sourceTokenIds?.length===1 && u.sourceTokenIds[0]===token.id && u.wordIds?.length===1);
+  if (units.length!==1) return false;
+  const words=(narrative.caption?.words||[]).filter(w=>w.id===units[0].wordIds[0]);
+  return words.length===1 && normalize(words[0].text)===display;
+};
+
 export function materializeAligned(narrative,excerpt,artifact,alignment) {
   const {frameCount,numerator,denominator,words}=alignment;
   if (![frameCount,numerator,denominator].every(n=>Number.isSafeInteger(n)&&n>0)
@@ -30,7 +45,7 @@ export function materializeAligned(narrative,excerpt,artifact,alignment) {
   const anchors=[{identity:segment.startAnchorId,frame:0},{identity:segment.endAnchorId,frame:frameCount}];
   const timed=tokens.map((token,i)=>{
     const word=words[i];
-    if (typeof word.text!=='string' || !normalize(word.text) || normalize(token.text)!==normalize(word.text)
+    if (typeof word.text!=='string' || !normalize(word.text) || !matchesWord(narrative,token,word.text)
         || !Number.isSafeInteger(word.startFrame) || !Number.isSafeInteger(word.endFrameExclusive)
         || !(previous<=word.startFrame && word.startFrame<word.endFrameExclusive && word.endFrameExclusive<=frameCount))
       throw new Error('alignment_text_or_timing_mismatch');

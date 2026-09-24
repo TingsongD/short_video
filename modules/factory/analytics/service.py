@@ -526,6 +526,75 @@ class ReadbackService:
 
     # ----------------------------------------------------- compare --
 
+    def import_verified_manual(self, publication_id, *, metrics, period,
+                               horizon, source_name, reviewer, evidence,
+                               observed_at, now=''):
+        """Audited operator evidence for a declared, completed horizon.
+
+        Confidence alone never verifies a snapshot. The operator attests to
+        the source, coverage and normalized units; the server validates the
+        post identity and window. Omitted metrics stay absent.
+        """
+        import math
+        from ..domain.records import content_hash
+        pub = self._pub(publication_id)
+        if not pub or pub['status'] != 'public' or not pub.get('published_at') or not pub.get('remote_post_id'):
+            raise ContractError('publication_not_public', 'publication_id')
+        if not all(isinstance(v, str) and v.strip() for v in (source_name, reviewer, evidence, observed_at)):
+            raise ContractError('manual_evidence_required', 'source/reviewer/evidence/observed_at')
+        if horizon not in HORIZONS and horizon not in COMPLETE_DAYS:
+            raise ContractError('unknown_horizon', 'horizon')
+        allowed = PLATFORM_METRICS.get(pub['platform'], {})
+        if not isinstance(metrics, dict) or not metrics or any(k not in allowed or k == 'public_views' or
+                type(v) not in (int, float) or not math.isfinite(v) or v < 0 for k, v in metrics.items()):
+            raise ContractError('invalid_manual_metrics', 'metrics')
+        units = {k: 'seconds' if k.endswith('_s') else 'percent' if k in ('avg_view_pct', 'thumbnail_ctr') else 'count'
+                 for k in allowed if k != 'public_views'}
+        if any(units[k] == 'count' and int(v) != v for k, v in metrics.items()):
+            raise ContractError('invalid_manual_metrics', 'count')
+        now = now or self.clock()
+        try:
+            t0, measured, imported = _parse(pub['published_at']), _parse(observed_at), _parse(now)
+            if not isinstance(period, dict):
+                raise ValueError()
+            hours = COMPLETE_DAYS.get(horizon, 0) * 24 or HORIZONS.get(horizon)
+            due = t0 + timedelta(hours=hours)
+            kind = period.get('window_kind')
+            if kind in ('source_calendar', 'source_calendar_window'):
+                start, end, due, expected_kind = self._window_for(pub, horizon, t0)
+                if pub['platform'] != 'youtube' or kind != expected_kind or (period.get('start'), period.get('end')) != (start, end):
+                    raise ValueError()
+            elif kind in ('exact_rolling', 'observed_lifetime_at_age') and horizon in HORIZONS:
+                if (kind == 'exact_rolling' and pub['platform'] != 'youtube'
+                        or _parse(period['start']) != t0 or _parse(period['end']) != due):
+                    raise ValueError()
+                if kind == 'observed_lifetime_at_age' and pub['platform'] == 'youtube':
+                    raise ValueError()
+            else:
+                raise ValueError()
+            if not due <= measured <= imported:
+                raise ValueError()
+            late = kind == 'observed_lifetime_at_age' and (measured - t0).total_seconds() > hours * 3600 * 1.25
+            if late:
+                raise ValueError()
+        except (ValueError, TypeError, KeyError):
+            raise ContractError('manual_window_mismatch', 'period/observed_at') from None
+        requested = {**period, 'horizon_hours': hours, 'window_kind': kind,
+                     'published_at': t0.isoformat(), 'due_at': due.isoformat()}
+        snap = MetricSnapshot(schema_version='metric_snapshot.v1',
+            id='snap-manual-' + content_hash([publication_id, horizon, source_name, requested])[:32],
+            created_at=now, publication_id=publication_id, post_id=pub['remote_post_id'],
+            horizon=horizon, query_version='manual_horizon.v1', timezone=pub.get('timezone', 'UTC'),
+            requested_period=requested, actual_coverage={**requested, 'complete': True, 'late': False},
+            source='manual:' + source_name.strip(), observed_at=measured.isoformat(),
+            metric_definitions={'platform': pub['platform'], 'units': units},
+            metrics=dict(metrics), availability={k: 'verified_manual' for k in metrics}, completeness='complete',
+            raw={'imported_at': now, 'reviewer': reviewer.strip(), 'evidence': evidence.strip(), 'coverage_attested': True})
+        snap.validate_or_raise()
+        self._put(snap)
+        self._event(publication_id, 'manual_metrics_verified', {'snapshot_id': snap.id, 'reviewer': reviewer, 'evidence': evidence})
+        return snap
+
     def compare(self, publication_ids, horizon):
         """Matched-horizon descriptive comparison. Incomplete coverage
         stays pending — never counted as a zero sample."""
@@ -562,7 +631,17 @@ class ReadbackService:
     def _snap(self, publication_id, horizon):
         row = self.db.uow().records.get(
             "metricsnapshot", self._snap_id(publication_id, horizon))
-        return json.loads(row["body"]) if row else None
+        automatic = json.loads(row['body']) if row else None
+        manual = [json.loads(r[0]) for r in self.db.conn.execute(
+            "SELECT body FROM records WHERE kind='metricsnapshot' AND json_extract(body,'$.publication_id')=? "
+            "AND json_extract(body,'$.horizon')=? AND json_extract(body,'$.query_version')='manual_horizon.v1'",
+            (publication_id, horizon))]
+        candidates = manual + ([automatic] if automatic else [])
+        if not candidates:
+            return None
+        rank = {'complete': 3, 'partial': 2, 'pending': 1, 'failed': 0}
+        return max(candidates, key=lambda snap: (rank.get(snap['completeness'], 0),
+                   _parse(snap['observed_at']), snap.get('revision', 0)))
 
     def _pub(self, publication_id):
         row = self.db.uow().records.get("publication", publication_id)

@@ -16,6 +16,27 @@ from ..testing.fakes import ProviderError
 
 
 class SynchronousAdapter:
+    @property
+    def qualified(self):
+        try:
+            self.require_qualification()
+        except RequestNotSent:
+            return False
+        return getattr(self, '_qualified', False)
+
+    @qualified.setter
+    def qualified(self, value):
+        self._qualified = value
+
+    def require_qualification(self):
+        guard = getattr(self, 'qualification_guard', None)
+        if guard:
+            from ..domain.errors import ContractError
+            try:
+                guard()
+            except ContractError as error:
+                raise RequestNotSent(error.code) from None
+
     def __init__(self, state_dir):
         self.root = Path(state_dir)
         self.root.mkdir(parents=True, exist_ok=True)

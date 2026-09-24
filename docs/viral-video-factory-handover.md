@@ -8,6 +8,23 @@
 **Audience:** the developer or coding agent implementing the next system milestone.
 **Commission:** prepare the implementation handover for the engineer assigned to build it. This revision changes documentation only. The engineer's implementation assignment authorizes its ordinary offline development work; paid calls, purchases and public posting require their own applicable scope.
 
+**Later operational addendum (2026-09-22):** the 2026-09-18 status above is this
+specification's historical checkpoint, not the live dashboard status. The
+flash-cut code was subsequently released and an AVvVLM5b-mE run completed, but
+new v3 Gemini media and general unattended quality remain unqualified live.
+The local API/worker were not running at the 21:34 UTC check. Use the
+[current flash-cut status](factory-reports/FLASHCUT-CURRENT-STATUS.md),
+[qualification matrix](factory-reports/FLASHCUT-QUALIFICATION-MATRIX.md) and
+[operator guide](factory-operator-guide.md) for current operation; this does
+not change F-module sign-offs or authorize provider spending.
+
+**Latest implementation addendum (2026-09-22):** [safe review repairs and
+30 fps policy](factory-reports/REPAIRS-2026-09-22.md) describe the current working
+tree. Future seed analysis uses an immutable 30 fps copy when conversion is
+needed; factory output is always 30 fps. This supersedes native-frame coverage
+requirements for new analysis: every normalized frame is covered. Historical
+source/evidence records remain unchanged. These changes do not sign live gates.
+
 ## How to use this handover
 
 This is the entry point to the complete development specification. The linked files are required parts of the handover, split so an engineer can work on one small module without losing the system-level rules.
@@ -89,7 +106,7 @@ The current document does not authorize a new batch budget. Historical generatio
 | Output | Portrait 1080×1920, 30 fps by default; record the actual generation resolution separately |
 | Generation | Select Jimeng Canvas or Google Vertex per experiment; prefer the established Canvas workflow when suitable and funded; one result per request |
 | Provider fallback | Apply the recorded provider/model policy and separate caps; keep unresolved submissions on their original provider |
-| Remote concurrency | Five Jimeng operations globally; one Vertex generation initially, increased only after quota and throughput validation |
+| Remote concurrency | Five Jimeng operations globally; four Vertex operations by default per the user's 2026-09-22 parallel-generation request; configurable, with live throughput validation still open |
 | Local render concurrency | One export initially; increase only after memory and throughput measurements |
 | Creative changes | One declared treatment per variant; B/C/D independently branch from A |
 | Review | Automated technical checks plus an explicit creative-review result |
@@ -764,7 +781,7 @@ Independent branches can overlap. A replacement clip waits for its own accepted 
 
 ### 9.2 Capacity and ownership
 
-Maintain independent global capacities: five Jimeng operations per selected account initially, one Vertex video generation per project/quota scope initially, plus separate TTS, analysis and local-render limits. Five variants must not each allocate five Jimeng slots. A Vertex slot is not taken from the Jimeng pool, and one successful Google request is not evidence of five-way capacity. Raise the Vertex limit only after checking model/project/region quotas and measuring concurrent completion and memory/download behavior.
+Maintain independent global capacities: five Jimeng operations and four Vertex video generations across runs by default, plus separate TTS, analysis and local-render limits. The user's 2026-09-22 request for parallel footage supersedes the initial one-Vertex-slot policy. `FACTORY_VERTEX_CONCURRENCY` sets the global Vertex limit at startup; existing remote holds remain counted when it changes. Queue rotation gives submissions, observations and collection turns, and deferred requests go behind other due work. One local worker coordinates concurrent remote operations. Five variants must not each allocate five Jimeng slots. A Vertex slot is not taken from the Jimeng pool. Offline concurrency checks do not establish live model/project/region quota or throughput; measure those separately under an authorized run.
 
 Treat HTTP 429 or quota exhaustion as provider-specific capacity pressure. Back off observation/retrieval requests; for generation requests first classify whether submission was rejected or remains ambiguous. Preserve authorization and the original receipt. Changing region/model or sending work to the other provider follows Section 8.4, rather than acting as an unconditional rate-limit retry.
 
@@ -1157,7 +1174,7 @@ Budget: Jimeng credits [quote/reserve/used] | Vertex USD [estimate/reserve/usage
  [Compare changes] [Open selected in Studio] [Review] [Publication]
 
  Timeline: references -> clips -> captions -> QC -> upload -> cleanup
- Active work: Jimeng 2/5 slots | Vertex 0/1 slot; worker heartbeat 4 seconds ago
+ Active work: Jimeng 2/5 slots | Vertex 0/4 slots; worker heartbeat 4 seconds ago
  Blocker: C's product detail differs from the accepted reference
 ```
 
@@ -1378,7 +1395,7 @@ The matrix below is the system-wide regression checklist. The detailed module gu
 | Vertex adapter | OAuth expiry/reconnect; API-key-only configuration blocked; correct project/model/location and Interactions shape; HTTP 200 followed by errors; URI output without bucket; inline media decode; reported usage; same-ID resume; no assumed idempotency |
 | Budget | Simultaneous Canvas/Vertex reservations; credit/USD isolation; Vertex and aggregate USD cap boundary; dated estimate versus native quote; price change/expiry; shared cost counted once; uncertain charge retained across fallback; usage estimate versus invoice; zero/unset authorization |
 | Dispatch | Crash before dispatch; crash after effect before acknowledgement; original ID reconciliation; ambiguous TTS result; no blind paid retry |
-| Scheduler | Five global Jimeng and one initial Vertex slot, shared across variants; independent provider throttling; 429 and auth-blocked work; slow first job does not hide later results; dependency release; stale lease fencing; browser close; worker restart; pause still collects accepted results |
+| Scheduler | Five global Jimeng and four default Vertex slots, shared across variants; configurable Vertex limit; independent provider throttling; 429 and auth-blocked work; slow first job does not hide later results; dependency release; stale lease fencing; browser close; worker restart; pause still collects accepted results |
 | Hypit | Explicit source workspace; pinned bootstrap; plan rejects unintended hosted calls; exact output retrieval; explicit reuse; observer interruption; failed Build recovery |
 | Rendering | Unsupported effects route correctly; 24-to-30 fps duration preservation; provider duration limit/split plan; insufficient footage; correct media type; native audio stripped/selected without doubling narration; source resolution retained; exact final frame count; soundtrack outside treatment preserved |
 | Captions | Apostrophes, quotes, ampersands, angle brackets, Unicode; decoded text and rendered pixels; caption timing across segment joins |
@@ -1498,7 +1515,7 @@ A CLI/service entry point for this flow must be implemented in F30, using F06/F0
 ### 17.1 Decisions that can use documented defaults
 
 - Local single-user deployment.
-- Five global Jimeng operations, one initial Vertex video operation per configured quota scope and one local render.
+- Five global Jimeng operations, four default Vertex video operations across runs and one local render; live parallel throughput remains to be measured.
 - Four independent variants with hook/body/ending defaults.
 - Source-length matching.
 - Existing Canvas route plus the verified Omni Interactions route as the first Vertex adapter target; choose/fund the needed provider through Section 8.4. Preserve the working ElevenLabs, music and Drive routes.

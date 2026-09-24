@@ -50,6 +50,7 @@ class MusicAdapter(SynchronousAdapter):
                 'rate_basis': self.pricing.get('evidence', '')}
 
     def execute(self, request):
+        self.require_qualification()
         prompt = request.get('prompt')
         ms = request.get('music_length_ms')
         if request.get('model') != self.model or not isinstance(prompt, str) \

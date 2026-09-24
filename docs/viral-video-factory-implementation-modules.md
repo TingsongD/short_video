@@ -233,7 +233,7 @@ Test concurrent reservation races, integer boundaries, zero/unset caps, revoked/
 
 1. Store a DAG of jobs with exact artifact/revision prerequisites. Detect cycles and unmet dependencies before accepting a plan. Mark blocked descendants with a useful reason.
 2. Claim ready work transactionally with worker ID, lease expiry and fencing token. Every consequential completion/update verifies current ownership.
-3. Enforce five global Jimeng slots, one initial Vertex slot per configured quota scope and one local render slot. Share capacities across experiments and variants; retain or conservatively account for unresolved accepted remote operations after worker lease expiry.
+3. Enforce five global Jimeng slots, four default Vertex slots (configurable via `FACTORY_VERTEX_CONCURRENCY`, per the user's 2026-09-22 instruction) and one local render slot. Share capacities across experiments and variants; retain or conservatively account for unresolved accepted remote operations after worker lease expiry.
 4. Separate dispatch, observation and download queues. A slow first submission must not prevent collecting later completed work. Prioritize recovery and collection without starving eligible new jobs.
 5. Implement pause, drain and resume semantics. Pausing stops new submissions while accepted work can still be polled, downloaded and accounted for.
 6. Gate new heavy local work on disk/memory policy. Use bounded poll/backoff and provider-specific throttle state. Browser presence and agent turns have no scheduling role.
@@ -246,7 +246,7 @@ Test graph ordering/cycles, global capacities across multiple workers, stale-lea
 
 | Case | Actions | Expected result |
 | --- | --- | --- |
-| F06-M01 | Queue 12 fake Jimeng, three Vertex and two render jobs across four variants; inspect active counts over time. | Limits are 5/1/1 globally; completion releases the correct slot and prerequisites release automatically. |
+| F06-M01 | Queue 12 fake Jimeng, six Vertex and two render jobs across four variants; inspect active counts over time. | Default limits are 5/4/1 globally; completion releases the correct slot and prerequisites release automatically. |
 | F06-M02 | Make the first Jimeng job slow and the next four fast; pause dispatch. | Fast results are collected promptly; no new generation starts; slow accepted work remains observed. |
 | F06-M03 | Stop one leased worker, start a replacement, then let the old worker attempt a completion update. | Replacement reconciles work; stale fencing token is rejected; no duplicate accepted operation. |
 | F06-M04 | Simulate disk pressure and a Vertex-only quota throttle while Jimeng observation is healthy. | Heavy local starts/Vertex dispatch block with reasons; collection and unrelated healthy work continue. |

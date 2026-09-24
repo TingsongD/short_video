@@ -9,9 +9,37 @@ from ..store.uow import utcnow
 class PublicationWork:
     def __init__(self,s):self.s=s
 
+    def register_manual(self, variant_id, body, revision):
+        s = self.s
+        variant, final, path, binding = s._final(variant_id)
+        s._current(variant['experiment_id'], revision, True)
+        self._ensure_audio(final, path)
+        if body.get('artifact_id') != final['artifact_id'] or body.get('final_sha256') != final['sha256']:
+            raise ContractError('stale_revision', 'final')
+        if not body.get('reviewer') or not body.get('evidence') or not body.get('remote_post_id'):
+            raise ContractError('manual_evidence_required', 'reviewer/evidence/remote_post_id')
+        policy = s.learning.policy(variant['experiment_id'], variant['experiment_revision'])
+        if not policy:
+            raise ContractError('policy_not_frozen', 'experiment')
+        s.quality.accept(path, self._bound_check_ids(variant), binding)
+        if s.publishing.publisher is None:
+            raise ContractError('platform_verifier_unavailable', 'platform')
+        pid = 'manual-pub-' + content_hash([variant_id, final['sha256'], body.get('platform'),
+                                          body.get('account_id'), body['remote_post_id']])[:32]
+        prior = s.publishing.get(pid)
+        if prior:
+            return prior
+        publication = s.publishing.register_manual(pid, variant_plan_id=variant_id,
+            final_sha256=final['sha256'], platform=body.get('platform', ''), account_id=body.get('account_id', ''),
+            remote_post_id=body['remote_post_id'], published_at='', horizon_policy=policy,
+            metadata={'final_attestation': {'reviewer': body['reviewer'], 'evidence': body['evidence'],
+                                          'artifact_id': final['artifact_id']}})
+        return publication.to_dict()
+
     def plan(self,variant_id,body,revision):
         s=self.s;v,final,path,binding=s._final(variant_id)
         s._current(v['experiment_id'],revision,True)
+        self._ensure_audio(final, path)
         s.quality.accept(path,body.get('check_ids',[]),binding)
         receipts=s.db.conn.execute("SELECT body FROM records WHERE kind='delivery' AND json_extract(body,'$.file_sha256')=? AND json_extract(body,'$.status')='verified'",(final['sha256'],)).fetchall()
         if not any(json.loads(r[0]).get('variant_plan_id')==v['id'] and json.loads(json.loads(r[0]).get('cleanup_receipt') or '{}').get('state')=='verified' for r in receipts):raise ContractError('verified_delivery_required','final')
@@ -43,6 +71,11 @@ class PublicationWork:
         with s.db.uow() as u:
             u.conn.execute("UPDATE records SET body=? WHERE kind='publicationintent' AND id=? AND revision=?",(json.dumps(saved),'intent:'+p.id,row['revision']))
         return p.to_dict()
+
+    def _ensure_audio(self, final, path):
+        mix_id = (final.get('mix') or {}).get('artifact_id')
+        if mix_id:
+            self.s.quality.ensure_export_audio(final, path, self.s.artifacts.verified_path(mix_id))
 
     def plan_batch(self,experiment_id,body,revision):
         """One publication plan per (variant × destination) — up to
@@ -95,10 +128,11 @@ class PublicationWork:
         s=self.s;_,final,_,binding=s._final(v['id'])
         rows=s.db.conn.execute(
             "SELECT body FROM records WHERE kind='review'").fetchall()
-        return [json.loads(r[0])['id'] for r in rows
+        checks = [json.loads(r[0]) for r in rows
                 if json.loads(r[0]).get('binding')==binding
                 and json.loads(r[0]).get('target_hash')==final['sha256']
                 and not json.loads(r[0]).get('invalidated_by')]
+        return [r['id'] for r in s.quality.authoritative_checks(checks, binding)]
 
     def authorize(self,pid,body):
         s=self.s;p=s.publishing.get(pid)
@@ -141,6 +175,22 @@ class PublicationWork:
         if st=='paused':return 'paused'
         if st and st!='active':return 'loop_halted:'+st
         if st=='active':
+            if pol.get('valid_until'):
+                from datetime import datetime, timezone
+                try:
+                    current = datetime.fromisoformat(pol['valid_until'].replace('Z', '+00:00')) > datetime.now(timezone.utc)
+                except (ValueError, TypeError):
+                    current = False
+                if not current:
+                    return 'loop_expired'
+            if pol.get('max_posts'):
+                used = {post['id'] for post in rounds._series_posts(series_id)
+                        if post.get('status') not in ('requested', 'failed', 'cancelled') or post.get('attempt_id')}
+                used.update(r[0] for r in rounds.db.conn.execute(
+                    "SELECT json_extract(value,'$.publication_id') FROM meta WHERE key LIKE 'loop_post_slot:%' "
+                    "AND json_extract(value,'$.series_id')=?", (series_id,)))
+                if p.get('id') not in used and len(used) >= pol['max_posts']:
+                    return 'post_limit'
             ap=pol.get('allowed_providers') or []
             if ap and p.get('provider','upload_post') not in ap:
                 return 'provider_not_allowed'
@@ -149,10 +199,27 @@ class PublicationWork:
                 return 'account_not_allowed'
         return None
 
+    def _claim_loop_slot(self, p):
+        rounds = getattr(self.s, 'rounds', None)
+        if rounds is None or not p.get('experiment_id'):
+            return
+        with self.s.db.uow() as u:
+            gate = self._loop_gate(p)
+            if gate:
+                raise ContractError('loop_paused' if gate == 'paused' else gate, 'publication', p['id'])
+            series_id, _, _ = rounds._series_id(p['experiment_id'])
+            if rounds._loop_policy(series_id) is None:
+                return
+            # Reserve before leaving the transaction. A second worker cannot
+            # spend the same last slot. Keep ambiguous attempts counted.
+            u.conn.execute('INSERT OR IGNORE INTO meta(key,value) VALUES(?,?)',
+                ('loop_post_slot:' + p['id'], json.dumps({'series_id': series_id, 'publication_id': p['id']})))
+
     def execute(self,body,job):
         s=self.s;p=s.publishing.get(body['publication_id'])
         if not p:raise ContractError('not_found','publication')
         def grant(request,*unused):
+            self._claim_loop_slot(p)
             aid=EffectService(s.db,s.executor).prepare(p['authorization_id'],'publish',job['id'],job['fencing_token'],s.scheduler.worker_id)
             s.executor.require_request(aid,request);return aid
         s.publishing.effects=grant

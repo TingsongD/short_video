@@ -23,6 +23,7 @@ class TechnicalQC:
     def inspect(self, path, expected):
         findings = []
         temporal_coverage = None
+        export_audio = None
         def add(code, at='video', detail=''):
             findings.append({'code':code,'at':at,'detail':detail})
         try:
@@ -59,6 +60,11 @@ class TechnicalQC:
             findings += self._black_freeze(path, duration, expected.get('intentional_stills',[]))
             if auds and expected.get('has_audio'):
                 findings += self._audio_levels(path)
+            if expected.get('audio_mix'):
+                from .export_audio import compare_export_audio
+                export_audio = compare_export_audio(path, expected['audio_mix'])
+                if not export_audio['ok']:
+                    add(export_audio['code'], 'audio')
             for narration in expected.get('narration',[]):
                 ni=self.probe(narration['path']); n=next(s for s in ni['streams'] if s['codec_type']=='audio')
                 required=(narration['end_frame']-narration['start_frame'])/expected['fps']
@@ -78,6 +84,8 @@ class TechnicalQC:
                   'streams':{'video':bool(vids),'audio':bool(auds)}}
         if temporal_coverage is not None:
             report['temporal_coverage'] = temporal_coverage
+        if export_audio is not None:
+            report['export_audio'] = export_audio
         return report
 
     def _temporal(self, path, expected, frame_count):

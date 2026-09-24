@@ -1055,6 +1055,7 @@ class DecisionPolicy(Record):
 
 @dataclass
 class Decision(Record):
+    account_id: str = ""
     experiment_id: str = ""
     experiment_revision: int = 0
     policy_version: str = ""

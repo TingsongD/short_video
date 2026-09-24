@@ -8,6 +8,7 @@ import re
 from modules.assemble.hypit_markup import escape_markup_text
 from ..domain.errors import ContractError
 from ..domain.records import content_hash
+from ..audio import caption_style as style
 
 PACKAGE=Path(__file__).resolve().parents[3]/'packages/aligned-speech'
 
@@ -109,7 +110,7 @@ def declarations(editorial,clock,artifacts):
 
 
 def caption_track(editorial):
-    lines=['  <asset:Font id="caption-font" src="./assets/caption.ttf" weight="400" style="normal"/>',
+    lines=['  <asset:Font id="caption-font" src="./assets/caption.ttf" weight="700" style="normal"/>',
            '  <caption-fine:Style id="cap" recipe={look.caption.primary} font={caption-font}/>',
            '  <caption-fine:Track id="captions" document={story.caption} timeline={program.timeline}>']
     for p in editorial['passages']:
@@ -119,9 +120,12 @@ def caption_track(editorial):
     return lines
 
 
-def caption_recipe(width):
-    return ('  caption.primary { stack-order: 70; x: 0.5; y: 0.88; width: 0.84; height: 0.22; '
+def caption_recipe(width, font_path=None):
+    scale = width / style.BASE_WIDTH
+    return (f'  caption.primary {{ stack-order: 70; x: 0.5; y: {style.BOTTOM:g}; width: {style.BOX_WIDTH:g}; '
             'anchor-x: center; anchor-y: bottom; align: center; block-align: end; inline-size: fixed; '
-            f'wrap: word; size: {48*width/720:g}; line-height: 1.2; fill: #FFFFFF; '
-            'background: #000000CC; padding: "2"; radius: 2; karaoke: off; '
+            f'wrap: word; size: {style.FONT_SIZE*scale:g}; line-height: {style.LINE_HEIGHT:g}; fill: {style.FILL}; '
+            f'word-gap: {style.caption_font(font_path).getlength(" ")*scale:g}; '
+            f'background: {style.BACKGROUND}; padding: "{style.PAD_Y*scale:g} {style.PAD_X*scale:g}"; '
+            f'radius: {style.RADIUS*scale:g}; karaoke: off; '
             'cue-enter: none; cue-exit: none; lead-frames: 0; tail-frames: 0; handoff: cut; }\n')

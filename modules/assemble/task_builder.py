@@ -46,7 +46,16 @@ def build_task(video_id, shot_list, manifest, cfg, video_subject, prepared=None)
 
 
 def write_task(task, video_dir=None, video_id=None):
-    d = Path(video_dir or DATA_DIR / "production" / (video_id or task["video_subject"]))
+    if video_dir is not None:
+        d = Path(video_dir)
+    else:
+        name = video_id or task['video_subject']
+        if not isinstance(name, str) or name in ('', '.', '..') or '/' in name or '\\' in name:
+            raise ValueError('video id or subject must be a single directory name')
+        root = (DATA_DIR / 'production').resolve()
+        d = root / name
+        if d.resolve().parent != root:
+            raise ValueError('video directory escapes production root')
     d.mkdir(parents=True, exist_ok=True)
     p = d / "mpt_task.json"
     p.write_text(json.dumps(task, indent=2) + "\n", encoding="utf-8")

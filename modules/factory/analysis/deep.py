@@ -33,6 +33,7 @@ from pathlib import Path
 from ..domain.errors import ContractError
 from ..domain.records import ReferenceAnalysis, content_hash
 from ..media.probe import probe
+from ..media.analysis_clock import analysis_media
 from ..media.audio import audio_characteristics
 from ..store.uow import utcnow
 
@@ -161,8 +162,9 @@ class HypitTransport:
     """The pinned project Hypit executable behind a small runner
     seam (tests inject scripted output; production uses subprocess)."""
 
-    def __init__(self, executable, runner=None):
+    def __init__(self, executable, runner=None, *, local_url='http://127.0.0.1:8765'):
         self.executable = str(executable)
+        self.local_url = local_url
         self.runner = runner or (
             lambda argv, timeout=600: subprocess.run(
                 argv, capture_output=True, text=True, timeout=timeout))
@@ -204,8 +206,14 @@ class HypitTransport:
                           timeout=120) or {}
 
     def transcribe(self, src, language, dest):
-        return self._call(["transcribe", str(src), "--language", language,
-                           "--to", str(dest)], timeout=1800)
+        from .local_transcript import transcribe_auto
+        try:
+            transcribe_auto(src, dest, self.local_url, language=language)
+        except (ContractError, OSError, ValueError, subprocess.SubprocessError) as error:
+            code = error.code if isinstance(error, ContractError) else type(error).__name__
+            return subprocess.CompletedProcess([], 1, '',
+                f'Local source transcription failed ({code}); restore WhisperX with diarization.')
+        return subprocess.CompletedProcess([], 0, '', '')
 
     def boundaries(self, src):
         return self._json(["media", "boundaries", str(src), "--json"],
@@ -227,7 +235,7 @@ class ReferenceAnalysisService:
     MACHINE_STAGES = MACHINE_STAGES
 
     def __init__(self, db, registry, artifacts, project_root,
-                 transport, language="en"):
+                 transport, language="auto"):
         self.db = db
         self.registry = registry
         self.artifacts = artifacts
@@ -249,11 +257,17 @@ class ReferenceAnalysisService:
             raise ContractError("source_not_ready", "seed_id")
         art = self.db.uow().artifacts.get(seed.source_asset_id)
         sha = art["sha256"]
+        media = analysis_media(self.artifacts, seed.source_asset_id)
         row = self.db.uow().records.get("referenceanalysis",
                                        analysis_id_for(seed_id))
         if row:
             a = load_analysis(row)
-            if a.source_sha256 == sha:
+            transcript_changed = (a.transcript.get('provider') == 'whisperx'
+                and a.transcript.get('status') == 'aligned'
+                and (a.transcript.get('settings') != self._transcript_settings(a)
+                     or a.transcript.get('diarization', {}).get('status') != 'complete'))
+            if not transcript_changed and a.source_sha256 == sha and (a.acquisition.get('analysis_artifact_id') or
+                    a.source_asset_id) == media['analysis_artifact_id']:
                 if evidence_policy == 'immutable.v2' and not self._immutable(a):
                     # Copy on write: a future run must never rewrite legacy
                     # evidence or its historical record while reusing a seed.
@@ -273,14 +287,15 @@ class ReferenceAnalysisService:
                     self._write_docs(a, self._doc_paths(a))
                     return self._save(a)
                 return a                       # resume, idempotent
-            self._supersede(a, f"source changed to {sha[:12]}", preserve=evidence_policy == 'immutable.v2')
+            self._supersede(a, f"source, analysis clock or transcription settings changed: {sha[:12]}",
+                           preserve=evidence_policy == 'immutable.v2')
         now = utcnow()
         a = ReferenceAnalysis(
             schema_version="referenceanalysis.v1",
             id=analysis_id_for(seed_id), created_at=now, seed_id=seed_id,
             revision=(row["revision"] + 1) if row else 1,
             status="in_progress", source_asset_id=seed.source_asset_id,
-            source_sha256=sha,
+            source_sha256=sha, acquisition=media,
             capabilities={**self._capabilities(), 'evidence_policy': evidence_policy})
         a.content_hash = _hash(a)
         a.validate_or_raise()
@@ -305,9 +320,10 @@ class ReferenceAnalysisService:
     def source_language(self, a):
         """The *source's* spoken language — declared seed metadata first,
         then a CJK heuristic on the platform captions, then the configured
-        default. The requested output (TTS) language never feeds this."""
+        default (automatic detection unless explicitly configured). The
+        requested output (TTS) language never feeds this."""
         meta = self.registry.get(a.seed_id).metadata or {}
-        lang = str(meta.get("language") or meta.get("source_language")
+        lang = str(meta.get("source_language") or meta.get("language")
                    or "").strip().lower()
         if lang:
             return lang
@@ -321,6 +337,7 @@ class ReferenceAnalysisService:
         bytes plus the resolved source language. Any change invalidates
         reuse."""
         return {"provider": "whisperx",
+                "speaker_policy": "whisperx-pyannote.v1",
                 "language": self.source_language(a),
                 "source_sha256": a.source_sha256}
 
@@ -382,14 +399,22 @@ class ReferenceAnalysisService:
                            stage="documents")
         return a
 
+    def _analysis_path(self, a):
+        media = analysis_media(self.artifacts, a.source_asset_id)
+        recorded = a.acquisition.get('analysis_artifact_id')
+        if recorded and recorded != media['analysis_artifact_id']:
+            raise ContractError('analysis_stale', 'analysis_artifact_id')
+        return self.artifacts.verified_path(media['analysis_artifact_id'])
+
     def _stage_acquire(self, a):
-        src = self.artifacts.verified_path(a.source_asset_id)
+        media = analysis_media(self.artifacts, a.source_asset_id)
+        src = self.artifacts.verified_path(media['analysis_artifact_id'])
         info = probe(src)
         audio = audio_characteristics(src)
         v = info.video
         fps = v.avg_frame_rate or v.r_frame_rate
         seed = self.registry.get(a.seed_id)
-        a.acquisition = {
+        a.acquisition = {**media,
             "url": seed.canonical_url, "artifact_id": a.source_asset_id,
             "sha256": a.source_sha256, "duration_s": info.duration_s,
             "width": v.width, "height": v.height,
@@ -425,8 +450,7 @@ class ReferenceAnalysisService:
             # requested output language. A Chinese seed transcribed as
             # English yields phonetic gibberish that alignment accepts.
             language = self.source_language(a)
-            r = self.hypit.transcribe(src=self.artifacts.verified_path(
-                a.source_asset_id), language=language, dest=dest)
+            r = self.hypit.transcribe(src=self._analysis_path(a), language=language, dest=dest)
             if getattr(r, "returncode", 1) == 0 and dest.exists():
                 dur = a.acquisition.get("duration_s") or 0
                 try:
@@ -435,6 +459,13 @@ class ReferenceAnalysisService:
                     doc = {}
                 problems = transcript_problems(doc, dur, language,
                                                require_words=not self._immutable(a))
+                detected = str(doc.get('language') or language).strip().lower() if isinstance(doc, dict) else ''
+                if language == 'auto':
+                    if not re.fullmatch(r'[a-z]{2,3}(?:-[a-z0-9]{2,8})*', detected) or detected == 'und':
+                        problems.append('source language was not detected')
+                    else:
+                        problems.extend(transcript_problems(doc, dur, detected,
+                            require_words=not self._immutable(a)))
                 if problems:
                     # A clean exit code is not proof of usable text —
                     # repetition loops, empty passages, bad timing and a
@@ -456,13 +487,14 @@ class ReferenceAnalysisService:
                 a.transcript = {
                     "status": "aligned", "provider": "whisperx",
                     "confidence": "word-level",
-                    "language": language,
-                    "provenance": f"hypit transcribe ({language})",
+                    "language": detected,
+                    "provenance": (f"local WhisperX detection ({detected})" if language == 'auto'
+                                   else f"hypit transcribe ({language})"),
                     "settings": self._transcript_settings(a),
                     "source_sha256": a.source_sha256,
                     "word_count": len(words), "file": str(dest),
                     "sha256": hashlib.sha256(dest.read_bytes()).hexdigest(),
-                    "preliminary": False}
+                    "preliminary": False, "diarization": doc.get("diarization", {"status": "unavailable"})}
                 from ..autorun.source_timing import words_ok
                 if self._immutable(a) and any(not words_ok(p.get('words'), p) for p in doc.get('passages', [])):
                     a.transcript.update(confidence='passage-level',
@@ -503,7 +535,7 @@ class ReferenceAnalysisService:
                            "recovery": ["restore vendor/hypit-runtime "
                                         "per docs, then retry"]}]
             return self._save(a, status="blocked", stage="evidence")
-        src = self.artifacts.verified_path(a.source_asset_id)
+        src = self._analysis_path(a)
         dur = a.acquisition.get("duration_s") or probe(src).duration_s
         project = self._project(a)
         ev_dir = (self._staging(a) / 'evidence' if self._immutable(a)
@@ -699,9 +731,12 @@ class ReferenceAnalysisService:
         language = str(payload.get("language") or
                        self.source_language(a))
         doc = _hypit_transcript(
-            words, source=self.artifacts.verified_path(
-                a.source_asset_id), language=language,
+            words, source=self._analysis_path(a), language=language,
             audio_seconds=dur, provider=provider)
+        if 'diarization' in payload:
+            from .speakers import require_diarization
+            doc['diarization'] = payload['diarization']
+            require_diarization(doc)
         problems = transcript_problems(doc, dur, language)
         if problems:
             raise ContractError("transcript_suspect", "words",
@@ -720,7 +755,7 @@ class ReferenceAnalysisService:
                         "source_sha256": a.source_sha256,
                         "word_count": len(words), "file": str(dest),
                         "sha256": hashlib.sha256(dest.read_bytes()).hexdigest(),
-                        "preliminary": False}
+                        "preliminary": False, **({'diarization': doc['diarization']} if 'diarization' in doc else {})}
         a.blocking = [b for b in a.blocking
                       if b.get("code") not in TRANSCRIPT_BLOCK_CODES]
         a.stages["transcript"] = {"done": True, "at": utcnow()}
@@ -1127,7 +1162,7 @@ def _hypit_transcript(words, source, language, audio_seconds,
     grouping a real WhisperX endpoint produces — no invented data."""
     passages, current = [], []
     for w in words:
-        if current and w["start_s"] - current[-1]["end_s"] > 2.0:
+        if current and (w["start_s"] - current[-1]["end_s"] > 2.0 or w.get('speaker') != current[-1].get('speaker')):
             passages.append(current)
             current = []
         current.append(w)
@@ -1139,9 +1174,11 @@ def _hypit_transcript(words, source, language, audio_seconds,
         "imported_by": provider,
         "passages": [{
             "text": " ".join(w["word"] for w in group),
+            **({'speaker': group[0]['speaker']} if group[0].get('speaker') else {}),
             "start_seconds": group[0]["start_s"],
             "end_seconds": group[-1]["end_s"],
             "words": [{"text": w["word"],
+                       **{k:w[k] for k in ('speaker', 'speaker_status') if k in w},
                        "start_seconds": w["start_s"],
                        "end_seconds": w["end_s"]} for w in group]}
             for group in passages]}

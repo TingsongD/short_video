@@ -200,6 +200,19 @@ def test_observer_timeout_not_failure(stack):
     assert svc._build("bld-h")["status"] == "observer_lost"
 
 
+def test_native_failure_reason_reaches_durable_render_record(stack):
+    _,_,svc,_=stack
+    reason='Producer @factory/aligned-speech@1#import-aligned-take failed: alignment_text_or_timing_mismatch'
+    doc={'format':'hypit.cli-status@1','build':{'id':'native-failure',
+         'work':{'state':'done','outcome':'failed'},'result':{'state':'failed'},'failure':reason}}
+    svc.hypit=HypitBuildRunner(lambda argv: subprocess.CompletedProcess(argv,0,json.dumps(doc),''))
+    svc.register('bld-h',_comp('hypit'),now=NOW)
+    svc._set('bld-h',remote_build_id='native-failure',hypit_workspace='/fixture')
+    obs=svc.observe('bld-h')
+    assert obs['status']=='failed'
+    assert svc._build('bld-h')['problem']==reason
+
+
 def test_collect_requires_success(stack):
     db, arts, svc, tmp = stack
     svc.register("bld-1", _comp(), now=NOW)

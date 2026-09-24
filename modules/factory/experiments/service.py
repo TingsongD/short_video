@@ -67,6 +67,8 @@ class ExperimentService:
         if blueprint.status != "accepted":
             raise ContractError("blueprint_not_accepted", "status",
                                 blueprint.status)
+        from ..media.analysis_clock import require_output_30
+        require_output_30(blueprint.clock)
         policy = provider_policy or ProviderPolicy()
         plan_body = {
             "segments": segments,

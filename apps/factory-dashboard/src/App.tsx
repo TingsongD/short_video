@@ -17,6 +17,7 @@ import { HistoryCleanup, HistorySnapshot } from './features/operations/HistoryCl
 // The server owns these JSON domain records. The editor round-trips unknown
 // optional fields; IDs, revision and hashes always come from the selected row.
 type Row = Record<string, any>;
+const REFRESH_ERROR = 'Some dashboard data could not refresh. Existing data is retained; retry or select another run.';
 const TABS = ["Seeds", "Auto", "Plan", "Queue", "Compare", "Reviews", "Delivery", "Studio", "Providers", "Products", "Budgets", "Research", "Analysis", "Audio", "Publishing", "Learning"] as const;
 const panelCollections: Record<string, string[]> = {
   Seeds:['blueprints','templates','assets'], Auto:['budgets','queue'],
@@ -88,7 +89,8 @@ export default function App() {
     statusAt.current=Date.now();if(full)detailAt.current=Date.now();
     if(h && loaded.autoruns)setLastUpdated(new Date());
     setRefreshFailed(failures.length>0);
-    if(failures.length)setError('Some dashboard data could not refresh. Existing data is retained; retry or select another run.');
+    if(failures.length)setError(REFRESH_ERROR);
+    else if(full)setError(previous=>previous===REFRESH_ERROR?'':previous);
     };
     inFlight.current=work().finally(()=>{
       inFlight.current=null;

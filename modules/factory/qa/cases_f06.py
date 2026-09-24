@@ -22,7 +22,7 @@ def _job(jid, phase, deps=()):
 def f06_m01(ctx: CaseContext):
     s, db = _sched(ctx, "m06-1")
     jobs = ([_job(f"j{i}", "generate_jimeng") for i in range(12)]
-            + [_job(f"v{i}", "generate_vertex") for i in range(3)]
+            + [_job(f"v{i}", "generate_vertex") for i in range(6)]
             + [_job(f"r{i}", "render") for i in range(2)])
     s.submit_plan(jobs)
     claimed = []
@@ -34,8 +34,8 @@ def f06_m01(ctx: CaseContext):
     counts = {"generate_jimeng": 0, "generate_vertex": 0, "render": 0}
     for c in claimed:
         counts[c["phase"]] += 1
-    ctx.check("limits_5_1_1", counts == {"generate_jimeng": 5,
-                                         "generate_vertex": 1,
+    ctx.check("limits_5_4_1", counts == {"generate_jimeng": 5,
+                                         "generate_vertex": 4,
                                          "render": 1}, str(counts))
     # Completion frees the slot; the next queued job claims it.
     s.complete(claimed[0]["id"], claimed[0]["fencing_token"])
@@ -52,7 +52,7 @@ def f06_m01(ctx: CaseContext):
     ctx.check("dep_released", c2 is not None and c2["id"] == "ch")
     db.close(); db2.close()
     return _result(ctx, "passed",
-                   "global 5/1/1 enforced across variants; completion "
+                   "global 5/4/1 enforced across variants; completion "
                    "releases its pool slot; deps auto-promote")
 
 

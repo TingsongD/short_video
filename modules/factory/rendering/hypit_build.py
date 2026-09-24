@@ -111,7 +111,12 @@ class HypitBuildRunner:
                 status = "failed"
         elif work.get("state") in ("submitting", "working"):
             status = "running"
-        return {"status": status}
+        observation = {"status": status}
+        if status == "failed":
+            from ..events.redact import redact_log
+            failure = build.get("failure")
+            observation["reason"] = redact_log(failure)[-2000:] if isinstance(failure, str) and failure else "native_build_failed"
+        return observation
 
     def retrieve(self, build_id, output_name, dest, workspace):
         dest = Path(dest).resolve()

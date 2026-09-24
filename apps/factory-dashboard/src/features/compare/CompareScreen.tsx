@@ -48,8 +48,8 @@ export function CompareScreen({ entries }: { entries: CompareEntry[] }) {
           <figure key={e.key}>
             {e.pending ? (
               <div className="pending" role="status"
-                   aria-label={`${e.label} still rendering`}>
-                Rendering…
+                   aria-label={`${e.label} not ready`}>
+                Not ready
               </div>
             ) : (
               <video ref={(v) => { videos.current[e.key] = v; }}

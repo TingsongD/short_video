@@ -19,14 +19,21 @@ def stop_test_owned_runtimes(application):
 
 
 @pytest.mark.parametrize('recover_truncated', [False, True, 'budget_refused', 'structured', 'schema_rejected', 'format_recovery', 'format_missing', 'format_budget_refused', 'format_gap_prose', 'format_remote_error'])
-def test_new_flashcut_profile_reaches_native_compare_and_verified_delivery(application, recover_truncated):
+def test_new_flashcut_profile_reaches_native_compare_and_verified_delivery(application, recover_truncated, monkeypatch):
     from modules.factory.analysis.flashcut_vertex import FlashcutAnalyzer
     from modules.factory.analysis.editorial_planning import PROMPT as EDIT_PROMPT
+    editorial_prefixes = (EDIT_PROMPT, EDIT_PROMPT.replace(
+        'FLASHCUT_EDITORIAL_V1', 'FLASHCUT_EDITORIAL_V2', 1))
     s,client,act,worker,root=stack(application)
+    if recover_truncated:
+        # Retain coverage for immutable legacy plans and their recovery path.
+        monkeypatch.setattr('modules.factory.analysis.flashcut_requests.INITIAL_RESPONSE_POLICY',
+            {'prompt_version':'flashcut_understanding.v1'})
     from test_factory_future_workflow import distinct_transport
     distinct_transport(s)
     base=s.providers['audiovisual_analysis']
     calls=[]
+    capped=set()
     format_case=str(recover_truncated).startswith('format_')
     def transport(method,url,body,headers):
         payload=json.loads(body);parts=payload['contents'][0]['parts']
@@ -34,8 +41,10 @@ def test_new_flashcut_profile_reaches_native_compare_and_verified_delivery(appli
         compact=text.startswith('FLASHCUT_UNDERSTANDING_V2')
         if (recover_truncated=='schema_rejected' or format_case) and payload['generationConfig'].get('responseSchema') and not compact:
             return 400,{},b'{"error":{"code":400,"message":"Request contains an invalid argument.","status":"INVALID_ARGUMENT"}}'
-        if text.startswith(EDIT_PROMPT):
-            inp=json.loads(text[len(EDIT_PROMPT):]);variants={}
+        editorial_prefix = next((prefix for prefix in editorial_prefixes
+            if text.startswith(prefix)), None)
+        if editorial_prefix:
+            inp=json.loads(text[len(editorial_prefix):]);variants={}
             for key,variant in inp['variants'].items():
                 word=variant['passages'][0]['words'][1]
                 variants[key]={'events':[{'id':'flash','observation_id':'0:flash','kind':'cut','required':True,
@@ -51,7 +60,8 @@ def test_new_flashcut_profile_reaches_native_compare_and_verified_delivery(appli
             gap_window=(recover_truncated=='format_gap_prose' and context['scope']=='window'
                         and any(p.get('text','').startswith('Media identity and source clock: ') and
                             json.loads(p['text'].split(': ',1)[1])['id']=='window:0' for p in parts))
-            if recover_truncated and (whole or gap_window) and payload['generationConfig']['maxOutputTokens'] == 8192 and not payload['generationConfig'].get('responseSchema'):
+            if recover_truncated and (whole or gap_window) and text not in capped and not payload['generationConfig'].get('responseSchema'):
+                capped.add(text)
                 return 200, {}, json.dumps({'candidates': [{'finishReason': 'MAX_TOKENS',
                     'content': {'parts': [{'text': '{"observations": ['}]}}],
                     'usageMetadata': {'promptTokenCount': 100, 'thoughtsTokenCount': 8000}}).encode()
@@ -212,14 +222,15 @@ def test_new_flashcut_profile_reaches_native_compare_and_verified_delivery(appli
         assert coverage['captions']['pixel_ocr'] is False
         assert coverage['brief_events']['semantic_identity'] is False
         assert coverage['lip_sync']=='not_verified'
-    assert sum(any(p.get('text','').startswith(EDIT_PROMPT) for p in c['contents'][0]['parts']) for c in calls)==1
+    assert sum(any(p.get('text','').startswith(editorial_prefixes) for p in c['contents'][0]['parts']) for c in calls)==1
     assert all(any('inlineData' in p for p in c['contents'][0]['parts']) for c in calls[:-1])
     assert current.state['completion_phases']['delivery']=='complete'
     if recover_truncated:
         plan = s.source_evidence.blobs.read(current.state['flashcut_response_recovery'])
         assert len(plan['requests']) == 1 and plan['max_replacements'] == 2
         assert len([c for c in calls if c['generationConfig']['maxOutputTokens'] == 32768
-                    and not c['contents'][0]['parts'][-1]['text'].startswith('FLASHCUT_UNDERSTANDING_V2')]) == 1
+                    and not c['contents'][0]['parts'][-1]['text'].startswith(
+                        ('FLASHCUT_UNDERSTANDING_V2', *editorial_prefixes))]) == 1
         original_job = plan['entries'][0]['job_id']
         assert s.commands.get(original_job)['status'] == 'failed'
     if recover_truncated=='format_recovery':

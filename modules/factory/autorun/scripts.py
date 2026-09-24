@@ -140,8 +140,8 @@ def _norm_words(text):
     """Case/punctuation-insensitive word list for the variation
     equivalence check — 'Watch this dog!' and 'watch this dog' are the
     same spoken line, not a variation."""
-    return re.sub(r"[^\w\s]", "",
-                  _normalize(str(text))).lower().split()
+    from .source_timing import tokens
+    return tokens(_normalize(str(text)))
 
 
 def validate_variations(sc, beats):
@@ -305,9 +305,11 @@ def llm_request(model, beats, transcript, a_copy, changed):
                 "beats": [{"id": b["id"], "role": b["role"],
                            "start_s": b["start_s"], "end_s": b["end_s"],
                            "max_words": word_budget(b, a_copy.get(b["id"], "")),
-                           "visual_event": b.get("visual_event", "")}
+                           "visual_event": b.get("visual_event", ""),
+                           **({'speaker': b['speaker']} if b.get('speaker') else {})}
                           for b in beats],
                 "transcript": transcript,
+                "speaker_direction": "Preserve each beat's speaker and dialogue perspective. Do not merge characters into one narrator, move words between speakers, or add speech to silent beats.",
                 "control_copy": a_copy,
                 "treatments": {"B": {"beat": changed["B"], "goal": "stronger curiosity hook"},
                                "C": {"beat": changed["C"], "goal": "clearer body explanation"},

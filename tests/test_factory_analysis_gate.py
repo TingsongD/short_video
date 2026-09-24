@@ -197,7 +197,7 @@ class LoopingHypit(FakeHypit):
                 ]})
         Path(dest).write_text(json.dumps({
             "format": "hypit.transcript@1", "source": str(src),
-            "language": language, "audio_seconds": 8.0,
+            "language": "en" if language == "auto" else language, "audio_seconds": 8.0,
             "passages": passages}))
         return type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
 

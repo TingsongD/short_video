@@ -95,6 +95,11 @@ class QualityService:
             return rev.to_dict()
 
     def authoritative_checks(self, checks, binding):
+        creative = [json.loads(r[0]) for r in self.db.conn.execute(
+            "SELECT body FROM records WHERE kind='review' AND json_extract(body,'$.check_type')='creative' ORDER BY created_at DESC,rowid DESC")
+            if json.loads(r[0]).get('binding') == binding]
+        if creative:
+            checks = [r for r in checks if r['check_type'] != 'creative'] + [creative[0]]
         scope = self.visual_scope(binding)
         if scope is None:
             return checks
@@ -103,6 +108,27 @@ class QualityService:
         return [r for r in checks if r['check_type'] != 'automated_visual'] + ([current] if current else [])
 
     # -------------------------------------------------- inspection --
+
+    def ensure_export_audio(self, final, path, mix_path):
+        """Upgrade old technical evidence locally before accepting a saved final."""
+        from .export_audio import COMPARISON_VERSION
+        for cid in final.get('check_ids') or []:
+            review = self._get(cid)
+            if not review or review.get('check_type') != 'technical':
+                continue
+            evidence = review.get('evidence_data') or {}
+            prior_audio = (evidence.get('report') or {}).get('export_audio') or {}
+            if prior_audio.get('comparison_version') == COMPARISON_VERSION:
+                continue
+            expected = dict(evidence.get('expected') or {})
+            if not expected:
+                raise ContractError('audio_evidence_required', 'technical', cid)
+            expected['audio_mix'] = str(mix_path)
+            self.inspect(cid, path, expected, binding=review.get('binding'))
+            with self.db.uow() as u:
+                u.events.append('review:' + cid, 'audio_comparison_upgraded', {
+                    'previous_verdict': review['verdict'], 'previous_audio': prior_audio,
+                    'target_hash': review['target_hash'], 'comparison_version': COMPARISON_VERSION})
 
     def inspect(self, check_id, final_path, expected, now="", binding=None):
         """Run technical QC; persist a Review bound to the final's
@@ -183,6 +209,10 @@ class QualityService:
         except (OSError,ValueError):
             audio_checks=[{"ok":False,"code":"missing_audio_evidence"}]
         out["audio"]=audio_checks
+        from .export_audio import compare_export_audio
+        out['export_audio'] = [compare_export_audio(final, mix)
+                               for final, mix in ((a_path, a_audio), (b_path, b_audio)) if mix]
+        out['ok'] = out['ok'] and all(c['ok'] for c in out['export_audio'])
         out["ok"]=out["ok"] and (bool(audio_checks) or full_video is not None and not unchanged_regions) and all(c["ok"] for c in audio_checks)
         verdict = "pass" if out["ok"] else "fail"
         rev = Review(schema_version="review.v1", id=check_id,

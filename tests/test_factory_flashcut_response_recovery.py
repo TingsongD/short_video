@@ -296,6 +296,8 @@ def test_gap_collection_is_restart_safe_and_requires_the_quoted_full_source(rout
     with db.uow() as u:
         u.conn.execute("INSERT INTO jobs(id,logical_key,phase,status,created_at,updated_at) VALUES('gap','gap','analyze','failed','now','now')")
         u.conn.execute("INSERT INTO attempts(id,job_id,attempt_seq,request_hash,status,body,created_at,updated_at) VALUES('gap-answer','gap',1,?,'unknown','{}','now','now')",(wire_hash(request),))
+        u.conn.execute("INSERT INTO capacity_holds VALUES('dispatch','gap','fixture',1,'now','unfinished_remote_op')")
+        u.conn.execute("INSERT INTO reservations(id,status,created_at) VALUES('gap-money','reserved','now')")
     saved=[]
     services=SimpleNamespace(db=db,providers={adapter.name:adapter},
         source_evidence=SourceEvidenceService(db,adapter.artifacts.root.parent/'source_evidence'))
@@ -308,6 +310,8 @@ def test_gap_collection_is_restart_safe_and_requires_the_quoted_full_source(rout
         assert not saved and not run.state
         return
     first=recovery._gap_result(run,request,'gap',clarification)
+    assert db.conn.execute("SELECT count(*) FROM capacity_holds WHERE job_id='gap'").fetchone()[0]==0
+    assert db.conn.execute("SELECT status FROM reservations WHERE id='gap-money'").fetchone()[0]=='reserved'
     restarted=SimpleNamespace(id='run',state=deepcopy(saved[0]))
     assert FlashcutFormatRecovery(auto)._gap_result(restarted,request,'gap',clarification)==first
     assert len(saved)==1 and len(calls)==2
@@ -323,3 +327,181 @@ def test_gap_resolution_requires_observed_source_coverage(end,confidence,evidenc
     provisional={'j':{'coverage_gap_recovery':{'claimed_ranges':[{'start_s':'0','end_s':'1/2'}]}}}
     output={'observations':[{'start_s':0,'end_s':end,'confidence':confidence,'evidence_ids':evidence}]}
     assert FlashcutFormatRecovery.gaps_resolved(provisional,output) is expected
+
+
+def test_recovery_releases_completed_sibling_while_batch_is_still_pending(route, monkeypatch):
+    from types import SimpleNamespace
+    from modules.factory.autorun.flashcut_recovery import FlashcutResponseRecovery
+    from modules.factory.execution.effects import wire_hash
+    adapter, request, calls, reply = route
+    with dispatch_context({'attempt_id': 'completed'}), pytest.raises(ProviderError):
+        adapter.submit(request)
+    db = adapter.artifacts.db
+    with db.uow() as u:
+        for jid, status in [('pending', 'ready'), ('completed-job', 'failed')]:
+            u.conn.execute("INSERT INTO jobs(id,logical_key,phase,status,created_at,updated_at) VALUES(?,?,'analyze',?,'now','now')", (jid,jid,status))
+        u.conn.execute("INSERT INTO attempts(id,job_id,attempt_seq,request_hash,status,body,created_at,updated_at) VALUES('completed','completed-job',1,?,'unknown','{}','now','now')", (wire_hash(request),))
+        u.conn.execute("INSERT INTO capacity_holds VALUES('dispatch','completed-job','fixture',1,'now','unfinished_remote_op')")
+        u.conn.execute("INSERT INTO capacity_holds VALUES('dispatch','historical-unknown','fixture',1,'now','unfinished_remote_op')")
+    monkeypatch.setattr('modules.factory.analysis.source_evidence.binding_from_db', lambda *_: request['binding'])
+    store = SimpleNamespace(get=lambda _: {'binding': request['binding'], 'analysis_plan': 'plan'},
+        blobs=SimpleNamespace(read=lambda _: {'requests': [request, request]}))
+    run = SimpleNamespace(id='run', stage='video_analysis', params={'profile_id':'flashcut_hypit.v1'},
+        state={'source_evidence_id':'evidence','flashcut_analysis_jobs':['pending','completed-job']})
+    recovery = FlashcutResponseRecovery(SimpleNamespace(s=SimpleNamespace(db=db,
+        providers={adapter.name:adapter}, source_evidence=store)))
+    with pytest.raises(ContractError, match='flashcut_recovery_pending'):
+        recovery.enable(run, 'automatic', automatic=True)
+    assert db.conn.execute("SELECT job_id FROM capacity_holds").fetchall()[0]['job_id'] == 'historical-unknown'
+    assert db.conn.execute("SELECT count(*) FROM capacity_holds").fetchone()[0] == 1
+    assert db.conn.execute("SELECT status FROM attempts WHERE id='completed'").fetchone()[0] == 'unknown'
+    assert 'flashcut_response_recovery' not in run.state
+    assert len(calls) == 1
+
+
+def test_versioned_initial_output_policy_quotes_and_sends_adequate_answer_budget(route):
+    adapter, request, calls, reply = route
+    legacy = adapter.price(request)
+    revised = {**request, 'output_policy': 'flashcut_output.v2',
+        'prompt_version':'flashcut_understanding.v2','response_contract':'flashcut_compact.v2'}
+    prepared, usage = adapter.prepared(revised)
+    assert usage['output_tokens_bound'] == 32768
+    assert adapter.price(revised)['reserve_amount'] > legacy['reserve_amount']
+    assert adapter.prepared(request)[1]['output_tokens_bound'] == 8192
+    reply['finish'] = 'STOP'
+    with dispatch_context({'attempt_id': 'versioned-policy'}):
+        assert adapter.submit(revised)['status'] == 'succeeded'
+    assert calls[-1]['generationConfig']['maxOutputTokens'] == 32768
+    assert calls[-1]['generationConfig']['thinkingConfig']['thinkingLevel'] == 'MEDIUM'
+    assert 'responseSchema' in calls[-1]['generationConfig']
+    with pytest.raises(ContractError, match='invalid_flashcut_request'):
+        adapter.price({**request, 'output_policy': 'unbounded'})
+
+
+@pytest.mark.parametrize('rejected', [False, True])
+def test_explicit_batch_recovery_is_fixed_quoted_and_cannot_extend_itself(route, monkeypatch, rejected):
+    from types import SimpleNamespace
+    from modules.factory.autorun.flashcut_recovery import FlashcutResponseRecovery
+    from modules.factory.execution.effects import wire_hash
+    adapter, request, calls, reply = route
+    db = adapter.artifacts.db
+    jobs = []
+    for index in range(3):
+        aid, jid = f'capped-{index}', f'job-{index}'
+        with dispatch_context({'attempt_id': aid}), pytest.raises(ProviderError):
+            adapter.submit(request)
+        with db.uow() as u:
+            u.conn.execute("INSERT INTO jobs(id,logical_key,phase,status,created_at,updated_at) VALUES(?,?,'analyze','failed','now','now')", (jid,jid))
+            u.conn.execute("INSERT INTO attempts(id,job_id,attempt_seq,request_hash,status,body,created_at,updated_at) VALUES(?,?,1,?,'unknown','{}','now','now')", (aid,jid,wire_hash(request)))
+        jobs.append(jid)
+    monkeypatch.setattr('modules.factory.analysis.source_evidence.binding_from_db', lambda *_: request['binding'])
+    blobs = SourceEvidenceService(db, adapter.root/'test-evidence').blobs
+    original = {'identity':'original', 'binding':request['binding'], 'requests':[request]*3,
+        'envelope':{'max_requests':5,'max_images':0,'max_windows':3,'max_payload_bytes':1000,
+            'max_input_tokens':3000,'max_output_tokens':24576,'max_media_seconds':'3','reserve_usd_micros':100}}
+    ref=blobs.put(original)
+    store=SimpleNamespace(blobs=blobs,get=lambda _: {'binding':request['binding'],'analysis_plan':ref})
+    run=SimpleNamespace(id='run',stage='video_analysis',params={'profile_id':'flashcut_hypit.v1'},notes=[],
+        state={'source_evidence_id':'evidence','flashcut_analysis_jobs':jobs})
+    covers=[]
+    auto=SimpleNamespace(s=SimpleNamespace(db=db,providers={adapter.name:adapter},source_evidence=store),
+        _cover=lambda run, amounts, **kwargs: covers.append(amounts))
+    recovery=FlashcutResponseRecovery(auto)
+    with pytest.raises(ContractError,match='flashcut_recovery_exhausted'):
+        recovery.enable(run,'operator')
+    cover = auto._cover
+    auto._cover = lambda *args, **kwargs: 'cumulative seed budget exhausted'
+    with pytest.raises(ContractError, match='budget_exhausted'):
+        recovery.enable(run,'operator',max_replacements=3,reviewer_type='assistant')
+    assert 'flashcut_response_recovery' not in run.state
+    auto._cover = cover
+    recovery.enable(run,'operator',max_replacements=3,reviewer_type='assistant')
+    plan=blobs.read(run.state['flashcut_response_recovery'])
+    assert plan['reviewer_type']=='assistant'
+    assert plan['max_replacements']==3 and len(plan['requests'])==3
+    assert covers==[{'usd_micros':plan['supplemental_reserve_usd_micros']}]
+    before=run.state['flashcut_response_recovery']
+    recovery.enable(run,'operator',max_replacements=4)
+    assert run.state['flashcut_response_recovery']==before
+    assert len(calls)==3 and db.conn.execute("SELECT count(*) FROM attempts WHERE status='unknown'").fetchone()[0]==3
+    # Every capped reply's replacement can independently return malformed JSON
+    # structure. Quote all proven completed corrections without buying a known
+    # rejected intermediate schema or changing the fixed prior plan.
+    from modules.factory.autorun.flashcut_format_recovery import FlashcutFormatRecovery
+    monkeypatch.setattr('modules.factory.autorun.flashcut_format_recovery.binding_from_db', lambda *_: request['binding'])
+    run.status='paused'
+    run.state['flashcut_response_repair_jobs']=[]
+    reply.update(finish='STOP', end=0)
+    for index, replacement in enumerate(plan['requests']):
+        aid,jid=f'bad-format-{index}',f'repair-job-{index}'
+        if not (rejected and index==2):
+            with dispatch_context({'attempt_id':aid}),pytest.raises(ProviderError):adapter.submit(replacement)
+        with db.uow() as u:
+            u.conn.execute("INSERT INTO jobs(id,logical_key,phase,status,created_at,updated_at) VALUES(?,?,'analyze','failed','now','now')",(jid,jid))
+            u.conn.execute("INSERT INTO attempts(id,job_id,attempt_seq,request_hash,status,body,created_at,updated_at) VALUES(?,?,1,?,'unknown','{}','now','now')",(aid,jid,wire_hash(replacement)))
+        if rejected and index==2:
+            with db.uow() as u:
+                u.conn.execute("INSERT INTO reservations(id,status,created_at) VALUES('rejected-reservation','released','now')")
+                u.conn.execute("UPDATE attempts SET status='failed',body=? WHERE id=?",(json.dumps({'reservation_id':'rejected-reservation'}),aid))
+                u.events.append('attempt:'+aid,'submit_failed',{'cause':'analysis_http_error','class':'pre_acceptance','http_status':429})
+        run.state['flashcut_response_repair_jobs'].append(jid)
+    quote=FlashcutFormatRecovery(auto).quote(run)
+    assert quote['max_corrections']==3 and len(quote['requests'])==4
+    assert all(r['response_contract']=='flashcut_compact.v2' for r in quote['requests'])
+    assert {proof['kind'] for proof in quote['rejection']}==({'completed_invalid_response','pre_acceptance_429'} if rejected else {'completed_invalid_response'})
+    assert run.state['flashcut_response_recovery']==before and len(calls)==(5 if rejected else 6)
+    for index in range(2 if rejected else 3):
+        with db.uow() as u:u.conn.execute("INSERT INTO capacity_holds VALUES('dispatch',?,'fixture',1,'now','unfinished_remote_op')",(f'repair-job-{index}',))
+    run.state['flashcut_format_recovery']=blobs.put(quote)
+    auto._run_effect=lambda *args: ('pause','fixture','no submission','test')
+    outcome,_=FlashcutFormatRecovery(auto).collect(run,original)
+    assert outcome[1]=='fixture'
+    assert db.conn.execute("SELECT count(*) FROM capacity_holds").fetchone()[0]==0
+    run.state.pop('flashcut_format_recovery')
+    if rejected:
+        with db.uow() as u:u.conn.execute("UPDATE reservations SET status='reserved' WHERE id='rejected-reservation'")
+        with pytest.raises(ContractError,match='flashcut_response_unproven'):
+            FlashcutFormatRecovery(auto).quote(run)
+
+
+def test_repair_collection_releases_finished_siblings_before_waiting_for_first(route):
+    from types import SimpleNamespace
+    from modules.factory.autorun.flashcut_recovery import FlashcutResponseRecovery
+    from modules.factory.execution.effects import wire_hash
+    adapter, request, calls, reply = route
+    db = adapter.artifacts.db
+    entries=[]
+    for index in range(2):
+        aid,jid=f'original-{index}',f'original-job-{index}'
+        with dispatch_context({'attempt_id':aid}),pytest.raises(ProviderError):adapter.submit(request)
+        with db.uow() as u:
+            u.conn.execute("INSERT INTO jobs(id,logical_key,phase,status,created_at,updated_at) VALUES(?,?,'analyze','failed','now','now')",(jid,jid))
+            u.conn.execute("INSERT INTO attempts(id,job_id,attempt_seq,request_hash,status,body,created_at,updated_at) VALUES(?,?,1,?,'unknown','{}','now','now')",(aid,jid,wire_hash(request)))
+        entries.append({'mode':'replacement','index':index,'replacement_index':index,'job_id':jid,
+                        'proof':adapter.inspect_saved_response(request,aid)})
+    with dispatch_context({'attempt_id':'repair-complete'}),pytest.raises(ProviderError):adapter.submit(request)
+    with db.uow() as u:
+        for jid,status in [('repair-pending','ready'),('repair-failed','failed')]:
+            u.conn.execute("INSERT INTO jobs(id,logical_key,phase,status,created_at,updated_at) VALUES(?,?,'analyze',?,'now','now')",(jid,jid,status))
+        u.conn.execute("INSERT INTO attempts(id,job_id,attempt_seq,request_hash,status,body,created_at,updated_at) VALUES('repair-complete','repair-failed',1,?,'unknown','{}','now','now')",(wire_hash(request),))
+        u.conn.execute("INSERT INTO capacity_holds VALUES('dispatch','repair-failed','fixture',1,'now','unfinished_remote_op')")
+    plan={'version':'flashcut_response_recovery.v1','run_id':'run','original_plan_identity':'original',
+          'binding':request['binding'],'max_replacements':2,'requests':[request,request],'entries':entries}
+    store=SimpleNamespace(blobs=SimpleNamespace(read=lambda _:plan))
+    auto=SimpleNamespace(s=SimpleNamespace(db=db,providers={adapter.name:adapter},source_evidence=store),
+        _run_effect=lambda *args:'wait', _jobs=lambda *args:'wait')
+    run=SimpleNamespace(id='run',state={'flashcut_response_recovery':'plan',
+        'flashcut_response_repair_jobs':['repair-pending','repair-failed']})
+    outcome,outputs=FlashcutResponseRecovery(auto).collect(run,{'identity':'original',
+        'binding':request['binding'],'requests':[request,request]})
+    assert outcome=='wait' and outputs==[]
+    assert db.conn.execute("SELECT count(*) FROM capacity_holds WHERE job_id='repair-failed'").fetchone()[0]==0
+    assert db.conn.execute("SELECT status FROM attempts WHERE id='repair-complete'").fetchone()[0]=='unknown'
+    with db.uow() as u:
+        u.conn.execute("UPDATE attempts SET status='failed' WHERE id='repair-complete'")
+        u.conn.execute("UPDATE jobs SET status='succeeded' WHERE id='repair-pending'")
+    auto._jobs=lambda *args: ('pause','flashcut_response_repair_failed','analysis_throttle_exhausted','capacity check')
+    outcome,_=FlashcutResponseRecovery(auto).collect(run,{'identity':'original',
+        'binding':request['binding'],'requests':[request,request]})
+    assert outcome[1]=='flashcut_response_repair_failed'
+    assert outcome[2]=='analysis_throttle_exhausted'

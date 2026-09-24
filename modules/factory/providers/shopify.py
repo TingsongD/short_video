@@ -15,5 +15,6 @@ class ShopifyImport(SynchronousAdapter):
         return {'kind':'usage_estimate','unit':'usd_micros','amount':0,'reserve_amount':0,'rate_basis':'Read-only Admin catalog import; no per-call API fee','valid_until':(datetime.now(timezone.utc)+timedelta(hours=1)).isoformat()}
 
     def execute(self,request):
+        self.require_qualification()
         self.price(request)
         return self.importer.import_catalog(request['selection']),None,{'actual_usd_micros':0}

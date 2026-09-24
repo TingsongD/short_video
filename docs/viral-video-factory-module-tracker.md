@@ -12,7 +12,11 @@ Use the [main handover](viral-video-factory-handover.md), [detailed module guide
 > complete checklist; repair regressions alone do not automatically sign all
 > 36 modules. Historical claims are preserved in
 > [the prior tracker](factory-reports/s8-evidence/tracker-before-requalification.md).
-> All live qualifications remain pending. Legacy G-gates are unchanged.
+> This banner records the original checkpoint. Later scoped live qualifications
+> and the completed quartet are listed in the [current qualification matrix](factory-reports/FLASHCUT-QUALIFICATION-MATRIX.md).
+> Aggregate F-module acceptance and legacy G-gates remain unchanged; neither is
+> signed by that scoped evidence. Latest unreleased fixes and the 30 fps policy:
+> [REPAIRS-2026-09-22](factory-reports/REPAIRS-2026-09-22.md).
 
 ## Status rules
 

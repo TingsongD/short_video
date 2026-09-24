@@ -36,13 +36,15 @@ def test_unreliable_alignment_fails_closed(failure):
         phrase_cues(cues, text, 0, 30)
 
 
-def test_phrase_ass_is_large_outlined_and_escapes_only_trusted_linebreaks():
+def test_phrase_ass_has_padded_background_and_escapes_only_trusted_linebreaks():
     from modules.factory.rendering.ffmpeg_fast import captions_ass
     cue = {'start_frame': 0, 'end_frame': 30, 'text': 'Look at this\nhorse!'}
     rendered = captions_ass([cue], preset='phrases.v1')
-    assert 'Arial,72,' in rendered
-    assert r'Look at this\Nhorse!' in rendered
-    assert ',1,3,2,8,86,86,0,1' in rendered
+    assert ',72,' in rendered
+    assert rendered.count('Dialogue: 0,') == 1  # One background, no dark seams.
+    assert rendered.count('Dialogue: 1,') == 2
+    assert '}Look at this\n' in rendered and '}horse!\n' in rendered
+    assert r'\1a&H33&\p1' in rendered
     with pytest.raises(ValueError):
         captions_ass([cue])  # Legacy ASS input restrictions remain unchanged.
     for text in (r'{\pos(0,0)}bad', 'a\nb\nc', 'x' * 23):
@@ -51,11 +53,10 @@ def test_phrase_ass_is_large_outlined_and_escapes_only_trusted_linebreaks():
 
 
 def test_wide_glyphs_split_phrases_at_readable_size_without_overflow():
-    from modules.factory.audio.phrase_captions import caption_font
+    from modules.factory.audio.caption_style import MAX_LINE_WIDTH, line_width
     text = 'WOWWW WWWWW WWWWW WWWWW WOWWW.'
     result = phrase_cues(words(text), text, 0, 60)
-    font = caption_font()
-    assert all(font.getlength(line) <= 600 for cue in result for line in cue['text'].splitlines())
+    assert all(line_width(line) <= MAX_LINE_WIDTH for cue in result for line in cue['text'].splitlines())
     assert ' '.join(c['text'].replace('\n', ' ') for c in result) == text
 
 

@@ -1,6 +1,26 @@
 # Developer handover: Hypit-first audiovisual flash-cut workflow
 
-Date: 2026-09-21. Revision: 3. Status: implementation and offline qualification in progress; paid acceptance and deployment are not yet authorized. Current evidence and exact limitations: [implementation record](factory-reports/FLASHCUT-IMPLEMENTATION.md).
+> **2026-09-22 user decision:** future seed analysis is normalized to constant
+> 30 fps and output is 30 fps. All-frame coverage below now refers to the
+> immutable normalized analysis copy, with original and derived hashes retained.
+> Historical native-clock evidence is preserved. See
+> [the repair report](factory-reports/REPAIRS-2026-09-22.md).
+
+Date: 2026-09-21. Revision: 3. **Historical implementation plan.** At drafting,
+implementation and offline qualification were in progress; paid acceptance and
+deployment had not occurred. The original decisions and gates below are retained
+as planned, not rewritten as completed evidence.
+
+**Current-state addendum (2026-09-22):** the AVvVLM5b-mE single-run acceptance
+produced four verified finals. Future-only code and the dashboard bundle were
+released at commit `89204bd` after full offline checks, but the new v3 Gemini
+payload is not broadly live-qualified; Jev remains shadow-only and image-reference
+generation remains disabled. The code-only local rollout was healthy at its
+checkpoint, but its agent-managed API/worker sessions later ended. At 21:34 UTC
+the local dashboard was not serving. See the
+[current status](factory-reports/FLASHCUT-CURRENT-STATUS.md),
+[qualification matrix](factory-reports/FLASHCUT-QUALIFICATION-MATRIX.md) and
+[separate live-only checklist](factory-reports/FLASHCUT-LIVE-ONLY-ACCEPTANCE.md).
 
 User-confirmed default: PE processes every decoded source frame for new flash-cut runs (`coverage=all_frames`), not only selected candidate frames. This updates the planned default; it does not mean the integration is already implemented or enabled.
 
@@ -526,6 +546,13 @@ If frozen paths were already dirty at entry, compare against the recorded entry 
 ### 14.4 Deployment, verification and rollback
 
 Deployment is included in the approved implementation, but remains gated on passing offline checks and one freshly quoted, authorized live acceptance run on `89iXPZsKn9M`. Historical spending approvals do not authorize it. The acceptance run must produce four current QC-passed, Compare-visible, verified-Drive-delivered finals before general enablement.
+
+This paragraph is the original general-enablement gate. Later work performed a
+**code-only local rollout** after offline verification and a different,
+single-run AVv acceptance; it did not satisfy the planned multi-seed/generic
+Gemini qualification or authorize a new paid run. The local services are not
+currently assumed to be running. Consult the dated current-status report
+before operating the app.
 
 1. Record original dispatch/drain state. Use the existing drain operation to prevent new work; do not auto-resume paused jobs. Verify active jobs and owned processes rather than assuming idle.
 2. Inspect and use `scripts/factory-rollout-snapshot.py` for a consistent SQLite backup/integrity check and protected fingerprints; `scripts/factory-qa-audit.py` supplies read-only record/final-file comparisons. Use an explicit validated destination with owner-only permissions.

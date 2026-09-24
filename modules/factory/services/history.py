@@ -60,21 +60,14 @@ class DashboardHistory:
         protected.update(r['job_id'] for r in conn.execute(
             "SELECT job_id FROM capacity_holds WHERE expires_at>? OR "
             "retained_reason IN ('unfinished_remote_op','unfinished_local_work')", (utcnow(),)))
+        protected.update(r['job_id'] for r in conn.execute('SELECT job_id FROM remote_holds'))
         protected_runs = {rid for rid, r in runs.items() if r['status'] not in TERMINAL}
-        # Keep an ongoing run/experiment and its dependency evidence together.
-        while True:
-            before = (len(protected), len(protected_runs))
-            for group in groups.values():
-                if group & protected:
-                    protected.update(group)
-            for rid, group in members.items():
-                if rid in protected_runs or group & protected:
-                    protected_runs.add(rid)
-                    protected.update(group)
-            for jid in list(protected & jobs.keys()):
-                protected.update(json.loads(jobs[jid]['depends_on']))
-            if before == (len(protected), len(protected_runs)):
-                break
+        # These are display preferences, not deletion. A completed sibling or
+        # dependency can be hidden while its immutable execution record remains
+        # available to an ongoing run. Keep unresolved jobs themselves visible.
+        for rid, group in members.items():
+            if group & protected:
+                protected_runs.add(rid)
 
         markers = {r['key']: r['value'] for r in conn.execute(
             'SELECT key,value FROM meta WHERE key LIKE ?', (PREFIX + '%',))}

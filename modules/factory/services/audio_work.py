@@ -30,6 +30,8 @@ class AudioWork:
         operation=next(x for x in effect['operations'] if x['key']==command['command']['input']['operation'])
         req=operation['request']
         if self.speech.normalize(req.get('text',''))!=self.speech.normalize(seg.get('copy','')):raise ContractError('speech_copy_mismatch','text')
+        if seg.get('voice_id') and req.get('voice_id') != seg['voice_id']:
+            raise ContractError('speech_voice_mismatch', 'voice_id')
         sid='speech-'+uuid.uuid4().hex
         voice={k:req.get(k) for k in ('voice_id','model','language','settings')}
         self.speech.plan_segment(sid,variant.id,req['text'],voice,seg['target'],utcnow())
@@ -76,12 +78,15 @@ class AudioWork:
                     copy_text = str(seg.get('copy') or '').strip()
                     if not copy_text:
                         continue
-                    if seg['id']==binding['segment_id'] and self.speech.normalize(copy_text)==self.speech.normalize(speech.get('source_text') or '') and seg['target']==speech['target']:
+                    if (seg['id']==binding['segment_id'] and self.speech.normalize(copy_text)==self.speech.normalize(speech.get('source_text') or '') and seg['target']==speech['target']
+                            and (not seg.get('voice_id') or seg['voice_id'] == speech['voice']['voice_id'])):
                         # Bind the canonical identity, not the surface
                         # form: copy text may carry contractions/numerals
                         # the synthesizer spelled differently.
                         seg['speech']={'artifact_id':speech['artifact_id'],'speech_hash':speech['speech_hash'],
                                        'source_text':speech.get('source_text'),'normalized_copy':self.speech.normalize(speech.get('source_text') or '')}
+                        if seg.get('speaker'):
+                            seg['speech'].update(speaker=seg['speaker'], voice_id=speech['voice']['voice_id'])
                         if binding.get('semantic_alignment'):
                             final=self.alignment.final_alignment(sid,self.speech.get,RationalRate(**binding['clock']),speech['speech_hash'])
                             seg['speech'].update(speech_id=sid,alignment_hash=final['alignment_hash'])

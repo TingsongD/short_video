@@ -181,11 +181,12 @@ def youtube_post_verifier(transport):
         item = items[0]
         status = item.get("status") or {}
         snippet = item.get("snippet") or {}
-        public = status.get("privacyStatus") == "public" and \
-            status.get("uploadStatus") in ("processed", "")
+        privacy, upload = status.get('privacyStatus'), status.get('uploadStatus')
+        verified_status = ('failed' if upload in ('failed', 'rejected', 'deleted') else
+                           'processing' if upload == 'uploaded' else
+                           privacy if upload == 'processed' and privacy in ('public', 'private', 'unlisted') else 'unknown')
         return {"remote_post_id": remote_post_id, "platform": "youtube",
-                "status": "public" if public else
-                          status.get("privacyStatus") or "unknown",
+                "status": verified_status,
                 "post_url": f"https://www.youtube.com/watch?v={remote_post_id}",
                 "account_id": snippet.get("channelId", ""),
                 "visibility": status.get("privacyStatus", ""),

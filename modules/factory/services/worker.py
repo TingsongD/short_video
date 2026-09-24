@@ -36,7 +36,7 @@ class ApplicationWorker:
         with self.s.db.uow() as u:
             u.conn.execute("INSERT OR REPLACE INTO meta(key,value) VALUES('worker_heartbeat',?)",(json.dumps({'at':utcnow(),'worker':self.scheduler.worker_id,'pid':os.getpid(),'db':str(self.s.db.path),'version':self.WORKER_VERSION}),))
         self.scheduler.reclaim_expired()
-        job = self.scheduler.claim('collect') or self.scheduler.claim('observe') or self.scheduler.claim()
+        job = self.scheduler.claim_next()
         if not job: return None
         event("job_started", job_id=job['id'], stage=job['phase'])
         try:
@@ -209,7 +209,10 @@ class ApplicationWorker:
             binding = {'expected_binding': body, 'job_id': job['id']} if body.get('edit_token') else {}
             return {'analysis':s.ref_analysis.run_machine_stages(body['seed_id'], **binding).to_dict()}
         if kind=='quote':
-            exp=s._current(body['experiment_id'],body['revision']); fps=exp.output_clock['num']/exp.output_clock['den']
+            exp=s._current(body['experiment_id'],body['revision'])
+            from ..media.analysis_clock import require_output_30
+            require_output_30(exp.output_clock)
+            fps=30
             takes=[]
             for key in 'ABCD':
                 for seg in s.experiments._variant(exp.experiment_id,key).segments:
@@ -244,6 +247,8 @@ class ApplicationWorker:
             if exp.packaging.get('flashcut_policy'):
                 from .editorial_work import output_binding as editorial_binding
                 output_binding=editorial_binding(s,exp)
+                if body.get('output_binding') is not None and body['output_binding'] != output_binding:
+                    raise ContractError('stale_editorial_plan','quote')
             pid='plan-'+content_hash([exp.experiment_id,exp.revision,exp.content_hash,
                 body.get('reference_bindings')])[:24] if body.get('reference_bindings') else 'plan-'+content_hash([exp.experiment_id,exp.revision,exp.content_hash])[:24]
             if output_binding:pid='plan-'+content_hash([pid,output_binding])[:24]
@@ -430,7 +435,9 @@ class ApplicationWorker:
         s=self.s; exp=s._current(plan['experiment_id'],plan['experiment_revision']); variant=s.experiments._variant(exp.experiment_id,key)
         from ..resources.runner import OwnedRunner
         s.rendering.fast.runner=OwnedRunner(s.db,Path(s.db.path).parent/'processes',variant.id,attempt=(job or {}).get('retry_count',0))
-        fps=exp.output_clock['num']/exp.output_clock['den']; segments=[]; captions=[]; pictures=[]; audio=[]; narration=[]
+        from ..media.analysis_clock import require_output_30
+        require_output_30(exp.output_clock)
+        fps=30; segments=[]; captions=[]; pictures=[]; audio=[]; narration=[]
         nodes=s.production._nodes(plan['id'])
         for seg in variant.segments:
             pic=seg['picture']; target=seg['target']; start,end=target['start_frame'],target['end_frame']
@@ -595,6 +602,7 @@ class ApplicationWorker:
             else:
                 stills.append({'start_s':start,'end_s':end,'approved':True,'artifact_id':p['artifact_id']})
         expected={**clock,'frames':variant.target_frames,'has_audio':True,'narration':narration,'narration_required':any(seg.get('copy') for seg in variant.segments),'intentional_stills':stills,'upscaled_inputs':upscaled}
+        expected['audio_mix'] = str(s.artifacts.verified_path(mixed['artifact_id']))
         if temporal_expected is not None:
             expected['temporal'] = temporal_expected
         tech='technical-'+bid

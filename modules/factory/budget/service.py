@@ -79,6 +79,12 @@ class BudgetService:
             raise ContractError("bad_scope", "scope", scope)
         if cap is not None and (type(cap) is not int or cap < 0):
             raise ContractError("invalid_cap", "cap_amount", repr(cap))
+        if str(bid).startswith('run_guardrail:'):
+            from ..autorun.policies import new_spending_policy
+            policy = new_spending_policy(scope_key)
+            if (bid != policy['budget_id'] or unit != policy['unit']
+                    or scope != 'experiment' or cap != policy['cap_amount']):
+                raise ContractError('run_guardrail_mismatch', 'budget_id', bid)
         with self.db.uow() as u:
             existing = u.conn.execute(
                 "SELECT unit,scope,scope_key,cap_amount FROM budgets WHERE id=?",
@@ -146,7 +152,7 @@ class BudgetService:
         if row is None:
             raise ContractError("unknown_budget", "budget_id", budget_id)
         if self.db.conn.execute("SELECT 1 FROM meta WHERE key=?",("retired:budget:"+budget_id,)).fetchone():return 0
-        cap = row[0]
+        cap = self._checked_cap(self.db.conn, budget_id, row[0])
         if cap is None:
             return 0
         return cap - self._committed(self.db.conn, budget_id)
@@ -164,6 +170,10 @@ class BudgetService:
             raise ContractError("invalid_reservation_status", "status", status)
         rid = f"rsv:{uuid.uuid4().hex[:16]}"
         with self.db.uow() as u:
+            for budget_id, _ in lines:
+                row = u.conn.execute('SELECT cap_amount FROM budgets WHERE id=?', (budget_id,)).fetchone()
+                if row is not None:
+                    self._checked_cap(u.conn, budget_id, row[0])
             # Idempotent: same request hash replays the same reservation.
             existing = u.conn.execute(
                 "SELECT id, status, authorization_id FROM reservations WHERE request_hash=?",
@@ -398,7 +408,23 @@ class BudgetService:
                            (budget_id,)).fetchone()
         if row is None or row[0] is None:
             return 0
-        return row[0] - self._committed(conn, budget_id)
+        return self._checked_cap(conn, budget_id, row[0]) - self._committed(conn, budget_id)
+
+    @staticmethod
+    def _checked_cap(conn, budget_id, cap):
+        """A damaged internal ceiling must never grant additional authority."""
+        if str(budget_id).startswith('run_guardrail:'):
+            from ..autorun.policies import new_spending_policy
+            row = conn.execute('SELECT unit,scope,scope_key FROM budgets WHERE id=?', (budget_id,)).fetchone()
+            policy = new_spending_policy(row['scope_key'])
+            approval = conn.execute(
+                "SELECT body FROM events WHERE stream=? AND type='run_budget_raised' ORDER BY seq DESC LIMIT 1",
+                ('budget:' + budget_id,)).fetchone()
+            approved_cap = json.loads(approval['body'])['ceiling'] if approval else policy['cap_amount']
+            if (budget_id != policy['budget_id'] or cap != approved_cap
+                    or row['unit'] != policy['unit'] or row['scope'] != 'experiment'):
+                raise ContractError('run_guardrail_mismatch', 'budget_id', budget_id)
+        return cap
 
     # ------------------------------------------------------- authorization
 

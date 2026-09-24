@@ -58,8 +58,13 @@ def env(tmp_path):
     art = arts.intake_file(src, provenance="seed_source",
                            source_key="core-30s", requested_kind="video")
     reg.attach_media(seed.id, art.id)
+    # The native fixture is 24 fps; providers now receive its immutable 30 fps copy.
+    from modules.factory.media.analysis_clock import analysis_media
+    media = analysis_media(arts, art.id)
+    analyzer.scripts = {media['analysis_sha256']: script}
     return {"db": db, "arts": arts, "reg": reg, "svc": svc, "ex": ex,
             "analyzer": analyzer, "seed": seed, "src": src, "sha": sha,
+            "analysis_sha": media["analysis_sha256"],
             "fx": fx}
 
 
@@ -116,10 +121,10 @@ class TestAnalysis:
         assert e.value.code == "source_not_video"
 
     def test_malformed_analysis_typed(self, env):
-        env["analyzer"].scripts[env["sha"]] = {"beats": "garbage"}
+        env["analyzer"].scripts[env["analysis_sha"]] = {"beats": "garbage"}
         # malformed script → parse_analysis raises
         with pytest.raises(ContractError) as e:
-            parse_analysis(env["analyzer"].scripts[env["sha"]])
+            parse_analysis(env["analyzer"].scripts[env["analysis_sha"]])
         assert e.value.code == "malformed_analysis"
 
     def test_missing_audio_stays_unknown(self, env):
@@ -167,7 +172,7 @@ class TestReview:
         assert e.value.code == "revision_mismatch"
 
     def test_uncertain_beats_flagged(self, env):
-        env["analyzer"].scripts.pop(env["sha"])     # default → uncertain
+        env["analyzer"].scripts.pop(env["analysis_sha"])     # default → uncertain
         bp = env["svc"].analyze(env["seed"].id)
         flags = BlueprintReview(env["db"]).flags(bp.id)
         assert any(f["flag"] == "low_confidence_scene" for f in flags)
@@ -175,7 +180,7 @@ class TestReview:
             BlueprintReview(env["db"]).accept(bp.id, bp.content_hash)
 
     def test_explicit_human_review_can_override_flags(self, env):
-        env["analyzer"].scripts.pop(env["sha"])
+        env["analyzer"].scripts.pop(env["analysis_sha"])
         bp = env["svc"].analyze(env["seed"].id)
         from test_factory_application import seed_completed_analysis
         seed_completed_analysis(env["db"], env["seed"].id, env["sha"])

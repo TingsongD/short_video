@@ -29,3 +29,10 @@ def test_unconfirmed_submission_has_no_invented_observation():
     assert view['elapsed_s'] is None
     assert view['last_observed_at'] is None
     assert view['next_poll_at'] == '2026-09-22T12:01:00Z'
+
+
+def test_finished_job_cannot_keep_old_throttle_wait_visible():
+    now=datetime.now(timezone.utc)
+    for status in ('failed','succeeded','cancelled'):
+        assert provider_wait_view({'job_id':'j','reason':'analysis_throttled','next_attempt_at':'old'},
+            {'status':status,'next_attempt_at':'old','blocked_reason':'analysis_throttled'},[],[],now=now) is None

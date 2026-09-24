@@ -1,5 +1,6 @@
 """Seed-bound quoted analysis and explicit collection of its durable receipt."""
 from ..domain.errors import ContractError
+from ..media.analysis_clock import analysis_media
 from ..store.uow import utcnow
 
 
@@ -12,8 +13,11 @@ class AnalysisWork:
         asset_id=body.get('artifact_id') or seed.source_asset_id
         if asset_id not in (seed.source_asset_id,seed.analysis_asset_id):
             raise ContractError('analysis_scope_mismatch','artifact_id')
+        input_id=asset_id
+        media=analysis_media(self.s.artifacts,input_id)
+        asset_id=media['analysis_artifact_id']
         art=self.s.db.uow().artifacts.get(asset_id)
-        request={'seed_id':seed_id,'artifact_id':asset_id,'artifact_sha256':art['sha256'],'model':body.get('model',''),'input_mode':'video+audio'}
+        request={'analysis_source_artifact_id':input_id,'seed_id':seed_id,'artifact_id':asset_id,'artifact_sha256':art['sha256'],'model':body.get('model',''),'input_mode':'video+audio'}
         return self.s.effect_work.prepare('analysis',body.get('provider','audiovisual_analysis'),request['model'],[request])
 
     def queue_collect(self,seed_id,body):
@@ -27,8 +31,12 @@ class AnalysisWork:
         if plan['kind']!='analysis':raise ContractError('analysis_scope_mismatch','job_id')
         req=next(op['request'] for op in plan['operations'] if op['key']==cmd['input']['operation'])
         seed=self.s.seeds.get(body['seed_id'])
-        if req.get('seed_id')!=seed.id or req['artifact_id'] not in (seed.source_asset_id,seed.analysis_asset_id):raise ContractError('analysis_scope_mismatch','seed')
+        input_id=req.get('analysis_source_artifact_id',req['artifact_id'])
+        if req.get('seed_id')!=seed.id or input_id not in (seed.source_asset_id,seed.analysis_asset_id):raise ContractError('analysis_scope_mismatch','seed')
+        media=analysis_media(self.s.artifacts,input_id)
+        if req['artifact_id'] not in (input_id,media['analysis_artifact_id']):raise ContractError('analysis_scope_mismatch','artifact_id')
+        self.s.artifacts.verified_path(req['artifact_id'])
         art=self.s.db.uow().artifacts.get(req['artifact_id'])
         if req['artifact_sha256']!=art['sha256']:raise ContractError('analysis_scope_mismatch','seed')
         result=cmd['result']['result'];observations=result.get('analysis',result)
-        return {'blueprint':self.s.analysis.import_observations(seed.id,observations,body['reviewer'],provenance={'analyzer':plan['provider'],'model':plan['model'],'attempt_id':cmd['result']['attempt_id']}).to_dict()}
+        return {'blueprint':self.s.analysis.import_observations(seed.id,observations,body['reviewer'],analysis_asset_id=input_id,provenance={'analyzer':plan['provider'],'model':plan['model'],'attempt_id':cmd['result']['attempt_id']}).to_dict()}

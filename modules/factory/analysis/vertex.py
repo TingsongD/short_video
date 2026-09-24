@@ -210,6 +210,7 @@ class VertexAnalyzer(ArtifactAnalyzer):
         return {'kind':'usage_estimate','unit':'usd_micros','amount':p['estimate_usd_micros'],'reserve_amount':p['reserve_usd_micros'],'provisional':False,'rate_basis':p['evidence'],'valid_until':p['valid_until']}
 
     def execute(self,request):
+        self.require_qualification()
         task=request.get('task','analyze')
         if task == 'review_blueprint':
             raise ContractError('scene_review_removed', 'task')

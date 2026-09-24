@@ -16,7 +16,11 @@ POLICY = 'source_timing.v1'
 
 
 def tokens(text):
-    return re.sub(r'[^\w\s]', '', str(text)).casefold().split()
+    # WhisperX can align Han characters separately even when passage text
+    # has no spaces. Compare the same character units without collapsing
+    # Latin word boundaries or accepting missing/reordered speech.
+    text = re.sub(r'([㐀-䶿一-鿿])', r' \1 ', str(text))
+    return re.sub(r'[^\w\s]', '', text).casefold().split()
 
 
 def bounds(value):

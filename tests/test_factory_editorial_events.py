@@ -73,3 +73,21 @@ def test_editorial_revisions_are_immutable_and_depend_on_final_alignment(tmp_pat
         assert service.load(one['id'])['events'][0]['start_frame']==54
         assert service.load(two['id'])['events'][0]['start_frame']==57
     finally:db.close()
+
+
+def test_sustained_reframe_keeps_motion_chronological_and_ends_at_next_shot():
+    from modules.factory.analysis.editorial_events import resolve_edits
+    footage, passages, specs = inputs()
+    specs[0].update(source_in_frame=54, duration_frames=21, reframe_zoom=1.12)
+    result = resolve_edits(footage, passages, specs, {'num':30,'den':1}, 'B', 90)
+    assert [(p['in_frame'],p['out_frame'],p['source_in_s'],p.get('reframe_zoom',1))
+            for p in result['pictures']] == [(0,54,0,1),(54,75,1.8,1.12),(75,90,2.5,1)]
+
+
+@pytest.mark.parametrize('zoom', [True, 0, 2, '1.12', float('nan'), float('inf')])
+def test_reframe_rejects_unbounded_or_invalid_sampling(zoom):
+    from modules.factory.analysis.editorial_events import resolve_edits
+    footage, passages, specs = inputs()
+    specs[0].update(source_in_frame=54, reframe_zoom=zoom)
+    with pytest.raises(ContractError, match='editorial_reframe_invalid'):
+        resolve_edits(footage, passages, specs, {'num':30,'den':1}, 'B', 90)

@@ -45,16 +45,18 @@ def split_shots(script, hook_line):
     sents = sentences(script)
     if not sents or re.sub(r"\s+", " ", sents[0].strip()) != re.sub(r"\s+", " ", hook_line.strip()):
         raise ValueError("hook must be the first sentence")
-    rest = sents[1:]
     while len(sents) < MIN_SHOTS:
         # rare edge: split the longest remaining sentence into clauses
-        longest = max(range(1, len(sents)), key=lambda i: len(sents[i]), default=None)
+        longest = max((i for i in range(1, len(sents)) if len(_split_clauses(sents[i])) >= 2),
+                      key=lambda i: len(sents[i]), default=None)
         if longest is None:
             break
         clauses = _split_clauses(sents[longest])
         if len(clauses) < 2:
             break
         sents[longest:longest + 1] = clauses
+    if len(sents) < MIN_SHOTS:
+        raise ValueError('script needs at least four shots, including the hook; add sentences or separable clauses')
     k = max(MIN_SHOTS, min(MAX_SHOTS, len(sents)))
     groups = [[sents[0]]] + _chunks(sents[1:], k - 1) if len(sents) > 1 else [sents]
     groups = [g for g in groups if g]

@@ -127,8 +127,7 @@ def test_mix_native_rate_does_not_smear_beat_boundary(stack):
     n = int(2.0 * rate)
     silent = [0] * n
     changed = [0] * n
-    for i in range(rate, n):
-        changed[i] = 200
+    changed[rate:] = pcm.sine(1, freq=880, rate=rate, amp=2000)
     aw, bw = tmp / "mix-a.wav", tmp / "mix-b.wav"
     aw.write_bytes(pcm.write_wav(silent, rate=rate))
     bw.write_bytes(pcm.write_wav(changed, rate=rate))
@@ -136,6 +135,14 @@ def test_mix_native_rate_does_not_smear_beat_boundary(stack):
     pic_b = tmp / "pic-b.mp4"
     _color_mp4(pic_a, 2.0, rate=30, color="0x000000", size="360x640")
     _color_mp4(pic_b, 2.0, rate=30, color="0x010101", size="360x640")
+    # The exports must actually contain the claimed mixes. An unrelated
+    # audio track is now correctly blocked even if the mix regions agree.
+    for picture, mix in ((pic_a, aw), (pic_b, bw)):
+        muxed = picture.with_name('mux-' + picture.name)
+        subprocess.run(['ffmpeg', '-v', 'error', '-y', '-i', str(picture), '-i', str(mix),
+                        '-map', '0:v', '-map', '1:a', '-c:v', 'copy', '-c:a', 'aac',
+                        str(muxed)], check=True, capture_output=True)
+        muxed.replace(picture)
     unchanged = [{"start_frame": 0, "end_frame": 30}]
     native = qc.check_regions("chk-native", pic_a, pic_b, unchanged, 30,
                               a_audio=aw, b_audio=bw)
@@ -156,8 +163,7 @@ def test_check_regions_rerun_bumps_revision_without_conflict(stack):
     n = int(2.0 * rate)
     silent = [0] * n
     changed = [0] * n
-    for i in range(rate, n):
-        changed[i] = 200
+    changed[rate:] = pcm.sine(1, freq=880, rate=rate, amp=2000)
     aw, bw = tmp / "mix-a2.wav", tmp / "mix-b2.wav"
     aw.write_bytes(pcm.write_wav(silent, rate=rate))
     bw.write_bytes(pcm.write_wav(changed, rate=rate))
@@ -165,6 +171,14 @@ def test_check_regions_rerun_bumps_revision_without_conflict(stack):
     pic_b = tmp / "pic-b2.mp4"
     _color_mp4(pic_a, 2.0, rate=30, color="0x000000", size="360x640")
     _color_mp4(pic_b, 2.0, rate=30, color="0x010101", size="360x640")
+    # The exports must actually contain the claimed mixes. An unrelated
+    # audio track is now correctly blocked even if the mix regions agree.
+    for picture, mix in ((pic_a, aw), (pic_b, bw)):
+        muxed = picture.with_name('mux-' + picture.name)
+        subprocess.run(['ffmpeg', '-v', 'error', '-y', '-i', str(picture), '-i', str(mix),
+                        '-map', '0:v', '-map', '1:a', '-c:v', 'copy', '-c:a', 'aac',
+                        str(muxed)], check=True, capture_output=True)
+        muxed.replace(picture)
     unchanged = [{"start_frame": 0, "end_frame": 30}]
     first = qc.check_regions("regions-build-rerun", pic_a, pic_b,
                              unchanged, 30, a_audio=aw, b_audio=bw,

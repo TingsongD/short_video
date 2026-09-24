@@ -61,6 +61,13 @@ def resolve_edits(footage,passages,specs,clock,variant,total_frames):
         clip=inventory.get(spec.get('footage_id'));source=spec.get('source_in_frame')
         if not clip or type(source) is not int or source<0 or source+duration>clip['available_frames']:
             raise ContractError('editorial_source_range_invalid',ident,'No seed or shared-variant substitute is allowed.')
+        if 'reframe_zoom' in spec:
+            zoom = spec['reframe_zoom']
+            expected_source = round(Fraction(str(clip.get('source_in_s', 0))) * fps) + first - clip['in_frame']
+            if (type(zoom) not in (int, float) or not 1 <= zoom <= 1.25
+                    or source != expected_source):
+                raise ContractError('editorial_reframe_invalid', ident,
+                    'Reframing must preserve chronological footage with a bounded fixed zoom.')
         event={**deepcopy(spec),'start_frame':first,'end_frame':first+duration,'artifact_id':clip['artifact_id'],
                'sha256':clip['sha256'],'variant_key':variant,
                'target_time_before_quantization':str(intended),
@@ -90,6 +97,8 @@ def resolve_edits(footage,passages,specs,clock,variant,total_frames):
                     source_out_s=float(Fraction(source+high-low)/fps),transition_out='cut',transition_frames=0)
         if event and low==event['start_frame'] and event.get('semantic_start'):
             item['semantic_start']=event['semantic_start']
+        if event and 'reframe_zoom' in event:
+            item['reframe_zoom'] = event['reframe_zoom']
         pictures.append(item)
     return {'version':'semantic_edits.v1','variant_key':variant,'passages':deepcopy(passages),
             'pictures':pictures,'events':events,'clock':clock,'total_frames':total_frames}

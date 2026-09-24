@@ -9,11 +9,34 @@ needed for the normal workflow.
 > and [the latest operating notes](#8-completed-flash-cut-run-and-recovery-notes-2026-09-22).
 > Older dated sections describe their original release; they are not blanket
 > proof of current provider qualification or fully unattended operation.
+> A code release does not mean the local dashboard is running. If the page is
+> unavailable, use the startup steps below; do not create a new run to test it.
 
 > **What it does, in one sentence:** you give it a reference video and
 > your own footage/audio/images, it plans four variations, quotes the
 > cost before spending anything, renders them, asks you to review the
 > results, and delivers the approved files to Google Drive.
+
+**Frame rate for new runs:** every seed is analyzed at a constant 30 fps.
+Other frame rates and variable-rate videos get an automatic local conversion;
+the original remains saved. All output videos are 30 fps. See the
+[repair report](factory-reports/REPAIRS-2026-09-22.md) for the latest code changes
+and remaining acceptance work.
+
+**Parallel footage generation:** the latest local code allows up to four
+Vertex footage requests in flight across all runs. The single worker takes
+turns submitting, observing and collecting work, so a slow clip does not stop
+independent clips from starting or finishing. Jimeng retains five slots and
+local exports retain one. Each request still needs its own funded authorization;
+unresolved requests continue occupying a slot. Live throughput at four Vertex
+requests has not yet been measured.
+
+`FACTORY_VERTEX_CONCURRENCY` in the workspace `.env` controls the Vertex limit
+(default `4`, integer `0`–`16`; `0` stops new slot reservations while already
+reserved work may continue). Use Pause to stop dispatch. Restart the API and the one worker with the
+same configuration to apply it. Startup also updates an existing database's
+old one-slot limit. Reducing the limit preserves requests already in flight
+and waits for usage to fall below the new limit before submitting more.
 
 ---
 
@@ -24,7 +47,7 @@ the dashboard), the **worker** (does the actual jobs — exactly **one**;
 a second worker races the database lock), and the local **hypit
 programs** (WhisperX transcription, media tools).
 
-One command starts all of it:
+From your own Terminal, one command starts all of it:
 
 ```bash
 cd "/Users/tingsongdai/Kimi-cursor/Short Form AI YouTube"
@@ -36,29 +59,45 @@ hyperframes.local), the API on :8100 and a single worker in the
 background, waits for health, and prints the status. Logs live in
 `.run/api.log` and `.run/worker.log`, and the launcher writes
 `.run/api.pid` / `.run/worker.pid` recording the processes it started.
-Safe to re-run — already-running services are left alone.
+Safe to re-run — already-running services are left alone. A short-lived Codex
+tool shell is not a durable place to launch background services: the launcher
+can report healthy and its child processes can exit when that shell closes.
+Always check the dashboard again after the launching terminal/session ends.
 `./scripts/factory-down.sh` stops the factory API and worker **for this
-checkout only**: processes are matched by this workspace's own `.venv`
-path and pidfiles, so a sibling project running the same factory code
-(or you running the manual command in another repo) can never be killed
-by accident. The local hypit **programs** (whisperx.local and
-friends) are external and keep running — `./scripts/hypit.sh programs
-down` stops them and frees their ports.
+checkout only**: processes are matched by their interpreter, working
+directory and command. Identity is checked again before stopping them,
+including when the virtual environment resolves to a shared Python executable. It also asks Hypit to stop this project's managed local programs
+and runtime. Programs without a verified Hypit process record may remain
+running; do not kill a process merely because it owns a familiar port. Check
+`./scripts/hypit.sh programs status` and stop only programs you can identify
+as this project's own.
 The launcher now confirms the worker is still alive a couple of seconds
 after starting it and prints the log tail if it died. The worker itself
 rides through brief `database is locked` contention (bounded backoff);
 a lock that persists for minutes still fails loudly.
 
-Manual equivalent, if you prefer two terminals:
+Manual equivalent, if you prefer two terminals that remain open:
+
+**Terminal 1 — local programs, API and dashboard**
 
 ```bash
-./scripts/hypit.sh runtime up                       # local programs
-.venv/bin/python -m modules.factory.cli serve --port 8100
-.venv/bin/python -m modules.factory.cli worker      # one worker only
+cd "/Users/tingsongdai/Kimi-cursor/Short Form AI YouTube"
+./scripts/hypit.sh runtime up
+"/Users/tingsongdai/Kimi-cursor/Short Form AI YouTube/.venv/bin/python" -m modules.factory.cli serve --port 8100
+```
+
+**Terminal 2 — exactly one worker**
+
+```bash
+cd "/Users/tingsongdai/Kimi-cursor/Short Form AI YouTube"
+"/Users/tingsongdai/Kimi-cursor/Short Form AI YouTube/.venv/bin/python" -m modules.factory.cli worker
 ```
 
 Then open **http://127.0.0.1:8100** in your browser. The API serves the
 dashboard page itself, so buttons and uploads work on the same origin.
+Start the worker only when you intend queued work to run. If you only need to
+inspect completed videos, Terminal 1 is sufficient. A browser tab by itself
+does not keep the API or worker alive.
 
 Both manual CLI launches and the launcher also write private, rotating
 diagnostic logs to `.run/factory-api.jsonl` and
@@ -118,8 +157,10 @@ the list, then choose **Confirm cleanup**. Use **Show archived** to see them
 again or **Restore archived history → Confirm restore** to undo the archive.
 These preferences persist across browser reloads.
 
-Active, paused, blocked and unresolved work, including its related run and
-dependency history, cannot be archived. Work that changes or resumes becomes
+Active, paused, blocked and unresolved work stays visible. Finished jobs can
+be hidden individually even when another job in the same experiment is
+unresolved; their records remain available for dependencies and recovery.
+Runs with unresolved work stay visible. Work that changes or resumes becomes
 visible again. If work changes between preview and confirmation, cleanup is
 rejected without hiding anything; reopen Clean up for a fresh preview.
 
@@ -153,7 +194,13 @@ render → QC. You click once and watch progress.
    creative comparisons**, not isolated causal tests. Choose **Controlled
    regions** to retain shared footage outside the declared regions.
    **Readable phrase captions** use final replacement narration timing,
-   at most two lines, 48px type at 720×1280 and proportional scaling.
+   at most two lines, bold white 48px type at 720×1280 (72px at 1080×1920),
+   and an 80%-opaque black rounded background. Padding scales from 16px
+   horizontally / 10px vertically; the caption box ends at 78% of frame
+   height with at least 10% side margins. Grouping measures the actual bold
+   font inside that padded space instead of shrinking long phrases. The native,
+   typography and fast renderers share this treatment. New compositions bind
+   the font and style revision; already delivered exports remain unchanged.
    These versioned policies are frozen with the run. Older runs and API
    clients that omit `policies` retain legacy behavior.
 4. It **pauses only** when something genuinely needs you: missing
@@ -664,7 +711,10 @@ you explicitly authorize each destination.
   the declared/detected source language — never the requested narration
   language — and its output is checked for empty text, repetition loops,
   bad timing and language mismatch before script adaptation or TTS can
-  consume it.
+  consume it. Unlabeled sources use automatic language detection through
+  the local WhisperX service. If detection fails, analysis pauses; it never
+  guesses English. Changed transcription settings create fresh analysis
+  evidence when the seed is requested again, preserving historical revisions.
 - **Declared variations stay declared.** B/C/D each keep one meaningful
   changed beat: wording that only differs in case or punctuation does
   not count, and budget bounds or speech-fit repairs never silently
@@ -812,8 +862,9 @@ but does not synchronize playback.
 The run finished with generation, QC and delivery complete. Its verified files
 are in [factory-deliveries](https://drive.google.com/drive/folders/1dDy1kKvQI8gio3k1oOjgqeIepjZnyiLM).
 Delivery uses the account and destination saved for the run. Video-specific
-render services were stopped; dashboard playback remains available. Nothing
-was scheduled or published, and automated QC did not create human approval.
+render services were stopped; dashboard playback is available when the API is
+running. Nothing was scheduled or published, and automated QC did not create
+human approval.
 
 ### Understand the budget
 
@@ -855,13 +906,15 @@ video does not settle that charge.
 ### What this successful run does not prove
 
 - The completed acceptance run required assistant corrections. The subsequent
-  hardening work improves bounded automatic recovery, but fully unattended
-  operation is not established until the complete offline qualification and a
-  separately authorized live acceptance run pass.
+  hardening work improves bounded automatic recovery, and the complete offline
+  suite passed. Fully unattended operation is still unproven without separately
+  authorized multi-seed live acceptance.
 - New analysis routes were qualified narrowly for this run/source. Check current
   qualification and expiry before reuse; reference-conditioned generation remains disabled.
-- Jev ran in shadow mode; better cost/quality has not been measured.
-- Every decoded source frame was processed by PE. New v2 finals also receive
+- Jev ran in shadow mode. Its retained responses removed none of 78 optional
+  candidates, so this run demonstrated no selection or cost benefit; active
+  filtering remains disabled.
+- Every decoded source frame was processed by PE. New v2/v3 finals also receive
   all-frame timestamp and schedule checks, but neither is exhaustive semantic
   visual review, pixel OCR or lip-sync verification. Character continuity remains
   a quality limitation.
@@ -905,6 +958,16 @@ consistent rollout backup, and stop only this checkout's API/worker and owned
 Hypit runtime. Start **one** worker, then confirm `/api/health`, the worker
 heartbeat and the dashboard bundle. A detached launcher invoked from a
 short-lived agent shell may report healthy and then lose its child processes;
-use persistent terminals/sessions and recheck health after the launcher exits.
+even agent-managed persistent sessions were observed to end after their task.
+Use your own open Terminal windows for durable operation and recheck health
+after any launcher exits.
 The 2026-09-22 rollout kept shared media programs running when ownership was
 unclear and did not resume historical paused runs.
+
+## Speaker-aware recreation (2026-09-23)
+
+New automatic runs require WhisperX plus pyannote diarization to identify who says each line. Configure `HF_TOKEN` in gitignored `config/secrets.toml` after accepting the `pyannote/speaker-diarization-community-1` model terms. Restart the project WhisperX service after activating this implementation. A plain or unresolved transcript pauses before paid work; after access is restored, Resume reruns local source evidence.
+
+The selected TTS voice is the first speaker's voice. Other detected speakers receive distinct existing account voices. Optional **Speaker voices** assignments override that choice (`SPEAKER_00=voice-id`, one per line). Assignments remain consistent across A/B/C/D and are shown under **Character voices**. Speaker labels are acoustic identities; matching them to visible people needs separate evidence. Changing voices after scripts are prepared requires a new run.
+
+See [implementation and validation](factory-reports/SPEAKER-DIARIZATION-2026-09-23.md) for supported recovery, checks and limitations. Previously delivered single-narrator videos are not automatically replaced.

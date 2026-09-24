@@ -11,6 +11,30 @@ completed run's narrow live acceptance from the new v3 compact evidence route.
 The [live-only checklist](FLASHCUT-LIVE-ONLY-ACCEPTANCE.md) contains unpaid
 three-seed stage-one estimates; it does not authorize provider requests.
 
+The latest **unreleased working-tree** [review repairs and 30 fps policy](REPAIRS-2026-09-22.md)
+are separate from the completed acceptance run below. New analysis covers every
+frame of the normalized 30 fps copy; its live qualification remains open.
+
+The subsequent [last-run audit](LAST-RUN-AUDIT-2026-09-22.md) also reproduces
+and fixes forced-English transcription of unlabeled sources, reuse of that
+old transcript and false rejection of Chinese character timing. The original
+audio passes local recognition/alignment after restoring the missing alignment
+model. These are local follow-up changes; the completed run's
+historical evidence and delivered videos remain unchanged.
+
+## Local operating check — 2026-09-22 21:34 UTC
+
+Commit `89204bd` is on local and remote `main`; the offline-qualified code and
+dashboard bundle remain in the checkout. The previous rollout was healthy at
+21:23 UTC, but its agent-managed API/worker sessions ended when that task
+closed. A fresh `/api/health` request failed and process inspection found no
+factory API or worker at 21:34 UTC. An open browser tab is not a running
+service. This is an **availability issue**, not a failed video or lost record.
+Start the system from durable, user-owned Terminal windows using the
+[operator startup instructions](../factory-operator-guide.md#1-starting-the-system)
+before trying Compare or a new run. This documentation update does not start
+the worker, resume a paused job, or submit a paid request.
+
 ## Outcome
 
 - Run: `auto-2c9de6ddf2e34d5c`; experiment: `exp-auto-2c9de6ddf2e34d5c`, revision 3.
@@ -43,8 +67,10 @@ three-seed stage-one estimates; it does not authorize provider requests.
 | Slow generation | Original remote request observed to completion; no duplicate submission |
 
 Authentication was restored interactively. Source-language interpretation also
-required a run-specific correction; Chinese recognition/translation changes are
-explicitly outside the requested next hardening scope.
+required a run-specific correction. It was excluded from the original
+hardening cycle; the user's later request to address every last-run issue
+includes the source-language orchestration fixes in the audit linked above.
+Recognition quality on real audio still requires scoped live validation.
 
 ## Follow-on hardening status
 

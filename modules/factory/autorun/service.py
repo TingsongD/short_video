@@ -85,10 +85,17 @@ class AutoRunService:
         if not seed_id:
             raise ContractError("seed_required", "seed_id")
         seed = self.s.seeds.get(seed_id)             # raises unknown_seed
+        analysis_asset_id = str(body.get('analysis_asset_id') or '')
+        if analysis_asset_id:
+            if analysis_asset_id != seed.analysis_asset_id:
+                raise ContractError('analysis_proxy_mismatch', 'analysis_asset_id')
+            self.s.artifacts.verified_path(analysis_asset_id)
         voice = str(body.get("voice_id") or "").strip()
         if not VOICE_RE.match(voice):
             raise ContractError("voice_required", "voice_id",
                                 "a provider voice id is required")
+        from .dialogue import validate_voice_map
+        speaker_voices = validate_voice_map(body.get('speaker_voices', {}))
         budget_ids = list(body.get("budget_ids") or [])
         if not budget_ids:
             raise ContractError("budgets_required", "budget_ids",
@@ -125,6 +132,8 @@ class AutoRunService:
                 "source_timing_policy": "source_timing.v1",
                 "delivery_tracking": "verified_receipts.v1",
                 "voice_id": voice, "language": language,
+                "speaker_policy": "whisperx-pyannote.v1", "speaker_voices": speaker_voices,
+                "analysis_asset_id": analysis_asset_id,
                 "budget_ids": budget_ids, "limits": limits,
                 "spending_policy": spending_policy,
                 "generate_music": bool(body.get("generate_music")),
@@ -312,6 +321,41 @@ class AutoRunService:
         from .recovery import AnalysisRecovery
         return AnalysisRecovery(self.s).recover(run_id, body)
 
+    def raise_budget(self, run_id, body):
+        """Record explicit operator authority without resetting any costs or holds."""
+        from .policies import run_spending_policy
+        cap, expected = body.get('ceiling'), body.get('expected_ceiling')
+        reviewer, evidence = body.get('reviewer'), body.get('evidence')
+        if any(not isinstance(v, str) or not v.strip() for v in (reviewer, evidence)):
+            raise ContractError('budget_scope_required', 'reviewer/evidence')
+        if type(cap) is not int or cap <= 0 or cap > 9_000_000_000_000_000:
+            raise ContractError('invalid_cap', 'ceiling')
+        with self.s.db.uow() as u:
+            run = self.get(run_id)
+            if run.status != 'paused':
+                raise ContractError('run_not_paused', 'run_id')
+            policy = run_spending_policy(run.params)
+            if not policy or policy['budget_id'] != f'run_guardrail:{run_id}:usd':
+                raise ContractError('run_guardrail_mismatch', 'run_id')
+            bid, old = policy['budget_id'], policy['cap_amount']
+            remaining = self.budgets.available(bid)
+            actual = u.conn.execute('SELECT cap_amount FROM budgets WHERE id=?', (bid,)).fetchone()[0]
+            if type(expected) is not int or expected != old or actual != old:
+                raise ContractError('stale_budget_ceiling', 'expected_ceiling')
+            if cap <= old:
+                raise ContractError('budget_not_raised', 'ceiling')
+            result = {'budget_id': bid, 'run_id': run_id, 'previous_ceiling': old,
+                      'ceiling': cap, 'committed': old - remaining,
+                      'available': cap - old + remaining}
+            u.conn.execute('UPDATE budgets SET cap_amount=? WHERE id=?', (cap, bid))
+            u.events.append('budget:' + bid, 'run_budget_raised',
+                            dict(result, reviewer=reviewer, evidence=evidence))
+            policy['cap_amount'] = cap
+            run.params['spending_policy'] = policy
+            run.notes.append(f'Operator raised cumulative USD cap from {old} to {cap} micros; prior costs retained.')
+            self._put(run)
+        return result
+
     def resume(self, run_id, body=None):
         with self.s.db.uow():
             return self._resume(run_id, body)
@@ -333,16 +377,26 @@ class AutoRunService:
                                 'Scene review was removed. Use Resume without a review action.')
         scene_review.guard_resume(run)
         from .readiness import runtime_ready
-        runtime_ready(self.s)
+        # Resume schedules an auto_step controller, which must be able to
+        # reconcile completed responses even while dispatch holds fill up.
+        runtime_ready(self.s, capacity_pool='observe')
         if body.get('approve_flashcut_response_recovery') is True:
             from .flashcut_recovery import FlashcutResponseRecovery
-            FlashcutResponseRecovery(self).enable(run, body.get('reviewer'))
+            FlashcutResponseRecovery(self).enable(run, body.get('reviewer'),
+                max_replacements=body.get('flashcut_replacement_limit', 2),
+                reviewer_type=body.get('reviewer_type', 'human'))
         if body.get('approve_flashcut_format_recovery') is not None:
             from .flashcut_format_recovery import FlashcutFormatRecovery
             FlashcutFormatRecovery(self).enable(run,body['approve_flashcut_format_recovery'],body.get('reviewer'))
         if body.get('approve_flashcut_evidence_reuse') is True:
             from .flashcut_format_recovery import FlashcutFormatRecovery
             FlashcutFormatRecovery(self).enable_context_reuse(run,body)
+        if body.get('flashcut_cut_review') is not None:
+            from .cut_review import CutReview
+            CutReview(self).enable(run, body['flashcut_cut_review'])
+        if body.get('editorial_local_plan') is not None:
+            from .editorial_recovery import adopt_local_plan
+            adopt_local_plan(self, run, body['editorial_local_plan'])
         replacement = body.get("budget_ids")
         if replacement is not None:
             replacement = [str(b) for b in replacement]
@@ -379,10 +433,23 @@ class AutoRunService:
         # recovery action can be acted on. Restricted to keys whose
         # change is safe mid-run; every change is audited in notes.
         settable = {"limits", "valid_until", "visual_reviews",
-                    "generate_music", "account"}
+                    "generate_music", "account", "language", "speaker_voices"}
         for key, value in (body.get("set_params") or {}).items():
             if key not in settable:
                 raise ContractError("param_not_resumable", key)
+            if key == 'speaker_voices':
+                from .dialogue import validate_voice_map
+                if run.stage not in ('intake', 'evidence', 'video_analysis', 'sections', 'analysis_review', 'blueprint') or run.state.get('scripts'):
+                    raise ContractError('new_run_required', key, 'Speaker casting is frozen before script adaptation.')
+                value = validate_voice_map(value)
+            if key == 'language' and value != run.params.get('language'):
+                if (run.stage != 'script' or run.state.get('scripts')
+                        or any(run.state.get(f'{tag}_plan') or run.state.get(f'{tag}_jobs')
+                               for tag in ('translate', 'script', 'script_repair'))):
+                    raise ContractError('new_run_required', 'language',
+                        'Language can change before translation or script work is planned. Start a new run after that point.')
+                if not isinstance(value, str) or not re.fullmatch(r'[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})?', value):
+                    raise ContractError('invalid_language', 'language')
             if key == 'visual_reviews' and run.params.get('workflow') and value != run.params.get(key):
                 raise ContractError('new_draft_required', key,
                                     'QC requirements are frozen with this workflow; start a new run to change them.')
@@ -398,12 +465,20 @@ class AutoRunService:
                     raise ContractError('new_draft_required', 'account',
                                         'Save a new draft revision before changing production authority.')
             if key == "valid_until":
-                text = str(value or "")
-                if text and text <= utcnow():
+                from datetime import datetime, timezone
+                try:
+                    expiry = datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+                    valid = expiry > datetime.now(timezone.utc)
+                except (ValueError, TypeError):
+                    valid = False
+                if not valid:
                     raise ContractError("authorization_not_renewed",
                                         "valid_until")
+                value = expiry.isoformat()
             if key == "limits":
-                if not isinstance(value, dict):
+                from ..domain.money import UNITS
+                if (not isinstance(value, dict) or any(k not in UNITS or type(v) is not int or v <= 0
+                                                      for k, v in value.items())):
                     raise ContractError("invalid_limits", "limits")
                 run.params["limits"] = {str(k): v for k, v in
                                         value.items()}
@@ -413,6 +488,9 @@ class AutoRunService:
                 f"operator updated {key} at resume")
         self._rebind_current_revision(run)
         self._reset_budget_blocked_effect(run)
+        if run.stage == 'evidence' and run.pause.get('code') == 'speaker_review_required':
+            run.state['evidence_seq'] = run.state.get('evidence_seq', 0) + 1
+            run.state.pop('evidence_job', None)
         if run.params.get('workflow') and run.pause.get('code') == 'delivery_failed':
             run.state['delivery_recovery_requested'] = True
         run.status = "running"
@@ -439,7 +517,11 @@ class AutoRunService:
             return
         current = self.s._current(eid)
         prior = run.state.get("experiment_revision")
-        if not prior or current.revision == prior:
+        if not prior:
+            return
+        if current.revision == prior:
+            from .render_recovery import rebind_author_package
+            rebind_author_package(self, run, current)
             return
         stage = run.stage
         # Reconcile before replace: a job or attempt that may still be
@@ -447,6 +529,8 @@ class AutoRunService:
         # before a fresh paid scope can be created — otherwise the old
         # plan keeps billing in parallel.
         job_refs = list(run.state.get("production_jobs") or [])
+        job_refs += [value['job_id'] for value in (run.state.get('delivery_jobs') or {}).values()
+                     if value.get('job_id')]
         if run.state.get('plan_id'):
             job_refs += [r['id'] for r in self.s.db.conn.execute(
                 'SELECT id FROM jobs WHERE id LIKE ?', (run.state['plan_id'] + ':%',))]
@@ -456,6 +540,8 @@ class AutoRunService:
             for key, value in run.state.items():
                 if key.startswith(('reference_clip_', 'reference_overlay_', 'reference_check_')) and key.endswith('_jobs'):
                     job_refs += value or []
+        from .revisions import retire_local_jobs
+        retire_local_jobs(self.s.db, job_refs, eid, prior, current.revision)
         pending = [jid for jid in job_refs
                    if (self.s.db.uow().jobs.get(jid) or {})
                    .get("status") not in
@@ -497,7 +583,7 @@ class AutoRunService:
             for key in ("quote_job", "plan_id", "authorize_job", "run_job",
                         "production_jobs", "qc_submitted",
                         "qc_resubmitted", "qc_rechecks", "qc_flagged",
-                        "qc_human_accepted"):
+                        "qc_human_accepted", "qc_human_bindings", "qc_human_reviews", "delivery_jobs", "completion_phases"):
                 run.state.pop(key, None)
             for key in list(run.state):
                 if key.startswith("qc_verdict_") or (
@@ -525,22 +611,35 @@ class AutoRunService:
                             and run.pause.get('code') in ('capability_unavailable', 'final_qc_failed'))
         if not safe_qc_recovery and run.pause.get("code") not in (
                 "budget_exhausted", "analysis_failed", "analysis_invalid",
-                "analysis_unavailable"):
+                "analysis_unavailable", "authorization_expired", "quote_expired",
+                "translation_failed", "translation_incomplete"):
             return
         tags = {
             "video_analysis": ["analysis"],
             "sections": ["analysis"],
             "blueprint": ["analysis"],
-            "script": ["script", "script_repair"],
+            "script": ["translate", "script", "script_repair"],
             "music": ["music"],
             "tts": run.state.get("tts_batch_tags") or ["tts"],
             "final_qc": [f"qc_{k}" for k in "ABCD"],
         }
         cleared = set()
         for tag in tags.get(run.stage, []):
+            if tag == 'translate' and run.state.get('translation_retries', 0) >= 1:
+                continue
             jobs = run.state.get(f"{tag}_jobs") or []
+            expired_scope = run.pause.get('code') in ('authorization_expired', 'quote_expired')
+            if expired_scope and any((self.s.db.uow().jobs.get(jid) or {}).get('status') == 'succeeded' for jid in jobs):
+                # A partially completed plan needs operation-specific recovery;
+                # renewing its whole request list would rebuy completed output.
+                continue
             attempts = []
             for jid in jobs:
+                if expired_scope and (self.s.db.uow().jobs.get(jid) or {}).get('status') in ('failed', 'blocked', 'cancelled'):
+                    from ..execution.effects import EffectService
+                    for attempt in self.s.db.conn.execute("SELECT id FROM attempts WHERE job_id=? AND status='prepared'", (jid,)).fetchall():
+                        EffectService(self.s.db, self.s.executor).cancel_prepared(attempt['id'],
+                            'operator renewed expiry; terminal job never dispatched this prepared attempt')
                 attempts.extend(self.s.db.conn.execute(
                     "SELECT status,json_extract(body,'$.reservation_id') "
                     "AS reservation_id FROM attempts WHERE job_id=?",
@@ -566,8 +665,11 @@ class AutoRunService:
                        in ("failed", "blocked", "cancelled")
                        for jid in jobs) and \
                     run.pause.get("code") not in (
-                        "analysis_invalid", "analysis_unavailable"):
+                        "analysis_invalid", "analysis_unavailable", "translation_incomplete"):
                 continue
+            if tag == 'translate':
+                run.state['translation_retries'] = run.state.get('translation_retries', 0) + 1
+                run.state.pop('translation', None)
             run.state.pop(f"{tag}_jobs", None)
             run.state.pop(f"{tag}_plan", None)
             run.state.pop(f"{tag}_auth", None)
@@ -589,7 +691,7 @@ class AutoRunService:
             run.notes.append(
                 "invalid analysis discarded after settlement; a fresh "
                 "analysis attempt will be planned on Resume")
-        if run.stage == "tts":
+        if run.stage == "tts" and cleared:
             run.state.pop("tts_synth_jobs", None)
             run.state.pop("tts_batch_tags", None)
             if cleared:
@@ -611,10 +713,15 @@ class AutoRunService:
             raise ContractError("no_qc_resolution_pending", "resolve_qc")
         flagged = list(run.state.get("qc_flagged") or [])
         if resolved == "accept":
+            from .policies import run_policies
+            if run_policies(run.params)['delivery'] == 'after_qc':
+                raise ContractError('automated_visual_required', 'resolve_qc',
+                                    'This run requires an automated pass before delivery. Use Recheck after correcting the flagged issue.')
             reviewer = str(body.get("reviewer") or "").strip()
             if not reviewer:
                 raise ContractError("reviewer_required", "reviewer")
             finals = self._finals(run)
+            accepted_reviews = {}
             for key in flagged:
                 f = finals.get(key)
                 if not f:
@@ -622,15 +729,21 @@ class AutoRunService:
                 path = self.s.artifacts.verified_path(f["artifact_id"])
                 binding = self.s.quality.binding(
                     path, f["composition_id"], f["artifact_id"])
-                self.s.quality.record_verdict(
+                accepted_reviews[key] = self.s.quality.record_verdict(
                     "human-visual-" + uuid.uuid4().hex[:16],
                     f["sha256"], "creative", "pass",
                     evidence=[f["artifact_id"]], binding=binding,
                     reviewer=reviewer,
                     limitations=["manual acceptance after automated "
                                  "flag"],
-                    reviewer_type="human")
+                    reviewer_type="human")['id']
             run.state["qc_human_accepted"] = True
+            run.state['qc_human_reviews'] = accepted_reviews
+            # Bind the entire reviewed set: replacing an unflagged control
+            # also invalidates the shortcut, since its machine verdict is old.
+            run.state['qc_human_bindings'] = {key: self.s.quality.binding(
+                self.s.artifacts.verified_path(f['artifact_id']), f['composition_id'], f['artifact_id'])
+                for key, f in finals.items()}
             run.notes.append(
                 f"flagged finals accepted by {reviewer} after human "
                 "review in Compare")
@@ -773,6 +886,9 @@ class AutoRunService:
                                               'next_attempt_at': j.get('next_attempt_at')}
             if j["status"] in ("failed", "blocked", "cancelled"):
                 reason = str(j["blocked_reason"] or j["status"])
+                if reason in ('authorization_expired', 'quote_expired'):
+                    return ('pause', reason, f'job {jid}: {reason}',
+                            'Extend the approval expiry, refresh expired prices, then Resume. A partially completed plan requires reconciliation; completed output will not be bought again.')
                 if reason == 'analysis_http_error' and self.s.effect_work.resume_throttled_job(jid):
                     return 'wait'
                 from ..providers.recovery import credential_recovery, analysis_recovery
@@ -916,6 +1032,33 @@ class AutoRunService:
         if blocked:
             return blocked
         plan_id = run.state.get(f"{tag}_plan")
+        auth_id = run.state.get(f'{tag}_auth')
+        if plan_id and auth_id:
+            row = self.s.db.uow().records.get('authorization', auth_id)
+            saved = json.loads(row['body']) if row else {}
+            from datetime import datetime, timezone
+            try:
+                expired = datetime.fromisoformat(saved.get('valid_until', '').replace('Z', '+00:00')) <= datetime.now(timezone.utc)
+            except (ValueError, TypeError):
+                expired = True
+            if saved.get('status') != 'authorized':
+                return ('pause', 'authority_inactive', 'The stored effect approval is no longer active.',
+                        'Review the revoked or retired authority before creating replacement work.')
+            if expired:
+                # A crash between queueing and saving job IDs must not hide
+                # already submitted work. Recover those identities first.
+                existing = [r['id'] for r in self.s.db.conn.execute(
+                    "SELECT id FROM records WHERE kind='appcommand' AND json_extract(body,'$.kind')='effect' "
+                    "AND json_extract(body,'$.input.plan_id')=?", (plan_id,))]
+                if existing:
+                    run.state[state_key] = existing
+                    self._put(run)
+                    return 'wait'
+                run.state.pop(f'{tag}_auth', None)
+                run.state.pop(f'{tag}_plan', None)
+                run.state[f'{tag}_plan_seq'] = run.state.get(f'{tag}_plan_seq', 0) + 1
+                plan_id = None
+                self._put(run)
         if plan_id:
             plan = self.s.effect_work.get(plan_id)
         else:
@@ -1024,6 +1167,18 @@ class AutoRunService:
             run.state.pop("evidence_job", None)
             self._put(run)
             return "next"
+        if (run.params.get('speaker_policy') and a.acquisition.get('audio_present')
+                and a.transcript.get('status') not in ('declared_nonverbal', 'not_applicable')):
+            from ..analysis.speakers import require_diarization
+            try:
+                path = self.s.ref_analysis.verified_transcript(a)
+                document = json.loads(path.read_text())
+                evidence = require_diarization(document)
+            except ContractError as error:
+                return ('pause', error.code, error.detail,
+                    'Enable pyannote diarization and rerun source evidence. Plain transcription cannot establish the number of speakers.')
+            run.state['speaker_evidence'] = {'source_sha256': a.source_sha256,
+                'transcript_sha256': a.transcript['sha256'], 'speakers': evidence['speakers']}
         self._advance(run, "video_analysis")
         return "next"
 
@@ -1060,6 +1215,9 @@ class AutoRunService:
                 f"analysis input is the registered derivative {asset_id}"
                 f" — the production master remains "
                 f"{seed.source_asset_id}")
+        from ..media.analysis_clock import analysis_media
+        media = analysis_media(self.s.artifacts, asset_id)
+        asset_id = media['analysis_artifact_id']
         art = self.s.db.uow().artifacts.get(asset_id)
         run.state['analysis_source_sha'] = self.s.db.uow().artifacts.get(seed.source_asset_id)['sha256']
         out = self._run_effect(
@@ -1101,7 +1259,9 @@ class AutoRunService:
         a = self.s.ref_analysis.get(run.seed_id)
         from .scene_review import SceneReview
         review=SceneReview(self.s)
-        if review.verified(run,a.source_sha256) or review.manual_verified(run,a.source_sha256):
+        if run.params.get('speaker_policy') and a.transcript.get('status') in ('declared_nonverbal', 'not_applicable'):
+            return []
+        if not run.params.get('speaker_policy') and (review.verified(run,a.source_sha256) or review.manual_verified(run,a.source_sha256)):
             transcript=copy.deepcopy(run.state['analysis']['transcript'])
             prior=run.state.get('analysis_before_manual_review') if review.manual_verified(run,a.source_sha256) else run.state.get('analysis_before_ai_review')
             # Corrected audible words can reveal that the old language label
@@ -1118,6 +1278,9 @@ class AutoRunService:
             path = self.s.ref_analysis.verified_transcript(a)
             if path.exists():
                 data = json.loads(path.read_text())
+                if run.params.get('speaker_policy'):
+                    from ..analysis.speakers import require_diarization
+                    require_diarization(data)
                 passages = data.get("passages") or data.get("segments") \
                     or []
                 out = []
@@ -1130,7 +1293,8 @@ class AutoRunService:
                             "end_s": float(
                                 p.get("end_s", p.get("end_seconds",
                                                      p.get("end", 0)))),
-                            "text": text, "words": copy.deepcopy(p.get("words") or [])})
+                            "text": text, "words": copy.deepcopy(p.get("words") or []),
+                            **({"speaker": p["speaker"]} if "speaker" in p else {})})
                 if out:
                     # Source language provenance travels with the words —
                     # script adaptation decides whether translation is an
@@ -1220,6 +1384,35 @@ class AutoRunService:
         if run.state.get('analysis_source_sha') and run.state['analysis_source_sha'] != source['sha256']:
             return ('pause', 'analysis_source_changed', 'The source bytes changed after analysis.',
                     'Start a new run for the changed source; previous analysis and approvals cannot be reused.')
+        if run.params.get('speaker_policy') and run.state.get('speaker_evidence'):
+            from .dialogue import prepare_analysis, cast_voices
+            try:
+                current = self.s.ref_analysis.get(run.seed_id)
+                evidence = run.state['speaker_evidence']
+                if (evidence['source_sha256'] != current.source_sha256 or
+                        evidence['transcript_sha256'] != current.transcript.get('sha256')):
+                    raise ContractError('speaker_evidence_stale', 'transcript',
+                        'Source speaker evidence changed. Restart the run from evidence before adapting dialogue.')
+                payload, owners = prepare_analysis(payload, self._transcript(run))
+                speakers = run.state['speaker_evidence']['speakers']
+                supplied = run.params.get('speaker_voices') or run.state.get('speaker_voices') or {}
+                try:
+                    voices = cast_voices(speakers, run.params['voice_id'], supplied)
+                except ContractError as error:
+                    if error.code != 'speaker_voices_required': raise
+                    adapter = self.s.providers.get('elevenlabs')
+                    if not callable(getattr(adapter, 'voices', None)): raise
+                    try:
+                        catalog = adapter.voices()
+                    except Exception:
+                        raise ContractError('speaker_voices_required', 'catalog',
+                            'The available voice catalog could not be read. Restore access or provide distinct speaker voice IDs.') from None
+                    voices = cast_voices(speakers, run.params['voice_id'], supplied, catalog)
+                run.state.update(speaker_analysis=payload, segment_speakers=owners, speaker_voices=voices)
+                self._put(run)
+            except ContractError as error:
+                return ('pause', error.code, error.detail,
+                    'Review source speaker turns or assign distinct speaker_voices, then Resume before drafting.')
         binding = content_hash({'source_sha256': source['sha256'], 'analysis': payload})
         run.state['scene_review_policy'] = 'removed'
         note = 'Scene review is disabled: scene descriptions were not independently reviewed; technical checks remain enforced.'
@@ -1259,6 +1452,7 @@ class AutoRunService:
             if bp is None:
                 bp = self.s.analysis.import_observations(
                     run.seed_id, payload, AUTO_REVIEWER,
+                    analysis_asset_id=run.params.get('analysis_asset_id'),
                     provenance={'autorun_analysis_hash': binding, 'autorun_id': run.id,
                                 'scene_review_policy': 'removed', 'review_performed': False})
             # Building the new draft fulfils the reset. Acceptance is a
@@ -1298,17 +1492,30 @@ class AutoRunService:
             return "next"
         bp = self.s.analysis.get(run.state["blueprint_id"])
         fps = bp.clock.num / bp.clock.den
+        source_clock = (getattr(bp, 'provenance', None) or {}).get('source_clock')
+        if source_clock:
+            source_fps = source_clock['num'] / source_clock['den']
+        else:
+            # Older blueprints predate source_clock. Recover it from the
+            # verified master, never infer it from the output frame rate.
+            from ..media.probe import probe
+            source = self.s.seeds.get(run.seed_id)
+            info = probe(self.s.artifacts.verified_path(source.source_asset_id))
+            source_fps = float(info.video.avg_frame_rate or info.video.r_frame_rate)
         beats = [{"id": b.id, "role": b.role,
-                  "start_s": b.source.start / fps if b.source else 0.0,
-                  "end_s": b.source.end / fps if b.source else 0.0,
+                  "start_s": b.source.start / source_fps if b.source else 0.0,
+                  "end_s": b.source.end / source_fps if b.source else 0.0,
                   "target_s": (b.target.end - b.target.start) / fps,
-                  "visual_event": b.visual_event}
+                  "visual_event": b.visual_event,
+                  **({"speaker": run.state["segment_speakers"][b.id]} if b.id in run.state.get("segment_speakers", {}) else {})}
                  for b in bp.beats]
-        transcript = self._transcript(run)
+        transcript = (run.state.get('speaker_analysis') or {}).get('transcript') or self._transcript(run)
         if run.params.get('source_timing_policy') == 'source_timing.v1':
             from .source_timing import LocalTimingRepair, SourceTimingService
             source = self.s.seeds.get(run.seed_id)
-            path = self.s.artifacts.verified_path(source.source_asset_id)
+            from ..media.analysis_clock import analysis_media
+            media = analysis_media(self.s.artifacts, source.source_asset_id)
+            path = self.s.artifacts.verified_path(media["analysis_artifact_id"])
             artifact = self.s.db.uow().artifacts.get(source.source_asset_id)
             repair = LocalTimingRepair(path, self.s.config.get('source_timing_local_url', 'http://127.0.0.1:8765'))
             if self.s.config.get('mode', 'offline') != 'live':
@@ -1377,8 +1584,9 @@ class AutoRunService:
                     return ("pause", "translation_incomplete",
                             "the translation response did not cover "
                             "every source passage",
-                            "Resume to retry once, or supply an aligned "
-                            "transcript in the output language")
+                            ("The one translation retry is exhausted. Correct the analysis input and start a new run."
+                             if run.state.get('translation_retries', 0) >= 1 else
+                             "Settle the completed translation attempt, then Resume for one fresh translation."))
                 run.state["translation"] = texts
                 run.notes.append(
                     f"translated {len(texts)} transcript passages "
@@ -1392,10 +1600,9 @@ class AutoRunService:
             if warning not in run.notes:
                 run.notes.append(warning)
         if base.get("unplaced"):
-            run.notes.append(
-                f"{len(base['unplaced'])} transcript passage(s) could "
-                "not be assigned to any beat — excluded from copy, "
-                "visible here for audit")
+            return ('pause', 'source_passages_unassigned',
+                    f"{len(base['unplaced'])} transcript passage(s) fall outside the source beats",
+                    'Correct the source timing or beat coverage before resuming.')
         # The source-derived adaptation is the bounded repair target when
         # generated copy later fails its measured speech fit.
         run.state["scripts_base"] = base
@@ -1643,7 +1850,7 @@ class AutoRunService:
         context = None
         if run.params.get('workflow'):
             from ..creative.context import from_analysis, scene_request
-            context = from_analysis(run.state.get('analysis') or {}, bp.beats)
+            context = from_analysis(run.state.get('speaker_analysis') or run.state.get('analysis') or {}, bp.beats)
         segments = []
         for b in bp.beats:
             segments.append({
@@ -1654,6 +1861,13 @@ class AutoRunService:
                     {"visual_event": b.visual_event, "role": b.role},
                     "control", gen_settings)},
                 "captions": []})
+            if run.params.get('speaker_policy') and segments[-1]['copy']:
+                speaker = run.state.get('segment_speakers', {}).get(b.id)
+                voice = run.state.get('speaker_voices', {}).get(speaker)
+                if not speaker or not voice:
+                    return ('pause', 'speaker_assignment_required', b.id,
+                            'Every spoken scene needs its source speaker and a distinct replacement voice.')
+                segments[-1].update(speaker=speaker, voice_id=voice)
         if 'policies' in run.params:
             for seg in segments:
                 seg['picture']['request']['prompt'] += (
@@ -1662,7 +1876,10 @@ class AutoRunService:
         variants = []
         if context:
             for seg in segments:
-                seg['picture']['request'] = scene_request(context, seg['id'], 'A', gen_settings)
+                beat = next(b for b in bp.beats if b.id == seg['id'])
+                seg['picture']['request'] = scene_request(
+                    context, seg['id'], 'A', gen_settings,
+                    visual_event=beat.visual_event)
         for key in ("B", "C", "D"):
             changed_id = sc["changed"][key]
             branch_segments = []
@@ -1687,7 +1904,10 @@ class AutoRunService:
                         key, gen_settings)
                     s2['picture']['request']['prompt'] += continuity
                 if context:
-                    s2['picture']['request'] = scene_request(context, seg['id'], key if full_video or seg['id'] == changed_id else 'A', gen_settings)
+                    beat = next(b for b in bp.beats if b.id == seg['id'])
+                    s2['picture']['request'] = scene_request(
+                        context, seg['id'], key if full_video or seg['id'] == changed_id else 'A',
+                        gen_settings, visual_event=beat.visual_event)
                 branch_segments.append(s2)
             region = next(b.target.to_dict() for b in bp.beats
                           if b.id == changed_id)
@@ -1797,7 +2017,9 @@ class AutoRunService:
         # Synthesis is bought once per normalized text, but fitting and
         # attachment are per occurrence — every segment that speaks the
         # line gets its own speech record, target interval and captions.
+        from .dialogue import synthesis_key, segment_voice
         needed = {}
+        voices = {}
         over_budget = []
         for key in "ABCD":
             variant = self.s.experiments._variant(eid, key)
@@ -1805,7 +2027,11 @@ class AutoRunService:
                 text = str(seg.get("copy") or "").strip()
                 if not text:
                     continue
-                norm = self.s.audio_work.speech.normalize(text)
+                if run.params.get('speaker_policy') and (not seg.get('speaker') or
+                        seg.get('voice_id') != run.state.get('speaker_voices', {}).get(seg['speaker'])):
+                    return ('pause', 'speaker_assignment_required', seg['id'], 'Restore the frozen speaker-to-voice mapping before synthesis.')
+                norm = synthesis_key(self.s.audio_work.speech, seg, run)
+                voices[norm] = segment_voice(seg, run.params['voice_id'])
                 needed.setdefault(norm, []).append(
                     (key, seg["id"], text))
                 # Pre-spend feasibility: a line provably over its beat's
@@ -1848,7 +2074,7 @@ class AutoRunService:
             reuse = {n: j for n, j in history.items() if n in needed and
                      (self.s.db.uow().jobs.get(j) or {}).get("status")
                      == "succeeded" and
-                     self._synth_job_matches(j, needed[n][0][2], run)}
+                     self._synth_job_matches(j, needed[n][0][2], run, voices[n])}
             fresh = [n for n in needed if n not in reuse]
             synth = {}
             # Effect plans cap at 20 operations — dispatch batches, each
@@ -1860,7 +2086,7 @@ class AutoRunService:
                 tag = "tts" if not batch_tags else \
                     f"tts_{len(batch_tags)}"
                 requests = [{"text": needed[n][0][2],
-                             "voice_id": run.params["voice_id"],
+                             "voice_id": voices[n],
                              "model": "eleven_v3",
                              "language": run.params["language"],
                              "settings": {}} for n in chunk]
@@ -1954,18 +2180,18 @@ class AutoRunService:
         run.notes.append(
             f"narration attached — {len(sids)} spoken segment(s) "
             f"across A–D ({len(run.state.get('tts_synth_jobs') or {})} "
-            f"unique lines synthesized; one voice, eleven_v3, "
+            f"unique voice/text requests; {len(set(voices.values()))} voice(s), eleven_v3, "
             f"{run.params['language']})")
         self._advance(run, "quote")
         return "next"
 
-    def _synth_job_matches(self, jid, text, run):
+    def _synth_job_matches(self, jid, text, run, voice_id=None):
         """Reuse is safe only when the paid request was identical in
         every identity input — text, voice, model, language — not merely
         the same normalized key."""
         from ..execution.effects import wire_hash
         request = {"text": text,
-                          "voice_id": run.params["voice_id"],
+                          "voice_id": voice_id or run.params["voice_id"],
                           "model": "eleven_v3",
                           "language": run.params["language"],
                           "settings": {}}
@@ -2145,7 +2371,8 @@ class AutoRunService:
             changed = base["changed"]
             fallback = base[key].get(seg_id) if key != "A" and \
                 changed.get(key) == seg_id else base["A"].get(seg_id, "")
-            if self.s.audio_work.speech.normalize(fallback or "") == norm:
+            if (self.s.audio_work.speech.normalize(fallback or "") ==
+                    self.s.audio_work.speech.normalize(needed[norm][0][2])):
                 return ("pause", "speech_fit_failed",
                         f"variant {key} segment {seg_id}: the source-"
                         "derived narration itself does not fit this beat "
@@ -2171,11 +2398,7 @@ class AutoRunService:
             if result is not None:
                 return result
         if not run.state.get("quote_job"):
-            jid = self.s.commands.enqueue(
-                "quote", {"experiment_id": eid, "revision": rev,
-                          **({'reference_bindings': run.state['reference_bindings']} if run.params.get('workflow', {}).get('reference_policy') == 'first_clip.v1' else {})},
-                experiment_id=eid, revision=rev, phase="plan",
-                identity=f"quote-{eid}-r{rev}")["job_id"]
+            jid = self.s.quote_experiment(eid, rev)["job_id"]
             run.state["quote_job"] = jid
             self._put(run)
             return "wait"
@@ -2191,10 +2414,13 @@ class AutoRunService:
         eid = run.state["experiment_id"]
         rev = run.state["experiment_revision"]
         exp = self.s._current(eid)
-        if exp.status == "accepted":
+        plan = self.s.plan_for(eid)
+        approval = self.s.db.conn.execute('SELECT value FROM meta WHERE key=?',
+                                         ('local-run:' + plan['id'],)).fetchone()
+        if (exp.status == "accepted" and approval
+                and json.loads(approval[0]).get('plan_hash') == plan['plan_hash']):
             self._advance(run, "run")
             return "next"
-        plan = self.s.plan_for(eid)
         nodes = self.s.production._nodes(plan["id"])
         gap = self._cover(run, plan.get("total_price")
                           or plan.get("total"),
@@ -2275,6 +2501,9 @@ class AutoRunService:
             try:
                 out = self.s.run_experiment(eid, rev)
             except ContractError as e:
+                if e.code == 'not_authorized':
+                    self._advance(run, 'authorize')
+                    return 'next'
                 return ("pause", "dispatch_failed",
                         f"{e.code}: {e.detail}",
                         "Resolve the run gate, then Resume")
@@ -2478,7 +2707,19 @@ class AutoRunService:
         for key, final in finals.items():
             if key in jobs:
                 old_job = self.s.db.uow().jobs.get(jobs[key].get('job_id', ''))
-                if not recovery or not old_job or old_job['status'] not in ('failed','blocked'):
+                current_binding = {'artifact_id': final['artifact_id'], 'sha256': final['sha256'],
+                                   'experiment_revision': run.state['experiment_revision']}
+                if jobs[key].get('final_binding') != current_binding:
+                    prior_id = jobs[key].get('job_id')
+                    pending = prior_id and (not old_job or old_job['status'] not in ('succeeded', 'failed', 'blocked', 'cancelled'))
+                    if prior_id:
+                        pending = pending or self.s.db.conn.execute(
+                            "SELECT 1 FROM attempts WHERE job_id=? AND status IN ('prepared','dispatching','unknown','accepted','running','cancel_requested')",
+                            (prior_id,)).fetchone()
+                    if pending:
+                        return ('pause', 'prior_delivery_inflight', f'{key}: the earlier delivery has not been reconciled.',
+                                'Resolve the earlier delivery before uploading replacement bytes.')
+                elif not recovery or not old_job or old_job['status'] not in ('failed','blocked'):
                     continue
             checks = [r['id'] for r in self.s._final_checks(final)
                       if r.get('binding') == final.get('binding') and not r.get('invalidated_by')]
@@ -2488,7 +2729,8 @@ class AutoRunService:
                 'account': run.params['delivery_account'], 'reviewer': 'automatic-policy.v1',
                 'valid_until': run.params['valid_until'], 'check_ids': checks,
             }, run.state['experiment_revision'])
-            jobs[key] = result
+            jobs[key] = {**result, 'final_binding': {'artifact_id': final['artifact_id'],
+                'sha256': final['sha256'], 'experiment_revision': run.state['experiment_revision']}}
             self._put(run)
         pending = [r['job_id'] for r in jobs.values() if r.get('job_id')]
         if pending:
@@ -2519,6 +2761,11 @@ class AutoRunService:
     def _recompute_failed_region_checks(self, run, plan, finals):
         """Re-run automated changed-region checks that failed, so a
         QC-policy fix can take effect without regenerating paid footage."""
+        for final in finals.values():
+            mix_id = (final.get('mix') or {}).get('artifact_id')
+            if mix_id:
+                self.s.quality.ensure_export_audio(final,
+                    self.s.artifacts.verified_path(final['artifact_id']), self.s.artifacts.verified_path(mix_id))
         control = finals.get("A")
         if not control:
             return
@@ -2666,7 +2913,19 @@ class AutoRunService:
                 "unchanged-region checks, no creative review)")
             return self._finish_or_deliver(run)
         if run.state.get("qc_human_accepted"):
-            return self._finish_or_deliver(run)
+            finals = self._finals(run)
+            current = {key: self.s.quality.binding(self.s.artifacts.verified_path(f['artifact_id']),
+                f['composition_id'], f['artifact_id']) for key, f in finals.items()}
+            accepted = run.state.get('qc_human_reviews') or {}
+            reviews_current = bool(accepted) and all(
+                any(r['id'] == review_id and r['verdict'] == 'pass' and not r.get('invalidated_by')
+                    for r in self.s.quality.authoritative_checks([], current.get(key, {})))
+                for key, review_id in accepted.items())
+            if len(current) == 4 and current == run.state.get('qc_human_bindings') and reviews_current:
+                return self._finish_or_deliver(run)
+            run.state.pop('qc_human_accepted', None)
+            run.state.pop('qc_human_bindings', None)
+            run.state.pop('qc_human_reviews', None)
         adapter = self.s.providers.get("audiovisual_analysis")
         if adapter is None or not getattr(adapter, "account", ""):
             # Visual QC was requested — an unavailable route is a missing

@@ -1,6 +1,6 @@
 # Flash-cut qualification matrix
 
-Updated 2026-09-22. Qualification is specific to a route, model, payload,
+Updated 2026-09-22 21:34 UTC. Qualification is specific to a route, model, payload,
 profile, input mode and expiry. A successful run or a single source does not
 promote a route globally.
 
@@ -20,7 +20,7 @@ promote a route globally.
 | ElevenLabs narration | `eleven_v3` | **live-qualified until 2026-10-18** | Saved qualification evidence; bounded speech repair and final alignment checks | Credits remain separately bounded; no invented USD conversion |
 | Generated music | `music_v1` | **live-qualified until 2026-10-18** | Saved quote/operation evidence | Separate credit authorization required when used |
 | Drive delivery | configured Drive account/destination | **live-qualified until 2026-10-18** | Verified historical deliveries and saved qualification evidence | Exact revision/file/checksum reconciliation remains mandatory |
-| `flashcut_hypit.v1` profile | new runs save `flashcut_policy.v3`; v1/v2 records retain their exact policies | **deployed locally; offline-qualified only** | Complete backend 1,573 passed/7 helper skips; separate helper 27 passed; frontend 73 passed/build; actual local Hypit/FFmpeg 16 passed/no skips; three full-source unpaid preflights; idle rollout and protected-state checks passed | Gemini v3 media and multi-seed quality remain unqualified live. Fresh pricing and authority are required; this is not unattended production readiness. |
+| `flashcut_hypit.v1` profile | new runs save `flashcut_policy.v3`; v1/v2 records retain their exact policies | **code released locally; offline-qualified only** | Complete backend 1,573 passed/7 helper skips; separate helper 27 passed; frontend 73 passed/build; actual local Hypit/FFmpeg 16 passed/no skips; three full-source unpaid preflights; idle rollout and protected-state checks passed | Local API/worker were not running at the 21:34 UTC check. Gemini v3 media and multi-seed quality remain unqualified live; fresh pricing and authority are required. |
 
 ## Labeled offline case map
 

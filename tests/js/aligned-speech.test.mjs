@@ -39,3 +39,21 @@ test('refuses ambiguous provider word to native-token mapping',()=>{
     {text:'你好',startFrame:1,endFrameExclusive:29}
   ]}),/alignment/);
 });
+
+// Exercise the actual pinned script tokenizer: it keeps $11 as a display
+// surface while its timing token contains only 11.
+import {parseScript,narrativeValue,narrativeSegmentExcerptValue} from '../../vendor/hypit-runtime/node_modules/@hypit/hypit/packages/script/src/index.ts';
+test('currency display word maps to its exact native timing token without rewriting captions',()=>{
+  const parsed=parseScript('price','<price>roughly $11.</price>');
+  const story=narrativeValue(parsed,'price-story');
+  const part=narrativeSegmentExcerptValue(parsed,parsed.segments[0],story.id);
+  const words=[{text:'roughly',startFrame:1,endFrameExclusive:10},{text:'$11.',startFrame:14,endFrameExclusive:29}];
+  const before=structuredClone(story);
+  const take=materializeAligned(story,part,media,{...alignment,words});
+  assert.equal(take.tokens.length,2);
+  assert.deepEqual(story,before);
+  assert.equal(story.caption.words.at(-1).text,'$11.');
+  for(const changed of ['€11.','$12.','eleven']) {
+    assert.throws(()=>materializeAligned(story,part,media,{...alignment,words:[words[0],{...words[1],text:changed}]}),/alignment/);
+  }
+});

@@ -70,7 +70,9 @@ def configured_adapters(db,data,mode,artifacts):
     file=Path(data)/'connections.json'
     if mode!='live' or not file.exists(): return {},None
     settings=json.loads(file.read_text()); adapters={}; drive=None
-    enabled=set(settings.get('enabled',[]));policy=ExecutionPolicy(mode,frozenset(enabled))
+    enabled=set(settings.get('enabled',[]));policy=ExecutionPolicy(mode,frozenset(enabled),
+        {'drive': settings.get('drive', {}).get('qualified_until', '')},
+        clock=lambda: datetime.now(timezone.utc))
     now=datetime.now(timezone.utc)
     for provider in enabled & {'jimeng_canvas','google_vertex'}:
         conn=settings.get(provider,{})
@@ -133,7 +135,17 @@ def configured_auxiliary(root,data,mode,artifacts=None):
     if not file.exists():return {},None,None,{}
     from ..operations.config import credential_loader
     settings=json.loads(file.read_text());enabled=set(settings.get('enabled',[]))
-    policy=ExecutionPolicy(mode,frozenset(enabled));providers={};publisher=None;analytics=None;extra={}
+    deadlines = {name: settings.get(name, {}).get('qualified_until', '') for name in enabled
+                 if name not in ('jimeng_canvas', 'google_vertex')}
+    # Narrow acceptance scopes have their own dated, per-run dispatch guard.
+    for name in ('audiovisual_analysis_flashcut', 'jev_decisions'):
+        conn = settings.get(name, {})
+        if artifacts and conn.get('acceptance_scope'):
+            from .flashcut_qualification import acceptance_scope
+            if acceptance_scope(artifacts.db, conn):
+                deadlines.pop(name, None)
+    policy=ExecutionPolicy(mode,frozenset(enabled),deadlines,
+        clock=lambda: datetime.now(timezone.utc));providers={};publisher=None;analytics=None;extra={}
     def qualified(name):
         conn=settings.get(name,{})
         try:valid=datetime.fromisoformat(conn['qualified_until'].replace('Z','+00:00'))>datetime.now(timezone.utc)
@@ -243,6 +255,8 @@ def configured_auxiliary(root,data,mode,artifacts=None):
             publisher.verifier=youtube_post_verifier(transport)
     for name,adapter in providers.items():
         connection=settings.get('youtube_analytics' if name=='youtube_reporting' else name,{})
+        capability = 'youtube_analytics' if name == 'youtube_reporting' else name
+        adapter.qualification_guard = lambda capability=capability: policy.require_live(capability)
         adapter.qualified=True
         if name in ('audiovisual_analysis_flashcut','jev_decisions') and connection.get('acceptance_scope'):
             from .flashcut_qualification import acceptance_scope,require_acceptance_binding

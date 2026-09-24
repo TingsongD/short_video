@@ -82,7 +82,8 @@ def run_spending_policy(params):
         raise ContractError('invalid_spending_policy', 'spending_policy')
     if (value['version'] != 1 or value['scope'] != 'cumulative_run'
             or value['unit'] != 'usd_micros'
-            or value['cap_amount'] != DEFAULT_RUN_USD_CAP_MICROS
+            or type(value['cap_amount']) is not int
+            or value['cap_amount'] < DEFAULT_RUN_USD_CAP_MICROS
             or not isinstance(value['budget_id'], str)
             or not value['budget_id'].startswith('run_guardrail:auto-')
             or not value['budget_id'].endswith(':usd')):

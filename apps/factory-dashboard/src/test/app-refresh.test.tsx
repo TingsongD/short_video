@@ -72,6 +72,24 @@ describe("App live refresh", () => {
     expect(screen.getByText(/Last checked/)).toBeTruthy();
   });
 
+  it('clears a connection warning only after a full refresh recovers', async () => {
+    vi.useFakeTimers();
+    const original=globalThis.fetch;
+    let failed=true;
+    vi.stubGlobal('fetch',vi.fn(async (...args:Parameters<typeof fetch>)=>{
+      if(failed && args[0]==='/api/collections/seeds') throw new Error('backend restarting');
+      return original(...args);
+    }));
+    render(<App/>);
+    await act(async()=>{await vi.advanceTimersByTimeAsync(300);});
+    expect(screen.getByRole('alert').textContent).toContain('Some dashboard data could not refresh');
+    failed=false;
+    await act(async()=>{FakeEventSource.last!.emit(1,'command_waiting');await vi.advanceTimersByTimeAsync(300);});
+    expect(screen.getByRole('alert').textContent).toContain('Some dashboard data could not refresh');
+    await act(async()=>{FakeEventSource.last!.emit(2);await vi.advanceTimersByTimeAsync(300);});
+    expect(screen.queryByText(/Some dashboard data could not refresh/)).toBeNull();
+  });
+
   it("does not issue one collection sweep per replayed event", async () => {
     vi.useFakeTimers();
     render(<App />);

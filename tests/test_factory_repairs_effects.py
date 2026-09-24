@@ -40,6 +40,7 @@ def test_expired_worker_lease_does_not_free_unfinished_remote_slot(tmp_path):
     from modules.factory.domain.records import Job
     db = Database(tmp_path / "db")
     sched = Scheduler(db, worker_id="worker-one")
+    sched.configure_vertex_concurrency(1)
     sched.submit_plan([Job(schema_version="job.v1", id=name, created_at="",
                           logical_key=name, phase="generate_vertex") for name in ("first", "second")])
     claimed = sched.claim()

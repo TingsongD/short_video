@@ -222,6 +222,7 @@ def test_dense_candidate_context_is_partitioned_without_dropping_evidence():
             return {'reserve_amount':10}
 
     plan=build_analysis_plan(Store(),'evidence',Adapter(),[])
+    assert all(r['output_policy']=='flashcut_output.v2' for r in plan['requests'])
     assert plan['version']=='flashcut_analysis_plan.v2'
     assert plan['candidate_index']==candidates
     assert {c['id'] for c in plan['requests'][0]['context']['candidates']} == {
@@ -229,3 +230,74 @@ def test_dense_candidate_context_is_partitioned_without_dropping_evidence():
     covered={c['id'] for request in plan['requests'][1:]
              for c in request['context']['candidates']}
     assert covered=={c['id'] for c in candidates}
+
+
+def test_compact_window_retains_out_of_scope_gap_without_claiming_coverage():
+    from modules.factory.analysis.flashcut_vertex import validate_observations
+    request={'scope':'window','response_contract':'flashcut_compact.v2',
+             'context':{'source_duration':'57.3'},'media':[
+                 {'id':'w','kind':'video','source_start':'0','source_end':'13'}]}
+    item={'id':'action','kind':'action','start_s':0,'end_s':13,'time_basis':'source',
+          'description':'Assigned scene','evidence_ids':['w'],'role_ids':[],
+          'text_role':'none','confidence':'observed'}
+    value={'observations':[item],'essential_missing':[],
+           'coverage_gaps':[{'start_s':13,'end_s':57.3}]}
+    result=validate_observations(value,request)
+    assert result['observations'][0]['end_s']==13
+    assert result['out_of_scope_coverage_gaps']==value['coverage_gaps']
+    assert value['coverage_gaps']==[{'start_s':13,'end_s':57.3}]
+    for gaps in ([{'start_s':12.99,'end_s':57.3}],
+                 [{'start_s':13,'end_s':58}],
+                 [{'start_s':20,'end_s':13}],
+                 [{'start_s':float('nan'),'end_s':57.3}],
+                 [{'start_s':True,'end_s':57.3}]):
+        with pytest.raises(ProviderError,match='malformed_flashcut_analysis'):
+            validate_observations({**value,'coverage_gaps':gaps},request)
+    for change in ({'scope':'whole'},{'scope':'clarification'},
+                   {'response_contract':'legacy'}):
+        with pytest.raises(ProviderError,match='malformed_flashcut_analysis'):
+            validate_observations(value,{**request,**change})
+    with pytest.raises(ProviderError,match='malformed_flashcut_analysis'):
+        validate_observations({**value,'observations':[{**item,'end_s':14}]},request)
+
+
+def test_compact_window_millisecond_rounding_preserves_exact_boundaries_and_gaps():
+    from modules.factory.analysis.flashcut_vertex import validate_observations
+    request={'scope':'window','response_contract':'flashcut_compact.v2',
+             'context':{'source_duration':'40'},'media':[
+                 {'id':'a','kind':'video','source_start':'24','source_end':'797/30'},
+                 {'id':'b','kind':'video','source_start':'133/5','source_end':'869/30'},
+                 {'id':'c','kind':'video','source_start':'871/30','source_end':'33'}]}
+    item={'id':'action','kind':'action','start_s':25.1,'end_s':26.567,'time_basis':'source',
+          'description':'Assigned scene','evidence_ids':['a'],'role_ids':[],
+          'text_role':'none','confidence':'observed'}
+    gaps=[{'start_s':26.567,'end_s':26.6},{'start_s':28.967,'end_s':29.033}]
+    value={'observations':[item],'essential_missing':[],'coverage_gaps':gaps}
+    result=validate_observations(value,request)
+    assert result['observations'][0]['end_s']==797/30
+    assert result['observations'][0]['reported_source_interval']=={'start_s':25.1,'end_s':26.567}
+    assert result['out_of_scope_coverage_gaps']==gaps
+    assert value['observations'][0]['end_s']==26.567
+    for end in (26.568,26.5671,26.6):
+        with pytest.raises(ProviderError,match='malformed_flashcut_analysis'):
+            validate_observations({**value,'observations':[{**item,'end_s':end}]},request)
+    # A gap spanning observed video, or an observation bridging a true gap,
+    # must still be rejected after boundary normalization.
+    with pytest.raises(ProviderError,match='malformed_flashcut_analysis'):
+        validate_observations({**value,'coverage_gaps':[{'start_s':26.565,'end_s':26.6}]},request)
+    with pytest.raises(ProviderError,match='malformed_flashcut_analysis'):
+        validate_observations({**value,'observations':[{**item,'end_s':27,'evidence_ids':['a','b']}]},request)
+
+
+def test_compact_window_centisecond_gap_rounding_is_bounded():
+    from modules.factory.analysis.flashcut_vertex import validate_observations
+    request={'scope':'window','response_contract':'flashcut_compact.v2',
+             'context':{'source_duration':'57.3'},'media':[
+                 {'id':'w','kind':'video','source_start':'871/30','source_end':'1261/30'}]}
+    gaps=[{'start_s':0,'end_s':29.03},{'start_s':42.03,'end_s':57.3}]
+    value={'observations':[],'essential_missing':[],'coverage_gaps':gaps}
+    assert validate_observations(value,request)['out_of_scope_coverage_gaps']==gaps
+    # More precise millisecond claims cannot borrow centisecond tolerance.
+    for end in (29.034,29.04):
+        with pytest.raises(ProviderError,match='malformed_flashcut_analysis'):
+            validate_observations({**value,'coverage_gaps':[{'start_s':0,'end_s':end}]},request)
